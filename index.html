@@ -1,83 +1,251 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Snake Game</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1.0" />
+  <title>Online Snake (SSE)</title>
   <style>
-    #game-board { display: grid; grid-template-columns: repeat(20, 20px); }
-    .cell { width: 20px; height: 20px; background-color: #eee; border: 1px solid #ccc; }
-    .snake { background-color: green; }
-    .fruit { background-color: red; }
+    body { font-family: Arial, sans-serif; display: flex; gap: 16px; margin: 16px; }
+    #left { width: 260px; }
+    #game { flex: 1; }
+
+    #game-board {
+      display: grid;
+      gap: 1px;
+      background: #ccc;
+      width: max-content;
+      user-select: none;
+    }
+    .cell {
+      width: 18px;
+      height: 18px;
+      background: #f3f3f3;
+    }
+    .food { background: #ff4444 !important; }
+
+    .snake-cell { background: #00aa00; }
+
+    .panel { border: 1px solid #ddd; padding: 12px; border-radius: 8px; margin-bottom: 12px; }
+    .row { margin: 6px 0; }
+    input { width: 100%; padding: 6px; }
+    button { padding: 8px 10px; cursor: pointer; }
+
+    .snake-item {
+      border: 1px solid #ddd;
+      padding: 8px;
+      border-radius: 8px;
+      margin: 6px 0;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .snake-item.active { outline: 2px solid #333; }
+    .badge { width: 16px; height: 16px; border-radius: 4px; display: inline-block; margin-right: 8px; }
+    small { color: #666; }
   </style>
 </head>
 <body>
-  <h1>Snake Game</h1>
-  <div id="game-board"></div>
-  <p>Score: <span id="score">0</span></p>
+  <div id="left">
+    <div class="panel">
+      <div class="row"><strong>Login (optional)</strong></div>
+      <div class="row"><input id="username" placeholder="username (user1)" /></div>
+      <div class="row"><input id="password" type="password" placeholder="password (pass1)" /></div>
+      <div class="row"><button id="loginBtn">Login</button></div>
+      <div class="row"><small id="authStatus">Not logged in (watch-only)</small></div>
+    </div>
 
-  <script>
-    const board = document.getElementById('game-board');
-    const scoreDisplay = document.getElementById('score');
-    const width = 20;
-    const height = 10;
+    <div class="panel">
+      <div class="row"><strong>My Snakes</strong></div>
+      <div id="mySnakes"></div>
+      <div class="row"><button id="createSnakeBtn" disabled>Create Snake</button></div>
+      <div class="row"><small>Controls: W/A/S/D move selected snake, P pause selected snake</small></div>
+    </div>
+  </div>
 
-    // Create game board cells
-    for (let i = 0; i < width * height; i++) {
-      const cell = document.createElement('div');
-      cell.classList.add('cell');
-      board.appendChild(cell);
+  <div id="game">
+    <div class="panel">
+      <div><strong>Live Game</strong></div>
+      <div>Tick: <span id="tick">0</span></div>
+    </div>
+    <div id="game-board"></div>
+  </div>
+
+<script>
+  const API = "http://127.0.0.1:8080";
+
+  let token = null;
+  let myUserId = null;
+  let selectedSnakeId = null;
+
+  let gridW = 40, gridH = 20;
+  let cells = [];
+
+  const board = document.getElementById("game-board");
+  const tickEl = document.getElementById("tick");
+  const authStatus = document.getElementById("authStatus");
+  const mySnakesEl = document.getElementById("mySnakes");
+  const createSnakeBtn = document.getElementById("createSnakeBtn");
+
+  function buildBoard(w, h) {
+    gridW = w; gridH = h;
+    board.style.gridTemplateColumns = `repeat(${w}, 18px)`;
+    board.innerHTML = "";
+    cells = [];
+    for (let i = 0; i < w*h; i++) {
+      const c = document.createElement("div");
+      c.className = "cell";
+      board.appendChild(c);
+      cells.push(c);
+    }
+  }
+
+  function idx(x,y){ return y*gridW + x; }
+
+  function clearBoard() {
+    for (const c of cells) {
+      c.className = "cell";
+      c.style.background = ""; // allow custom snake colors
+    }
+  }
+
+  function drawFrame(state) {
+    tickEl.textContent = state.tick;
+
+    if (state.w !== gridW || state.h !== gridH || cells.length === 0) {
+      buildBoard(state.w, state.h);
     }
 
-    const cells = Array.from(document.querySelectorAll('.cell'));
+    clearBoard();
 
-    // Update game state on the frontend
-    async function updateGame() {
-      try {
-        const response = await fetch('http://localhost:8080/game/state');
-        const state = await response.json();
-
-        if (state.gameOver) {
-          alert("Game Over!");
-          await fetch('http://localhost:8080/game/reset', { method: 'POST' });
-          return;
-        }
-
-        scoreDisplay.textContent = state.score;
-
-        // Clear the board
-        cells.forEach(cell => cell.classList.remove('snake', 'fruit'));
-
-        // Draw the snake
-        state.snake.forEach(segment => {
-          const index = segment.y * width + segment.x;
-          cells[index].classList.add('snake');
-        });
-
-        // Draw the fruit
-        const fruitIndex = state.fruit.y * width + state.fruit.x;
-        cells[fruitIndex].classList.add('fruit');
-
-      } catch (error) {
-        console.error('Error updating game:', error);
-      }
+    // foods
+    for (const f of state.foods) {
+      const i = idx(f.x, f.y);
+      if (cells[i]) cells[i].classList.add("food");
     }
 
-    // Change direction based on key input
-    document.addEventListener('keydown', async (event) => {
-      let direction = null;
-      if (event.key === 'a') direction = 1;  // LEFT
-      else if (event.key === 'd') direction = 2;  // RIGHT
-      else if (event.key === 'w') direction = 3;  // UP
-      else if (event.key === 's') direction = 4;  // DOWN
-
-      if (direction !== null) {
-        await fetch(`http://localhost:8080/game/direction/${direction}`, { method: 'POST' });
+    // snakes
+    for (const s of state.snakes) {
+      for (const seg of s.body) {
+        const i = idx(seg.x, seg.y);
+        if (!cells[i]) continue;
+        cells[i].classList.add("snake-cell");
+        // color each snake
+        cells[i].style.background = s.color;
       }
+    }
+  }
+
+  async function api(path, opts={}) {
+    const headers = opts.headers || {};
+    headers["Content-Type"] = "application/json";
+    if (token) headers["Authorization"] = "Bearer " + token;
+    const res = await fetch(API + path, { ...opts, headers });
+    return res;
+  }
+
+  async function login() {
+    const username = document.getElementById("username").value.trim();
+    const password = document.getElementById("password").value.trim();
+
+    const res = await fetch(API + "/auth/login", {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({username, password})
     });
 
-    // Game loop
-    setInterval(updateGame, 200);
-  </script>
+    if (!res.ok) {
+      authStatus.textContent = "Login failed";
+      return;
+    }
+    const data = await res.json();
+    token = data.token;
+    myUserId = data.user_id;
+
+    authStatus.textContent = `Logged in as user_id=${myUserId}`;
+    createSnakeBtn.disabled = false;
+
+    await loadMySnakes();
+  }
+
+  async function loadMySnakes() {
+    if (!token) return;
+    const res = await api("/me/snakes");
+    if (!res.ok) return;
+    const data = await res.json();
+
+    mySnakesEl.innerHTML = "";
+    for (const s of data.snakes) {
+      const div = document.createElement("div");
+      div.className = "snake-item" + (s.id === selectedSnakeId ? " active" : "");
+      div.onclick = () => {
+        selectedSnakeId = s.id;
+        loadMySnakes();
+      };
+      div.innerHTML = `
+        <span><span class="badge" style="background:${s.color}"></span>Snake #${s.id}</span>
+        <small>${s.paused ? "paused" : "moving"} · len ${s.len}</small>
+      `;
+      mySnakesEl.appendChild(div);
+    }
+
+    if (!selectedSnakeId && data.snakes.length > 0) selectedSnakeId = data.snakes[0].id;
+  }
+
+  async function createSnake() {
+    if (!token) return;
+    // random-ish color
+    const color = "#" + Math.floor(Math.random()*16777215).toString(16).padStart(6,'0');
+    const res = await api("/me/snakes", { method:"POST", body: JSON.stringify({color}) });
+    if (!res.ok) {
+      const t = await res.text();
+      alert("Create snake failed: " + t);
+      return;
+    }
+    await loadMySnakes();
+  }
+
+  async function setDir(dir) {
+    if (!token || !selectedSnakeId) return;
+    await api(`/snakes/${selectedSnakeId}/dir`, { method:"POST", body: JSON.stringify({dir}) });
+  }
+
+  async function togglePause() {
+    if (!token || !selectedSnakeId) return;
+    await api(`/snakes/${selectedSnakeId}/pause`, { method:"POST" });
+    await loadMySnakes();
+  }
+
+  // Input
+  document.addEventListener("keydown", async (e) => {
+    const k = e.key.toLowerCase();
+    if (["w","a","s","d","p"].includes(k)) e.preventDefault();
+
+    if (k === "w") return setDir(3);
+    if (k === "a") return setDir(1);
+    if (k === "s") return setDir(4);
+    if (k === "d") return setDir(2);
+    if (k === "p") return togglePause();
+  });
+
+  document.getElementById("loginBtn").onclick = login;
+  document.getElementById("createSnakeBtn").onclick = createSnake;
+
+  // SSE stream (watchers scale well)
+  function startStream() {
+    const es = new EventSource(API + "/game/stream");
+    es.addEventListener("frame", (ev) => {
+      const state = JSON.parse(ev.data);
+      drawFrame(state);
+    });
+    es.onerror = () => {
+      // auto reconnect
+      es.close();
+      setTimeout(startStream, 1000);
+    };
+  }
+
+  startStream();
+</script>
 </body>
 </html>
