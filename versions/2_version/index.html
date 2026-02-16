@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Snake Game</title>
+  <style>
+    #game-board {
+      display: grid;
+      grid-template-columns: repeat(20, 20px);
+      width: max-content;
+    }
+    .cell {
+      width: 20px;
+      height: 20px;
+      background-color: #eee;
+      border: 1px solid #ccc;
+      box-sizing: border-box;
+    }
+    .snake { background-color: green; }
+    .fruit { background-color: red; }
+  </style>
+</head>
+<body>
+  <h1>Snake Game</h1>
+  <div id="game-board"></div>
+  <p>Score: <span id="score">0</span></p>
+  <p>Use W/A/S/D to move. (Game starts when you choose a direction)</p>
+
+  <script>
+    const board = document.getElementById('game-board');
+    const scoreDisplay = document.getElementById('score');
+    const width = 20;
+    const height = 10;
+
+    // Create board
+    for (let i = 0; i < width * height; i++) {
+      const cell = document.createElement('div');
+      cell.classList.add('cell');
+      board.appendChild(cell);
+    }
+    const cells = Array.from(document.querySelectorAll('.cell'));
+
+    async function updateGame() {
+      try {
+        const response = await fetch('http://localhost:8080/game/state');
+        const state = await response.json();
+
+        if (state.gameOver) {
+          alert("Game Over! Resetting...");
+          await fetch('http://localhost:8080/game/reset', { method: 'POST' });
+          return;
+        }
+
+        scoreDisplay.textContent = state.score;
+
+        // Clear board
+        cells.forEach(cell => cell.classList.remove('snake', 'fruit'));
+
+        // Draw snake (backend now includes head in snake[])
+        state.snake.forEach(segment => {
+          const index = segment.y * width + segment.x;
+          if (index >= 0 && index < cells.length) {
+            cells[index].classList.add('snake');
+          }
+        });
+
+        // Draw fruit
+        const fruitIndex = state.fruit.y * width + state.fruit.x;
+        if (fruitIndex >= 0 && fruitIndex < cells.length) {
+          cells[fruitIndex].classList.add('fruit');
+        }
+
+      } catch (error) {
+        console.error('Error updating game:', error);
+      }
+    }
+
+    document.addEventListener('keydown', async (event) => {
+      const key = event.key.toLowerCase();
+
+      // prevent page scrolling / focus issues
+      if (['w','a','s','d'].includes(key)) event.preventDefault();
+
+      let direction = null;
+      if (key === 'a') direction = 1;      // LEFT
+      else if (key === 'd') direction = 2; // RIGHT
+      else if (key === 'w') direction = 3; // UP
+      else if (key === 's') direction = 4; // DOWN
+
+      if (direction !== null) {
+        await fetch(`http://localhost:8080/game/direction/${direction}`, { method: 'POST' });
+      }
+    });
+
+    // Render loop
+    setInterval(updateGame, 200);
+  </script>
+</body>
+</html>
