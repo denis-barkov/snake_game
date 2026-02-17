@@ -41,8 +41,8 @@ jobs:
               "Name=instance-state-name,Values=running" \
               "Name=tag:project,Values=${PROJECT_TAG}" \
               "Name=tag:environment,Values=${ENVIRONMENT_TAG}" \
-            --query 'Reservations[].Instances[].[InstanceId,PrivateIpAddress,PublicIpAddress,Tags]' \
-            --output table
+            --query 'Reservations[].Instances[].{InstanceId:InstanceId,PrivateIp:PrivateIpAddress,PublicIp:PublicIpAddress,Tags:Tags}' \
+            --output json || true
 
       - name: Deploy To Tagged Environment
         timeout-minutes: 1
