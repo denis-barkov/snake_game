@@ -110,7 +110,24 @@ COMMAND_ID="$(
 \"chmod 755 /var/www/snake || true\",
 \"chmod 644 /var/www/snake/index.html || true\",
 \"clang++ -std=c++17 -O2 -pthread ${BUILD_TARGET} -o /opt/snake/snake_server -lboost_system -lsqlite3\",
-\"if ! command -v caddy >/dev/null 2>&1; then dnf -y install dnf-plugins-core ca-certificates >/dev/null || true; dnf config-manager --add-repo https://dl.cloudsmith.io/public/caddy/stable/rpm.repo >/dev/null 2>&1 || true; rpm --import https://dl.cloudsmith.io/public/caddy/stable/gpg.key >/dev/null 2>&1 || true; dnf -y install caddy >/dev/null 2>&1 || true; fi\",
+\"if ! command -v caddy >/dev/null 2>&1; then dnf -y install dnf-plugins-core ca-certificates curl tar >/dev/null || true; dnf config-manager --add-repo https://dl.cloudsmith.io/public/caddy/stable/rpm.repo >/dev/null 2>&1 || true; rpm --import https://dl.cloudsmith.io/public/caddy/stable/gpg.key >/dev/null 2>&1 || true; dnf -y install caddy >/dev/null 2>&1 || true; fi\",
+\"if ! command -v caddy >/dev/null 2>&1; then curl -fsSL 'https://caddyserver.com/api/download?os=linux&arch=arm64&p=github.com/caddyserver/caddy/v2' -o /usr/local/bin/caddy && chmod +x /usr/local/bin/caddy; fi\",
+\"if command -v caddy >/dev/null 2>&1 && [ ! -f /etc/systemd/system/caddy.service ] && [ ! -f /usr/lib/systemd/system/caddy.service ]; then useradd --system --home /var/lib/caddy --shell /usr/sbin/nologin caddy >/dev/null 2>&1 || true; mkdir -p /etc/caddy /var/lib/caddy /var/log/caddy; cat > /etc/systemd/system/caddy.service <<'EOF_CADDY_UNIT'\",
+\"[Unit]\",
+\"Description=Caddy web server\",
+\"After=network-online.target\",
+\"Wants=network-online.target\",
+\"[Service]\",
+\"User=caddy\",
+\"Group=caddy\",
+\"ExecStart=/usr/local/bin/caddy run --environ --config /etc/caddy/Caddyfile\",
+\"ExecReload=/usr/local/bin/caddy reload --config /etc/caddy/Caddyfile\",
+\"Restart=on-failure\",
+\"LimitNOFILE=1048576\",
+\"[Install]\",
+\"WantedBy=multi-user.target\",
+\"EOF_CADDY_UNIT\",
+\"fi\",
 \"if command -v caddy >/dev/null 2>&1; then cat > /etc/caddy/Caddyfile <<'EOF_CADDY'\",
 \"${DOMAIN_NAME} {\",
 \"  encode zstd gzip\",
@@ -142,7 +159,7 @@ COMMAND_ID="$(
 \"systemctl daemon-reload || true\",
 \"systemctl restart snake\",
 \"systemctl is-active snake\",
-\"if command -v caddy >/dev/null 2>&1; then systemctl enable --now caddy; systemctl is-active caddy; else nginx -t; systemctl enable --now nginx; systemctl is-active nginx; fi\"
+\"if command -v caddy >/dev/null 2>&1; then systemctl daemon-reload || true; systemctl stop nginx >/dev/null 2>&1 || true; systemctl disable nginx >/dev/null 2>&1 || true; systemctl enable --now caddy; systemctl is-active caddy; else nginx -t; systemctl enable --now nginx; systemctl is-active nginx; fi\"
 ]" \
     --query 'Command.CommandId' \
     --output text

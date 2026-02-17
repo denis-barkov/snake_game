@@ -88,10 +88,37 @@ fi
 # ---- Reverse proxy ----
 # Try Caddy first; if unavailable, fallback to nginx (HTTP-only).
 if ! command -v caddy >/dev/null 2>&1; then
-  dnf -y install dnf-plugins-core ca-certificates || true
+  dnf -y install dnf-plugins-core ca-certificates curl tar || true
   dnf config-manager --add-repo https://dl.cloudsmith.io/public/caddy/stable/rpm.repo >/dev/null 2>&1 || true
   rpm --import https://dl.cloudsmith.io/public/caddy/stable/gpg.key >/dev/null 2>&1 || true
   dnf -y install caddy >/dev/null 2>&1 || true
+fi
+
+if ! command -v caddy >/dev/null 2>&1; then
+  curl -fsSL "https://caddyserver.com/api/download?os=linux&arch=arm64&p=github.com/caddyserver/caddy/v2" -o /usr/local/bin/caddy
+  chmod +x /usr/local/bin/caddy
+fi
+
+if command -v caddy >/dev/null 2>&1 && [ ! -f /etc/systemd/system/caddy.service ] && [ ! -f /usr/lib/systemd/system/caddy.service ]; then
+  useradd --system --home /var/lib/caddy --shell /usr/sbin/nologin caddy >/dev/null 2>&1 || true
+  mkdir -p /etc/caddy /var/lib/caddy /var/log/caddy
+  cat >/etc/systemd/system/caddy.service <<EOF
+[Unit]
+Description=Caddy web server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=caddy
+Group=caddy
+ExecStart=/usr/local/bin/caddy run --environ --config /etc/caddy/Caddyfile
+ExecReload=/usr/local/bin/caddy reload --config /etc/caddy/Caddyfile
+Restart=on-failure
+LimitNOFILE=1048576
+
+[Install]
+WantedBy=multi-user.target
+EOF
 fi
 
 if command -v caddy >/dev/null 2>&1; then
@@ -113,6 +140,9 @@ $${DOMAIN_NAME} {
 }
 EOF
 
+  systemctl daemon-reload || true
+  systemctl stop nginx >/dev/null 2>&1 || true
+  systemctl disable nginx >/dev/null 2>&1 || true
   systemctl enable caddy
   systemctl restart caddy
 else
