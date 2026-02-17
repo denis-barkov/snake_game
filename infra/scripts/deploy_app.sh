@@ -107,6 +107,8 @@ COMMAND_ID="$(
 \"if [ -f /opt/snake/repo/index.html ]; then mkdir -p /var/www/snake; cp -f /opt/snake/repo/index.html /var/www/snake/index.html; fi\",
 \"if [ ! -f /var/www/snake/index.html ]; then echo Missing /var/www/snake/index.html after deploy; exit 1; fi\",
 \"if [ -f /var/www/snake/index.html ]; then sed -i 's|const API = \\\"http://127.0.0.1:8080\\\";|const API = window.location.origin;|' /var/www/snake/index.html || true; fi\",
+\"chmod 755 /var/www/snake || true\",
+\"chmod 644 /var/www/snake/index.html || true\",
 \"clang++ -std=c++17 -O2 -pthread ${BUILD_TARGET} -o /opt/snake/snake_server -lboost_system -lsqlite3\",
 \"if ! command -v caddy >/dev/null 2>&1; then dnf -y install dnf-plugins-core ca-certificates >/dev/null || true; dnf config-manager --add-repo https://dl.cloudsmith.io/public/caddy/stable/rpm.repo >/dev/null 2>&1 || true; rpm --import https://dl.cloudsmith.io/public/caddy/stable/gpg.key >/dev/null 2>&1 || true; dnf -y install caddy >/dev/null 2>&1 || true; fi\",
 \"if command -v caddy >/dev/null 2>&1; then cat > /etc/caddy/Caddyfile <<'EOF_CADDY'\",
@@ -121,13 +123,14 @@ COMMAND_ID="$(
 \"}\",
 \"EOF_CADDY\",
 \"fi\",
-\"if ! command -v caddy >/dev/null 2>&1; then dnf -y install nginx >/dev/null; cat > /etc/nginx/conf.d/snake.conf <<'EOF_NGINX'\",
+\"if ! command -v caddy >/dev/null 2>&1; then dnf -y install nginx >/dev/null; rm -f /etc/nginx/conf.d/default.conf; cat > /etc/nginx/conf.d/snake.conf <<'EOF_NGINX'\",
 \"server {\",
 \"  listen 80 default_server;\",
 \"  server_name ${DOMAIN_NAME} _;\",
 \"  root /var/www/snake;\",
 \"  index index.html;\",
-\"  location = /index.html { }\",
+\"  location = / { try_files /index.html =404; }\",
+\"  location = /index.html { try_files /index.html =404; }\",
 \"  location /auth/ { proxy_pass http://127.0.0.1:${APP_PORT}; }\",
 \"  location /me/ { proxy_pass http://127.0.0.1:${APP_PORT}; }\",
 \"  location /snakes/ { proxy_pass http://127.0.0.1:${APP_PORT}; }\",
@@ -139,7 +142,7 @@ COMMAND_ID="$(
 \"systemctl daemon-reload || true\",
 \"systemctl restart snake\",
 \"systemctl is-active snake\",
-\"if command -v caddy >/dev/null 2>&1; then systemctl enable --now caddy; systemctl is-active caddy; else systemctl enable --now nginx; systemctl is-active nginx; fi\"
+\"if command -v caddy >/dev/null 2>&1; then systemctl enable --now caddy; systemctl is-active caddy; else nginx -t; systemctl enable --now nginx; systemctl is-active nginx; fi\"
 ]" \
     --query 'Command.CommandId' \
     --output text
