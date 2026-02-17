@@ -83,12 +83,17 @@ if [ -n "$EIP_ALLOC_ID" ]; then
   aws ec2 associate-address --region "$AWS_REGION" --allocation-id "$EIP_ALLOC_ID" --instance-id "$INSTANCE_ID" --allow-reassociation || true
 fi
 
-# ---- Caddy (TLS + reverse proxy) ----
-dnf -y install 'dnf-command(copr)'
-dnf -y copr enable @caddy/caddy
-dnf -y install caddy
+# ---- Reverse proxy ----
+# Try Caddy first; if unavailable, fallback to nginx (HTTP-only).
+if ! command -v caddy >/dev/null 2>&1; then
+  dnf -y install dnf-plugins-core ca-certificates || true
+  dnf config-manager --add-repo https://dl.cloudsmith.io/public/caddy/stable/rpm.repo >/dev/null 2>&1 || true
+  rpm --import https://dl.cloudsmith.io/public/caddy/stable/gpg.key >/dev/null 2>&1 || true
+  dnf -y install caddy >/dev/null 2>&1 || true
+fi
 
-cat >/etc/caddy/Caddyfile <<EOF
+if command -v caddy >/dev/null 2>&1; then
+  cat >/etc/caddy/Caddyfile <<EOF
 {
   email $${LE_EMAIL}
 }
@@ -106,5 +111,25 @@ $${DOMAIN_NAME} {
 }
 EOF
 
-systemctl enable caddy
-systemctl restart caddy
+  systemctl enable caddy
+  systemctl restart caddy
+else
+  dnf -y install nginx
+  cat >/etc/nginx/conf.d/snake.conf <<EOF
+server {
+  listen 80 default_server;
+  server_name $${DOMAIN_NAME} _;
+
+  root /var/www/snake;
+  index index.html;
+
+  location /auth/ { proxy_pass http://127.0.0.1:$${APP_PORT}; }
+  location /me/ { proxy_pass http://127.0.0.1:$${APP_PORT}; }
+  location /snakes/ { proxy_pass http://127.0.0.1:$${APP_PORT}; }
+  location /game/ { proxy_pass http://127.0.0.1:$${APP_PORT}; }
+  location / { try_files $$uri $$uri/ /index.html; }
+}
+EOF
+  systemctl enable nginx
+  systemctl restart nginx
+fi
