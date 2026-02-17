@@ -27,5 +27,21 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Debug AWS Identity And Tagged Instances
+        run: |
+          set -euo pipefail
+          echo "AWS_REGION=${AWS_REGION}"
+          echo "PROJECT_TAG=${PROJECT_TAG}"
+          echo "ENVIRONMENT_TAG=${ENVIRONMENT_TAG}"
+          aws sts get-caller-identity
+          aws ec2 describe-instances \
+            --region "${AWS_REGION}" \
+            --filters \
+              "Name=instance-state-name,Values=running" \
+              "Name=tag:project,Values=${PROJECT_TAG}" \
+              "Name=tag:environment,Values=${ENVIRONMENT_TAG}" \
+            --query 'Reservations[].Instances[].[InstanceId,PrivateIpAddress,PublicIpAddress,Tags]' \
+            --output table
+
       - name: Deploy To Tagged Environment
         run: bash infra/scripts/deploy_app.sh
