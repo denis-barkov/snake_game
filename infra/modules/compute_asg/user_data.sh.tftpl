@@ -12,7 +12,11 @@ LE_EMAIL="${letsencrypt_email}"
 dnf -y update
 
 # Build/runtime deps + AWS tools (avoid curl/curl-minimal conflicts on AL2023)
-dnf -y install git clang sqlite-devel boost-devel amazon-cloudwatch-agent awscli
+dnf -y install git clang sqlite-devel boost-devel amazon-cloudwatch-agent amazon-ssm-agent awscli
+
+# Ensure SSM registration is enabled for this instance
+systemctl enable amazon-ssm-agent
+systemctl restart amazon-ssm-agent
 
 # ---- CloudWatch Agent ----
 mkdir -p /opt/aws/amazon-cloudwatch-agent/etc

@@ -1,5 +1,10 @@
 TF_DIR=infra
 PROFILE=business
+PROJECT_TAG?=snake
+ENVIRONMENT_TAG?=mvp
+APP_REF?=main
+BUILD_TARGET?=api/snake_server.cpp
+AWS_REGION?=us-east-1
 
 aws-init:
 	AWS_PROFILE=$(PROFILE) terraform -chdir=$(TF_DIR) init -upgrade
@@ -53,8 +58,12 @@ aws-eip-attach:
 aws-plan:
 	AWS_PROFILE=$(PROFILE) terraform -chdir=$(TF_DIR) plan -input=false
 
+aws-code-deploy:
+	AWS_PROFILE=$(PROFILE) AWS_REGION=$(AWS_REGION) PROJECT_TAG=$(PROJECT_TAG) ENVIRONMENT_TAG=$(ENVIRONMENT_TAG) APP_REF=$(APP_REF) BUILD_TARGET=$(BUILD_TARGET) bash infra/scripts/deploy_app.sh
+
 aws-apply:
 	AWS_PROFILE=$(PROFILE) terraform -chdir=$(TF_DIR) apply
+	@$(MAKE) aws-code-deploy
 
 aws-destroy:
 	AWS_PROFILE=$(PROFILE) terraform -chdir=$(TF_DIR) destroy
