@@ -9,12 +9,13 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     env:
-      AWS_REGION: ${{ vars.AWS_REGION }}
+      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
       PROJECT_TAG: ${{ vars.PROJECT_TAG || 'snake' }}
-      ENVIRONMENT_TAG: ${{ vars.ENVIRONMENT_TAG }}
+      ENVIRONMENT_TAG: ${{ vars.ENVIRONMENT_TAG || 'mvp' }}
+      ASG_NAME: ${{ vars.ASG_NAME || 'snake-mvp-asg' }}
       APP_REF: main
       BUILD_TARGET: api/snake_server.cpp
-      DOMAIN_NAME: ${{ vars.DOMAIN_NAME }}
+      DOMAIN_NAME: ${{ vars.DOMAIN_NAME || 'terrariumsnake.com' }}
       APP_PORT: ${{ vars.APP_PORT || '8080' }}
     steps:
       - name: Checkout

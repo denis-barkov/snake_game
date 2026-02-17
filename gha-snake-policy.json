@@ -1,0 +1,24 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ReadEc2ForTargetSelection",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeInstances"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "RunAndReadSsmCommands",
+      "Effect": "Allow",
+      "Action": [
+        "ssm:SendCommand",
+        "ssm:ListCommandInvocations",
+        "ssm:GetCommandInvocation",
+        "ssm:DescribeInstanceInformation"
+      ],
+      "Resource": "*"
+    }
+  ]
+}

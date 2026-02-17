@@ -4,6 +4,7 @@ set -euo pipefail
 REGION="${AWS_REGION:-us-east-1}"
 PROJECT_TAG="${PROJECT_TAG:-snake}"
 ENVIRONMENT_TAG="${ENVIRONMENT_TAG:-mvp}"
+ASG_NAME="${ASG_NAME:-${PROJECT_TAG}-${ENVIRONMENT_TAG}-asg}"
 APP_REF="${APP_REF:-main}"
 BUILD_TARGET="${BUILD_TARGET:-api/snake_server.cpp}"
 DOMAIN_NAME="${DOMAIN_NAME:-terrariumsnake.com}"
@@ -14,11 +15,28 @@ SSM_POLL_ATTEMPTS="${SSM_POLL_ATTEMPTS:-20}"
 SSM_POLL_SLEEP_SECONDS="${SSM_POLL_SLEEP_SECONDS:-15}"
 
 find_instance() {
+  local ids
+  ids="$(
+    aws ec2 describe-instances \
+      --region "$REGION" \
+      --filters \
+        "Name=tag:project,Values=${PROJECT_TAG}" \
+        "Name=tag:environment,Values=${ENVIRONMENT_TAG}" \
+        "Name=instance-state-name,Values=running" \
+      --query 'Reservations[].Instances[].InstanceId' \
+      --output text
+  )"
+
+  if [[ -n "$ids" && "$ids" != "None" ]]; then
+    echo "$ids"
+    return 0
+  fi
+
+  # Fallback: find by ASG system tag if project/environment tags are missing or mismatched.
   aws ec2 describe-instances \
     --region "$REGION" \
     --filters \
-      "Name=tag:project,Values=${PROJECT_TAG}" \
-      "Name=tag:environment,Values=${ENVIRONMENT_TAG}" \
+      "Name=tag:aws:autoscaling:groupName,Values=${ASG_NAME}" \
       "Name=instance-state-name,Values=running" \
     --query 'Reservations[].Instances[].InstanceId' \
     --output text
@@ -34,7 +52,7 @@ for _ in $(seq 1 "$POLL_ATTEMPTS"); do
 done
 
 if [[ -z "$INSTANCE_IDS" || "$INSTANCE_IDS" == "None" ]]; then
-  echo "No running EC2 found with tags project=${PROJECT_TAG}, environment=${ENVIRONMENT_TAG} in ${REGION}."
+  echo "No running EC2 found by tags project=${PROJECT_TAG}, environment=${ENVIRONMENT_TAG} or ASG=${ASG_NAME} in ${REGION}."
   exit 2
 fi
 
