@@ -130,7 +130,7 @@ COMMAND_ID="$(
 \"  location /me/ { proxy_pass http://127.0.0.1:${APP_PORT}; }\",
 \"  location /snakes/ { proxy_pass http://127.0.0.1:${APP_PORT}; }\",
 \"  location /game/ { proxy_pass http://127.0.0.1:${APP_PORT}; }\",
-\"  location / { try_files \\$uri \\$uri/ /index.html; }\",
+\"  location / { try_files \\\$uri \\\$uri/ /index.html; }\",
 \"}\",
 \"EOF_NGINX\",
 \"fi\",
