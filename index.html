@@ -26,9 +26,14 @@
     }
     .hero h1 { margin: 0 0 6px 0; font-size: 26px; }
     .hero p { margin: 0; color: #2f4730; }
-    .layout { display: flex; gap: 16px; }
-    #left { width: 260px; }
+    .layout { display: flex; gap: 16px; align-items: flex-start; }
+    #left { width: 260px; flex: 0 0 260px; }
     #game { flex: 1; }
+    #game-board-wrap {
+      overflow: auto;
+      max-width: 100%;
+      padding-bottom: 4px;
+    }
 
     #game-board {
       display: grid;
@@ -64,6 +69,33 @@
     .snake-item.active { outline: 2px solid #333; }
     .badge { width: 16px; height: 16px; border-radius: 4px; display: inline-block; margin-right: 8px; }
     small { color: #666; }
+
+    @media (max-width: 980px) {
+      .layout {
+        flex-direction: column;
+      }
+      #left {
+        width: 100%;
+        flex: 1 1 auto;
+      }
+      #game {
+        width: 100%;
+      }
+    }
+
+    @media (max-width: 640px) {
+      body {
+        margin: 10px;
+      }
+      .hero {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+      .hero img {
+        width: 64px;
+        height: 64px;
+      }
+    }
   </style>
 </head>
 <body>
@@ -98,7 +130,9 @@
       <div><strong>Live Game</strong></div>
       <div>Tick: <span id="tick">0</span></div>
     </div>
-    <div id="game-board"></div>
+    <div id="game-board-wrap">
+      <div id="game-board"></div>
+    </div>
   </div>
   </div>
 
