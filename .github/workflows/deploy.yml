@@ -14,6 +14,8 @@ jobs:
       ENVIRONMENT_TAG: ${{ vars.ENVIRONMENT_TAG || 'mvp' }}
       APP_REF: main
       BUILD_TARGET: api/snake_server.cpp
+      DOMAIN_NAME: ${{ vars.DOMAIN_NAME || 'terrariumsnake.com' }}
+      APP_PORT: ${{ vars.APP_PORT || '8080' }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
