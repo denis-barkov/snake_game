@@ -99,8 +99,7 @@ if ! command -v caddy >/dev/null 2>&1; then
   chmod +x /usr/local/bin/caddy
 fi
 
-if command -v caddy >/dev/null 2>&1 && [ ! -f /etc/systemd/system/caddy.service ] && [ ! -f /usr/lib/systemd/system/caddy.service ]; then
-  useradd --system --home /var/lib/caddy --shell /usr/sbin/nologin caddy >/dev/null 2>&1 || true
+if [ -x /usr/local/bin/caddy ]; then
   mkdir -p /etc/caddy /var/lib/caddy /var/log/caddy
   cat >/etc/systemd/system/caddy.service <<EOF
 [Unit]
@@ -109,8 +108,8 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-User=caddy
-Group=caddy
+User=root
+Group=root
 ExecStart=/usr/local/bin/caddy run --environ --config /etc/caddy/Caddyfile
 ExecReload=/usr/local/bin/caddy reload --config /etc/caddy/Caddyfile
 Restart=on-failure
