@@ -1,0 +1,106 @@
+#!/bin/bash
+set -euo pipefail
+
+exec > >(tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1
+
+NAME_PREFIX="${name_prefix}"
+APP_PORT="${app_port}"
+EIP_ALLOC_ID="${eip_allocation_id}"
+DOMAIN_NAME="${domain_name}"
+LE_EMAIL="${letsencrypt_email}"
+
+dnf -y update
+
+# Build/runtime deps + AWS tools (avoid curl/curl-minimal conflicts on AL2023)
+dnf -y install git clang sqlite-devel boost-devel amazon-cloudwatch-agent awscli
+
+# ---- CloudWatch Agent ----
+mkdir -p /opt/aws/amazon-cloudwatch-agent/etc
+echo "${cwagent_config_b64}" | base64 -d > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
+/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
+  -a fetch-config -m ec2 \
+  -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json -s
+
+# ---- App build/deploy ----
+mkdir -p /opt/snake
+cd /opt/snake
+
+if [ ! -d repo ]; then
+  git clone "${app_git_repo}" repo
+fi
+
+cd repo
+git fetch --all
+git checkout "${app_git_ref}"
+
+mkdir -p /var/www/snake
+cp -f /opt/snake/repo/index.html /var/www/snake/index.html
+sed -i 's|const API = "http://127.0.0.1:8080";|const API = window.location.origin;|' /var/www/snake/index.html || true
+
+clang++ -std=c++17 -O2 -pthread "${app_build_target}" \
+  -o /opt/snake/snake_server -lboost_system -lsqlite3
+
+cat >/etc/snake.env <<EOF
+${env_lines}
+EOF
+
+cat >/etc/systemd/system/snake.service <<EOF
+[Unit]
+Description=Snake WebSocket Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/snake
+EnvironmentFile=/etc/snake.env
+ExecStart=/opt/snake/snake_server serve
+Restart=always
+RestartSec=2
+StandardOutput=append:/var/log/snake_server.log
+StandardError=append:/var/log/snake_server.log
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+touch /var/log/snake_server.log
+chmod 0644 /var/log/snake_server.log
+
+systemctl daemon-reload
+systemctl enable snake
+systemctl start snake
+
+# ---- Elastic IP association ----
+if [ -n "$EIP_ALLOC_ID" ]; then
+  TOKEN=$(curl -sS -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+  INSTANCE_ID=$(curl -sS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-id)
+  AWS_REGION=$(curl -sS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/placement/region)
+  aws ec2 associate-address --region "$AWS_REGION" --allocation-id "$EIP_ALLOC_ID" --instance-id "$INSTANCE_ID" --allow-reassociation || true
+fi
+
+# ---- Caddy (TLS + reverse proxy) ----
+dnf -y install 'dnf-command(copr)'
+dnf -y copr enable @caddy/caddy
+dnf -y install caddy
+
+cat >/etc/caddy/Caddyfile <<EOF
+{
+  email $${LE_EMAIL}
+}
+
+$${DOMAIN_NAME} {
+  encode zstd gzip
+
+  @api path /auth/* /me/* /snakes/* /game/*
+  handle @api {
+    reverse_proxy 127.0.0.1:$${APP_PORT}
+  }
+
+  root * /var/www/snake
+  file_server
+}
+EOF
+
+systemctl enable caddy
+systemctl restart caddy

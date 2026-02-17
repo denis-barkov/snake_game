@@ -6,3 +6,4 @@
 api/httplib.h
 /snake_*
 /snake.*
+infra/ssh.auto.tfvars
