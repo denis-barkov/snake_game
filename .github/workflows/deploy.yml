@@ -9,12 +9,12 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     env:
-      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
       PROJECT_TAG: ${{ vars.PROJECT_TAG || 'snake' }}
-      ENVIRONMENT_TAG: ${{ vars.ENVIRONMENT_TAG || 'mvp' }}
+      ENVIRONMENT_TAG: ${{ vars.ENVIRONMENT_TAG }}
       APP_REF: main
       BUILD_TARGET: api/snake_server.cpp
-      DOMAIN_NAME: ${{ vars.DOMAIN_NAME || 'terrariumsnake.com' }}
+      DOMAIN_NAME: ${{ vars.DOMAIN_NAME }}
       APP_PORT: ${{ vars.APP_PORT || '8080' }}
     steps:
       - name: Checkout
@@ -44,4 +44,5 @@ jobs:
             --output table
 
       - name: Deploy To Tagged Environment
+        timeout-minutes: 1
         run: bash infra/scripts/deploy_app.sh
