@@ -5,7 +5,28 @@
   <meta name="viewport" content="width=device-width,initial-scale=1.0" />
   <title>Online Snake (SSE)</title>
   <style>
-    body { font-family: Arial, sans-serif; display: flex; gap: 16px; margin: 16px; }
+    body { font-family: Arial, sans-serif; margin: 16px; background: #f8fbf7; color: #1a1a1a; }
+    .hero {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      border: 1px solid #d9e6d2;
+      border-radius: 12px;
+      padding: 14px;
+      margin-bottom: 16px;
+      background: #ffffff;
+    }
+    .hero img {
+      width: 72px;
+      height: 72px;
+      object-fit: contain;
+      border-radius: 10px;
+      background: #eef6e9;
+      padding: 6px;
+    }
+    .hero h1 { margin: 0 0 6px 0; font-size: 26px; }
+    .hero p { margin: 0; color: #2f4730; }
+    .layout { display: flex; gap: 16px; }
     #left { width: 260px; }
     #game { flex: 1; }
 
@@ -46,6 +67,15 @@
   </style>
 </head>
 <body>
+  <div class="hero">
+    <img src="src/images/snake_logo.png" alt="Terrarium Snake Club logo" />
+    <div>
+      <h1>Terrarium Snake Club</h1>
+      <p>welcome the new world of the gaiming! we are currently testing the progect - it wil be avalible very soon. Keep checking!</p>
+    </div>
+  </div>
+
+  <div class="layout">
   <div id="left">
     <div class="panel">
       <div class="row"><strong>Login (optional)</strong></div>
@@ -69,6 +99,7 @@
       <div>Tick: <span id="tick">0</span></div>
     </div>
     <div id="game-board"></div>
+  </div>
   </div>
 
 <script>
