@@ -159,7 +159,8 @@ COMMAND_ID="$(
 \"systemctl daemon-reload || true\",
 \"systemctl restart snake\",
 \"systemctl is-active snake\",
-\"if command -v caddy >/dev/null 2>&1; then systemctl daemon-reload || true; systemctl stop nginx >/dev/null 2>&1 || true; systemctl disable nginx >/dev/null 2>&1 || true; systemctl enable --now caddy; systemctl is-active caddy; else nginx -t; systemctl enable --now nginx; systemctl is-active nginx; fi\"
+\"if command -v caddy >/dev/null 2>&1; then systemctl daemon-reload || true; systemctl stop nginx >/dev/null 2>&1 || true; systemctl disable nginx >/dev/null 2>&1 || true; systemctl enable --now caddy || true; fi\",
+\"if command -v caddy >/dev/null 2>&1 && systemctl is-active --quiet caddy; then systemctl is-active caddy; else nginx -t; systemctl enable --now nginx; systemctl is-active nginx; fi\"
 ]" \
     --query 'Command.CommandId' \
     --output text
