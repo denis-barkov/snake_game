@@ -9,3 +9,7 @@ output "eip_allocation_id" {
 output "asg_name" {
   value = aws_autoscaling_group.this.name
 }
+
+output "instance_public_ip" {
+  value = try(data.aws_instances.asg_instances.public_ips[0], null)
+}

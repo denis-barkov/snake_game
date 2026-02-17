@@ -117,6 +117,17 @@ resource "aws_autoscaling_group" "this" {
   }
 }
 
+data "aws_instances" "asg_instances" {
+  instance_state_names = ["pending", "running", "stopping", "stopped"]
+
+  filter {
+    name   = "tag:aws:autoscaling:groupName"
+    values = [aws_autoscaling_group.this.name]
+  }
+
+  depends_on = [aws_autoscaling_group.this]
+}
+
 # Alarms (MVP)
 resource "aws_cloudwatch_metric_alarm" "cpu_high" {
   alarm_name          = "${var.name_prefix}-cpu-high"
