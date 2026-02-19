@@ -137,7 +137,7 @@
   </div>
 
 <script>
-  const API = window.location.origin;
+  const API = window.location.protocol === "file:" ? "http://127.0.0.1:8080" : window.location.origin;
 
   let token = null;
   let myUserId = null;

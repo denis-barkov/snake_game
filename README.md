@@ -5,7 +5,7 @@
     `curl -L https://raw.githubusercontent.com/yhirose/cpp-httplib/master/httplib.h -o api/httplib.h`
 - compile: `clang++ -std=c++17 -O2 -pthread api/snake_server.cpp -lsqlite3 -o snake_server`
 - start the server: `./snake_server serve`
-- Open the front `index.html` to play
+- Open `index.html` to play (works from `file://` and uses local API `http://127.0.0.1:8080`)
 
 ### Seed / reset data
 
