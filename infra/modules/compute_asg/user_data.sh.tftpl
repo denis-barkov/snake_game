@@ -108,6 +108,68 @@ StandardError=append:/var/log/snake_server.log
 WantedBy=multi-user.target
 EOF
 
+if [ -f /opt/snake/repo/tools/snake-admin.sh ]; then
+  install -m 0755 /opt/snake/repo/tools/snake-admin.sh /usr/local/bin/snake-admin
+else
+  echo "Missing /opt/snake/repo/tools/snake-admin.sh"
+  exit 1
+fi
+
+cat >/etc/systemd/system/snake-seed.service <<EOF
+[Unit]
+Description=Seed Snake DynamoDB data
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/snake-admin seed
+EOF
+
+cat >/etc/systemd/system/snake-reset.service <<EOF
+[Unit]
+Description=Reset Snake DynamoDB data
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/snake-admin reset
+EOF
+
+cat >/etc/systemd/system/snake-reset-seed.service <<EOF
+[Unit]
+Description=Reset and seed Snake DynamoDB data
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/snake-admin reset-seed
+EOF
+
+cat >/etc/systemd/system/snake-reload.service <<EOF
+[Unit]
+Description=Reload Snake state from DynamoDB (no restart)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/snake-admin reload
+EOF
+
+cat >/etc/systemd/system/snake-seed-reload.service <<EOF
+[Unit]
+Description=Seed Snake DynamoDB data and reload running server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/snake-admin seed-reload
+EOF
+
 touch /var/log/snake_server.log
 chmod 0644 /var/log/snake_server.log
 

@@ -52,6 +52,24 @@ local-reset:
 	DYNAMO_TABLE_USERS=$(LOCAL_DYNAMO_USERS) DYNAMO_TABLE_SNAKE_CHECKPOINTS=$(LOCAL_DYNAMO_SNAKE) DYNAMO_TABLE_EVENT_LEDGER=$(LOCAL_DYNAMO_EVENTS) DYNAMO_TABLE_SETTINGS=$(LOCAL_DYNAMO_SETTINGS) \
 	./snake_server reset
 
+local-admin:
+	@if [ -z "$(CMD)" ]; then \
+	  echo "Pass CMD=<seed|reset|reload|seed-reload|reset-seed|reset-seed-reload>"; \
+	  exit 1; \
+	fi
+	DYNAMO_ENDPOINT=$(LOCAL_DYNAMO_ENDPOINT) AWS_REGION=$(AWS_REGION) DYNAMO_REGION=$(AWS_REGION) AWS_ACCESS_KEY_ID=local AWS_SECRET_ACCESS_KEY=local \
+	DYNAMO_TABLE_USERS=$(LOCAL_DYNAMO_USERS) DYNAMO_TABLE_SNAKE_CHECKPOINTS=$(LOCAL_DYNAMO_SNAKE) DYNAMO_TABLE_EVENT_LEDGER=$(LOCAL_DYNAMO_EVENTS) DYNAMO_TABLE_SETTINGS=$(LOCAL_DYNAMO_SETTINGS) \
+	bash tools/snake-admin.sh $(CMD)
+
+local-reload:
+	@$(MAKE) local-admin CMD=reload
+
+local-seed-reload:
+	@$(MAKE) local-admin CMD=seed-reload
+
+local-reset-seed-reload:
+	@$(MAKE) local-admin CMD=reset-seed-reload
+
 aws-init:
 	AWS_PROFILE=$(PROFILE) terraform -chdir=$(TF_DIR) init -upgrade
 

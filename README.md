@@ -47,6 +47,20 @@ make local-reset
 make local-seed
 ```
 
+Local admin CLI (mirrors EC2 verbs):
+```bash
+make local-admin CMD=reload
+make local-admin CMD=seed-reload
+make local-admin CMD=reset-seed-reload
+```
+
+Shortcuts:
+```bash
+make local-reload
+make local-seed-reload
+make local-reset-seed-reload
+```
+
 Stop local Dynamo:
 ```bash
 make local-dynamo-down
@@ -94,25 +108,24 @@ export DYNAMO_TABLE_SETTINGS=snake-mvp-settings
 On the EC2 host:
 
 ```bash
-sudo systemctl stop snake
-cd /opt/snake
-
-# optional full reset
-sudo /opt/snake/snake_server reset
-
-# seed users/snakes
-sudo /opt/snake/snake_server seed
-
-sudo systemctl start snake
+sudo snake-admin reset-seed-reload
 sudo systemctl status snake --no-pager
 ```
 
 Seed only (without reset):
 
 ```bash
-sudo systemctl stop snake
-sudo /opt/snake/snake_server seed
-sudo systemctl start snake
+sudo snake-admin seed-reload
+```
+
+Systemd alternatives:
+
+```bash
+sudo systemctl start snake-seed
+sudo systemctl start snake-reset
+sudo systemctl start snake-reset-seed
+sudo systemctl start snake-reload
+sudo systemctl start snake-seed-reload
 ```
 
 ## Modes
@@ -120,6 +133,8 @@ sudo systemctl start snake
 - `./snake_server serve`
 - `./snake_server seed`
 - `./snake_server reset`
+
+Admin commands are shared between local and AWS via `tools/snake-admin.sh`.
 
 Default seeded users:
 - `user1 / pass1`

@@ -22,6 +22,7 @@
 #include <unordered_set>
 #include <utility>
 #include <vector>
+#include <csignal>
 
 #include <aws/core/Aws.h>
 
@@ -40,6 +41,11 @@ static int GRID_H = DEFAULT_H;
 
 static int FOOD_COUNT = 1;
 static int MAX_SNAKES_PER_USER = 3;
+static volatile sig_atomic_t g_reload_requested = 0;
+
+static void on_reload_signal(int) {
+  g_reload_requested = 1;
+}
 
 static uint64_t now_ms() {
   using namespace std::chrono;
@@ -661,6 +667,9 @@ int main(int argc, char** argv) {
   string latest_snapshot = state_to_json(game.snapshot());
   uint64_t snapshot_seq = 1;
 
+  signal(SIGUSR1, on_reload_signal);
+  signal(SIGHUP, on_reload_signal);
+
   thread loop([&] {
     using clock = chrono::steady_clock;
     using ms = chrono::milliseconds;
@@ -675,6 +684,17 @@ int main(int argc, char** argv) {
     auto next_log_at = clock::now() + chrono::seconds(5);
 
     while (running.load()) {
+      if (g_reload_requested) {
+        g_reload_requested = 0;
+        game.load_from_storage_or_seed_positions();
+        string snap = state_to_json(game.snapshot());
+        {
+          lock_guard<mutex> lock(snapshot_mu);
+          latest_snapshot = std::move(snap);
+          ++snapshot_seq;
+        }
+      }
+
       auto now = clock::now();
 
       while (now >= next_tick) {
