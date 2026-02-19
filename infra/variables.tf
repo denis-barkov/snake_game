@@ -88,7 +88,10 @@ variable "app_env" {
   default = {
     SNAKE_W            = "40"
     SNAKE_H            = "20"
-    SNAKE_TICK_MS      = "150"
     SNAKE_MAX_PER_USER = "3"
+    TICK_HZ            = "20"
+    SPECTATOR_HZ       = "10"
+    ENABLE_BROADCAST   = "true"
+    LOG_HZ             = "true"
   }
 }

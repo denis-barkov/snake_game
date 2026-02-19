@@ -111,7 +111,7 @@ COMMAND_ID="$(
 \"chmod 755 /var/www/snake || true\",
 \"chmod 644 /var/www/snake/index.html || true\",
 \"if [ -d /var/www/snake/src ]; then find /var/www/snake/src -type d -exec chmod 755 {} \\;; find /var/www/snake/src -type f -exec chmod 644 {} \\;; fi\",
-\"clang++ -std=c++17 -O2 -pthread ${BUILD_TARGET} -o /opt/snake/snake_server -lboost_system -lsqlite3\",
+\"clang++ -std=c++17 -O2 -pthread ${BUILD_TARGET} api/protocol/encode_json.cpp config/runtime_config.cpp -o /opt/snake/snake_server -lboost_system -lsqlite3\",
 \"if ! command -v caddy >/dev/null 2>&1; then dnf -y install dnf-plugins-core ca-certificates curl tar >/dev/null || true; dnf config-manager --add-repo https://dl.cloudsmith.io/public/caddy/stable/rpm.repo >/dev/null 2>&1 || true; rpm --import https://dl.cloudsmith.io/public/caddy/stable/gpg.key >/dev/null 2>&1 || true; dnf -y install caddy >/dev/null 2>&1 || true; fi\",
 \"if ! command -v caddy >/dev/null 2>&1; then curl -fsSL 'https://caddyserver.com/api/download?os=linux&arch=arm64&p=github.com/caddyserver/caddy/v2' -o /usr/local/bin/caddy && chmod +x /usr/local/bin/caddy; fi\",
 \"if [ -x /usr/local/bin/caddy ]; then mkdir -p /etc/caddy /var/lib/caddy /var/log/caddy; cat > /etc/systemd/system/caddy.service <<'EOF_CADDY_UNIT'\",

@@ -51,7 +51,7 @@ if [ -d /var/www/snake/src ]; then
   find /var/www/snake/src -type f -exec chmod 644 {} \;
 fi
 
-clang++ -std=c++17 -O2 -pthread "${app_build_target}" \
+clang++ -std=c++17 -O2 -pthread "${app_build_target}" api/protocol/encode_json.cpp config/runtime_config.cpp \
   -o /opt/snake/snake_server -lboost_system -lsqlite3
 
 cat >/etc/snake.env <<EOF

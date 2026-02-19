@@ -23,6 +23,8 @@
 
 #include <sqlite3.h>
 #include "httplib.h"
+#include "protocol/encode_json.h"
+#include "../config/runtime_config.h"
 
 using namespace std;
 
@@ -32,7 +34,6 @@ static constexpr int DEFAULT_H = 20;
 static int GRID_W = DEFAULT_W;
 static int GRID_H = DEFAULT_H;
 
-static int TICK_MS = 150; // broadcast + game tick base
 static int FOOD_COUNT = 1;
 
 static int MAX_SNAKES_PER_USER = 3; // env override
@@ -719,39 +720,37 @@ static optional<int> get_json_int_field(const string& body, const string& key) {
 
 // -------------------- Server --------------------
 
-static string state_to_json(const GameState& gs) {
-  ostringstream o;
-  o << "{";
-  o << "\"tick\":" << gs.tick << ",";
-  o << "\"w\":" << GRID_W << ",";
-  o << "\"h\":" << GRID_H << ",";
-  o << "\"foods\":[";
-  for (size_t i=0;i<gs.foods.size();i++){
-    o << "{\"x\":"<<gs.foods[i].x<<",\"y\":"<<gs.foods[i].y<<"}";
-    if (i+1<gs.foods.size()) o << ",";
+static protocol::Snapshot to_protocol_snapshot(const GameState& gs) {
+  protocol::Snapshot snap;
+  snap.tick = gs.tick;
+  snap.w = GRID_W;
+  snap.h = GRID_H;
+
+  snap.foods.reserve(gs.foods.size());
+  for (const auto& f : gs.foods) {
+    snap.foods.push_back(protocol::Vec2{f.x, f.y});
   }
-  o << "],";
-  o << "\"snakes\":[";
-  for (size_t i=0;i<gs.snakes.size();i++){
-    const auto& s = gs.snakes[i];
-    o << "{";
-    o << "\"id\":"<<s.id<<",";
-    o << "\"user_id\":"<<s.user_id<<",";
-    o << "\"color\":\""<<json_escape(s.color)<<"\",";
-    o << "\"dir\":"<<(int)s.dir<<",";
-    o << "\"paused\":"<<(s.paused?"true":"false")<<",";
-    o << "\"body\":[";
-    for (size_t j=0;j<s.body.size();j++){
-      o << "{\"x\":"<<s.body[j].x<<",\"y\":"<<s.body[j].y<<"}";
-      if (j+1<s.body.size()) o << ",";
+
+  snap.snakes.reserve(gs.snakes.size());
+  for (const auto& s : gs.snakes) {
+    protocol::SnakeState out;
+    out.id = s.id;
+    out.user_id = s.user_id;
+    out.color = s.color;
+    out.dir = static_cast<int>(s.dir);
+    out.paused = s.paused;
+    out.body.reserve(s.body.size());
+    for (const auto& p : s.body) {
+      out.body.push_back(protocol::Vec2{p.x, p.y});
     }
-    o << "]";
-    o << "}";
-    if (i+1<gs.snakes.size()) o << ",";
+    snap.snakes.push_back(std::move(out));
   }
-  o << "]";
-  o << "}";
-  return o.str();
+
+  return snap;
+}
+
+static string state_to_json(const GameState& gs) {
+  return protocol::encode_snapshot_json(to_protocol_snapshot(gs));
 }
 
 static optional<int> require_auth_user(DB& db, const httplib::Request& req) {
@@ -805,15 +804,24 @@ static void seed(DB& db, GameEngine& game) {
 int main(int argc, char** argv) {
   string mode = (argc >= 2) ? argv[1] : "serve";
 
+  RuntimeConfig runtime_cfg = RuntimeConfig::FromEnv();
+
   const char* envW = getenv("SNAKE_W");
   const char* envH = getenv("SNAKE_H");
-  const char* envTick = getenv("SNAKE_TICK_MS");
   const char* envMax = getenv("SNAKE_MAX_PER_USER");
 
   if (envW) GRID_W = max(10, atoi(envW));
   if (envH) GRID_H = max(10, atoi(envH));
-  if (envTick) TICK_MS = max(30, atoi(envTick));
   if (envMax) MAX_SNAKES_PER_USER = max(1, atoi(envMax));
+
+  if (runtime_cfg.log_hz) {
+    cout << "RuntimeConfig: "
+         << "TICK_HZ=" << runtime_cfg.tick_hz
+         << ", SPECTATOR_HZ=" << runtime_cfg.spectator_hz
+         << ", PLAYER_HZ=" << runtime_cfg.player_hz
+         << ", ENABLE_BROADCAST=" << (runtime_cfg.enable_broadcast ? "true" : "false")
+         << "\n";
+  }
 
   DB db;
   if (!db.open("snake.db")) {
@@ -839,12 +847,58 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  // Game loop thread (nonstop)
+  // Game loop thread: simulation runs at tick_hz, snapshots publish at spectator_hz.
   atomic<bool> running{true};
+  mutex snapshot_mu;
+  string latest_snapshot = state_to_json(game.snapshot());
+  uint64_t snapshot_seq = 1;
+
   thread loop([&]{
+    using clock = chrono::steady_clock;
+    using ms = chrono::milliseconds;
+
+    const ms tick_dt(runtime_cfg.TickIntervalMs());
+    const ms spectator_dt(runtime_cfg.SpectatorIntervalMs());
+    auto next_tick = clock::now() + tick_dt;
+    auto next_broadcast = clock::now() + spectator_dt;
+
+    uint64_t ticks_since_log = 0;
+    uint64_t broadcasts_since_log = 0;
+    auto next_log_at = clock::now() + chrono::seconds(5);
+
     while (running.load()) {
-      game.tick();
-      this_thread::sleep_for(chrono::milliseconds(TICK_MS));
+      auto now = clock::now();
+
+      while (now >= next_tick) {
+        game.tick();
+        ++ticks_since_log;
+        next_tick += tick_dt;
+        now = clock::now();
+      }
+
+      while (runtime_cfg.enable_broadcast && now >= next_broadcast) {
+        string snap = state_to_json(game.snapshot());
+        {
+          lock_guard<mutex> lock(snapshot_mu);
+          latest_snapshot = std::move(snap);
+          ++snapshot_seq;
+        }
+        ++broadcasts_since_log;
+        next_broadcast += spectator_dt;
+        now = clock::now();
+      }
+
+      if (runtime_cfg.log_hz && now >= next_log_at) {
+        cout << "[rate] ticks/5s=" << ticks_since_log
+             << ", broadcasts/5s=" << broadcasts_since_log << "\n";
+        ticks_since_log = 0;
+        broadcasts_since_log = 0;
+        next_log_at += chrono::seconds(5);
+      }
+
+      auto next_deadline = runtime_cfg.enable_broadcast ? min(next_tick, next_broadcast) : next_tick;
+      auto max_sleep_until = clock::now() + ms(5);
+      this_thread::sleep_until(min(next_deadline, max_sleep_until));
     }
   });
 
@@ -873,16 +927,22 @@ int main(int argc, char** argv) {
     res.set_chunked_content_provider(
       "text/event-stream",
       [&](size_t /*offset*/, httplib::DataSink& sink) {
-        uint64_t last_tick = 0;
+        uint64_t last_seq = 0;
         while (true) {
-          auto gs = game.snapshot();
-          if (gs.tick != last_tick) {
-            last_tick = gs.tick;
-            string payload = "event: frame\n";
-            payload += "data: " + state_to_json(gs) + "\n\n";
+          string payload;
+          {
+            lock_guard<mutex> lock(snapshot_mu);
+            if (snapshot_seq != last_seq) {
+              last_seq = snapshot_seq;
+              payload = "event: frame\n";
+              payload += "data: " + latest_snapshot + "\n\n";
+            }
+          }
+          if (!payload.empty()) {
             if (!sink.write(payload.data(), payload.size())) break;
           }
-          this_thread::sleep_for(chrono::milliseconds(TICK_MS / 2));
+          int poll_ms = max(1, runtime_cfg.SpectatorIntervalMs() / 2);
+          this_thread::sleep_for(chrono::milliseconds(poll_ms));
         }
         sink.done();
         return true;
