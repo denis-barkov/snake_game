@@ -1,59 +1,99 @@
 ## Snake Game
 
-- if don't have SqlLte yet: `brew install sqlite`
-- You also need the single-header HTTP library. Download httplib.h:
-    `curl -L https://raw.githubusercontent.com/yhirose/cpp-httplib/master/httplib.h -o api/httplib.h`
-- compile: `clang++ -std=c++17 -O2 -pthread api/snake_server.cpp api/protocol/encode_json.cpp config/runtime_config.cpp -lsqlite3 -o snake_server`
-- start the server: `./snake_server serve`
-- Open `index.html` to play (works from `file://` and uses local API `http://127.0.0.1:8080`)
+### Build
+
+Required libs:
+- `boost`
+- `aws-sdk-cpp` (DynamoDB + core)
+- single-header `cpp-httplib` in `api/httplib.h`
+
+Example build:
+```bash
+clang++ -std=c++17 -O2 -pthread \
+  api/snake_server.cpp \
+  api/protocol/encode_json.cpp \
+  api/storage/dynamo_storage.cpp \
+  api/storage/storage_factory.cpp \
+  config/runtime_config.cpp \
+  -lboost_system -laws-cpp-sdk-dynamodb -laws-cpp-sdk-core \
+  -o snake_server
+```
+
+### Protocol source of truth
+
+Snapshot JSON protocol is defined in `api/protocol`.
+Do not inline snapshot JSON shapes in server code.
 
 ### Runtime Hz config
 
-Environment variables:
 - `TICK_HZ` (default `20`, min `5`, max `60`)
 - `SPECTATOR_HZ` (default `10`, min `1`, max `60`)
 - `PLAYER_HZ` (placeholder, currently unused)
 - `ENABLE_BROADCAST` (`true`/`false`, default `true`)
 - `LOG_HZ` (`true`/`false`, default `true`)
 
-Quick test:
+## Local DynamoDB (Docker)
+
+### Quick (Make)
+
 ```bash
-export TICK_HZ=20
-export SPECTATOR_HZ=10
+make local-setup
+make local-run
+```
+
+Reset local data:
+```bash
+make local-reset
+make local-seed
+```
+
+Stop local Dynamo:
+```bash
+make local-dynamo-down
+```
+
+### Full commands
+
+```bash
+docker compose -f docker/dynamodb-local.yml up -d
+
+export DYNAMO_ENDPOINT=http://127.0.0.1:8000
+export AWS_REGION=us-east-1
+export DYNAMO_REGION=us-east-1
+export AWS_ACCESS_KEY_ID=local
+export AWS_SECRET_ACCESS_KEY=local
+
+export DYNAMO_TABLE_USERS=snake-local-users
+export DYNAMO_TABLE_SNAKE_CHECKPOINTS=snake-local-snake_checkpoints
+export DYNAMO_TABLE_EVENT_LEDGER=snake-local-event_ledger
+export DYNAMO_TABLE_SETTINGS=snake-local-settings
+
+python3 tools/create_local_tables.py
+python3 tools/seed_local.py
+
 ./snake_server serve
 ```
 
-Expected:
-- Game simulation runs at ~20 ticks/sec
-- SSE `/game/stream` publishes ~10 frames/sec
+## AWS DynamoDB (EC2)
 
-### Protocol source of truth
+Use instance role (no `DYNAMO_ENDPOINT`).
 
-Snapshot protocol JSON is defined in `api/protocol`.
-Do not inline snapshot JSON shapes in server code.
+```bash
+export AWS_REGION=us-east-1
+export DYNAMO_REGION=us-east-1
+export DYNAMO_TABLE_USERS=snake-mvp-users
+export DYNAMO_TABLE_SNAKE_CHECKPOINTS=snake-mvp-snake_checkpoints
+export DYNAMO_TABLE_EVENT_LEDGER=snake-mvp-event_ledger
+export DYNAMO_TABLE_SETTINGS=snake-mvp-settings
 
-### Seed / reset data
+./snake_server serve
+```
 
-Server modes:
+## Modes
+
 - `./snake_server serve`
 - `./snake_server seed`
 - `./snake_server reset`
-
-Local seed/reset (from project root):
-```bash
-./snake_server reset
-./snake_server seed
-./snake_server serve
-```
-
-EC2 seed/reset (same DB used by systemd service):
-```bash
-sudo systemctl stop snake
-cd /opt/snake
-sudo ./snake_server reset
-sudo ./snake_server seed
-sudo systemctl start snake
-```
 
 Default seeded users:
 - `user1 / pass1`

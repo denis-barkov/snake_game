@@ -4,7 +4,7 @@ This provisions an MVP environment for the Snake WebSocket server:
 - VPC (10.0.0.0/16), 1 public subnet, IGW, public route table
 - EC2 in AutoScalingGroup (min=1 desired=1 max=2), Amazon Linux 2023 ARM, t4g.small
 - Public EIP attached (MVP; best-effort when ASG scales beyond 1)
-- DynamoDB tables (PAY_PER_REQUEST): users, game_progress, settings
+- DynamoDB tables (PAY_PER_REQUEST): users, snake_checkpoints, event_ledger, settings
 - CloudWatch Log Group + CloudWatch Agent shipping /var/log/snake_server.log
 - CPU + Status alarms (MVP)
 - SSM Managed Instance Core (recommended instead of SSH)

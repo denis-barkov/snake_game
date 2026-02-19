@@ -12,7 +12,7 @@ LE_EMAIL="${letsencrypt_email}"
 dnf -y update
 
 # Build/runtime deps + AWS tools (avoid curl/curl-minimal conflicts on AL2023)
-dnf -y install git clang sqlite-devel boost-devel amazon-cloudwatch-agent amazon-ssm-agent awscli
+dnf -y install git clang boost-devel aws-sdk-cpp-devel amazon-cloudwatch-agent amazon-ssm-agent awscli
 
 # Ensure SSM registration is enabled for this instance
 systemctl enable amazon-ssm-agent
@@ -51,8 +51,14 @@ if [ -d /var/www/snake/src ]; then
   find /var/www/snake/src -type f -exec chmod 644 {} \;
 fi
 
-clang++ -std=c++17 -O2 -pthread "${app_build_target}" api/protocol/encode_json.cpp config/runtime_config.cpp \
-  -o /opt/snake/snake_server -lboost_system -lsqlite3
+clang++ -std=c++17 -O2 -pthread \
+  "${app_build_target}" \
+  api/protocol/encode_json.cpp \
+  api/storage/dynamo_storage.cpp \
+  api/storage/storage_factory.cpp \
+  config/runtime_config.cpp \
+  -o /opt/snake/snake_server \
+  -lboost_system -laws-cpp-sdk-dynamodb -laws-cpp-sdk-core
 
 cat >/etc/snake.env <<EOF
 ${env_lines}

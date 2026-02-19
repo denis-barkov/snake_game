@@ -42,7 +42,8 @@ module "iam" {
 
   dynamodb_table_arns = [
     module.dynamodb.users_table_arn,
-    module.dynamodb.game_progress_table_arn,
+    module.dynamodb.snake_checkpoints_table_arn,
+    module.dynamodb.event_ledger_table_arn,
     module.dynamodb.settings_table_arn
   ]
 
@@ -83,11 +84,18 @@ module "compute" {
   asg_max     = 1
 
   # App deploy settings (you can point to your repo/binary)
-  app_git_repo      = var.app_git_repo
-  app_git_ref       = var.app_git_ref
-  app_build_target  = var.app_build_target
-  app_listen_port   = var.app_control_port
-  app_env           = var.app_env
+  app_git_repo     = var.app_git_repo
+  app_git_ref      = var.app_git_ref
+  app_build_target = var.app_build_target
+  app_listen_port  = var.app_control_port
+  app_env = merge(var.app_env, {
+    AWS_REGION                     = var.aws_region
+    DYNAMO_REGION                  = var.aws_region
+    DYNAMO_TABLE_USERS             = "${var.project}-${var.environment}-users"
+    DYNAMO_TABLE_SNAKE_CHECKPOINTS = "${var.project}-${var.environment}-snake_checkpoints"
+    DYNAMO_TABLE_EVENT_LEDGER      = "${var.project}-${var.environment}-event_ledger"
+    DYNAMO_TABLE_SETTINGS          = "${var.project}-${var.environment}-settings"
+  })
   domain_name       = var.domain_name
   letsencrypt_email = var.letsencrypt_email
   allow_ssh         = var.allow_ssh
