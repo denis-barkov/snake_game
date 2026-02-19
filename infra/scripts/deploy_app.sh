@@ -171,8 +171,7 @@ COMMAND_ID="$(
 
 echo "SSM command id: ${COMMAND_ID}"
 
-if ! aws ssm wait command-executed --region "$REGION" --command-id "$COMMAND_ID" --instance-id "$INSTANCE_ID"; then
-  echo "SSM command failed. Fetching command output..."
+dump_ssm_output() {
   aws ssm get-command-invocation \
     --region "$REGION" \
     --command-id "$COMMAND_ID" \
@@ -185,33 +184,55 @@ if ! aws ssm wait command-executed --region "$REGION" --command-id "$COMMAND_ID"
     --details \
     --query 'CommandInvocations[0].CommandPlugins[].{Name:Name,Status:Status,ResponseCode:ResponseCode,Output:Output}' \
     --output text || true
-  exit 4
-fi
+}
 
-STATUS="$(
-  aws ssm list-command-invocations \
-    --region "$REGION" \
-    --command-id "$COMMAND_ID" \
-    --details \
-    --query 'CommandInvocations[0].Status' \
-    --output text
-)"
+MAX_WAIT_SEC="${DEPLOY_TIMEOUT_SEC:-2400}"
+POLL_SEC=15
+ELAPSED=0
+STATUS="Pending"
+
+while true; do
+  STATUS="$(
+    aws ssm get-command-invocation \
+      --region "$REGION" \
+      --command-id "$COMMAND_ID" \
+      --instance-id "$INSTANCE_ID" \
+      --query 'Status' \
+      --output text 2>/dev/null || echo "Pending"
+  )"
+
+  echo "SSM status: ${STATUS} (${ELAPSED}s/${MAX_WAIT_SEC}s)"
+
+  case "$STATUS" in
+    Success)
+      break
+      ;;
+    Failed|Cancelled|TimedOut)
+      echo "SSM command failed. Fetching command output..."
+      dump_ssm_output
+      exit 4
+      ;;
+    Pending|InProgress|Delayed)
+      if [ "$ELAPSED" -ge "$MAX_WAIT_SEC" ]; then
+        echo "SSM command timed out after ${MAX_WAIT_SEC}s. Fetching command output..."
+        dump_ssm_output
+        exit 4
+      fi
+      sleep "$POLL_SEC"
+      ELAPSED=$((ELAPSED + POLL_SEC))
+      ;;
+    *)
+      echo "SSM command reached unexpected status '${STATUS}'. Fetching command output..."
+      dump_ssm_output
+      exit 4
+      ;;
+  esac
+done
 
 echo "Deploy status: ${STATUS}"
 
 if [[ "$STATUS" != "Success" ]]; then
-  aws ssm get-command-invocation \
-    --region "$REGION" \
-    --command-id "$COMMAND_ID" \
-    --instance-id "$INSTANCE_ID" \
-    --query '{Status:Status,StatusDetails:StatusDetails,ResponseCode:ResponseCode,StdOut:StandardOutputContent,StdErr:StandardErrorContent}' \
-    --output json || true
-  aws ssm list-command-invocations \
-    --region "$REGION" \
-    --command-id "$COMMAND_ID" \
-    --details \
-    --query 'CommandInvocations[0].CommandPlugins[].{Name:Name,Status:Status,ResponseCode:ResponseCode,Output:Output}' \
-    --output text || true
+  dump_ssm_output
   exit 4
 fi
 
