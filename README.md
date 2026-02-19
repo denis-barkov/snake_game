@@ -89,6 +89,32 @@ export DYNAMO_TABLE_SETTINGS=snake-mvp-settings
 ./snake_server serve
 ```
 
+### Seed on AWS via SSH
+
+On the EC2 host:
+
+```bash
+sudo systemctl stop snake
+cd /opt/snake
+
+# optional full reset
+sudo /opt/snake/snake_server reset
+
+# seed users/snakes
+sudo /opt/snake/snake_server seed
+
+sudo systemctl start snake
+sudo systemctl status snake --no-pager
+```
+
+Seed only (without reset):
+
+```bash
+sudo systemctl stop snake
+sudo /opt/snake/snake_server seed
+sudo systemctl start snake
+```
+
 ## Modes
 
 - `./snake_server serve`
