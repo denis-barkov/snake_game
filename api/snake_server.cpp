@@ -697,14 +697,14 @@ int main(int argc, char** argv) {
 
       auto now = clock::now();
 
-      while (now >= next_tick) {
+      if (now >= next_tick) {
         game.tick();
         ++ticks_since_log;
-        next_tick += tick_dt;
+        next_tick = now + tick_dt;
         now = clock::now();
       }
 
-      while (runtime_cfg.enable_broadcast && now >= next_broadcast) {
+      if (runtime_cfg.enable_broadcast && now >= next_broadcast) {
         string snap = state_to_json(game.snapshot());
         {
           lock_guard<mutex> lock(snapshot_mu);
@@ -712,7 +712,7 @@ int main(int argc, char** argv) {
           ++snapshot_seq;
         }
         ++broadcasts_since_log;
-        next_broadcast += spectator_dt;
+        next_broadcast = now + spectator_dt;
         now = clock::now();
       }
 
