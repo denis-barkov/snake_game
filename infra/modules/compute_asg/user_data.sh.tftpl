@@ -12,7 +12,23 @@ LE_EMAIL="${letsencrypt_email}"
 dnf -y update
 
 # Build/runtime deps + AWS tools (avoid curl/curl-minimal conflicts on AL2023)
-dnf -y install git clang boost-devel aws-sdk-cpp amazon-cloudwatch-agent amazon-ssm-agent awscli
+dnf -y install git clang boost-devel cmake gcc-c++ libcurl-devel openssl-devel zlib-devel \
+  amazon-cloudwatch-agent amazon-ssm-agent awscli
+
+# Some AL2023 repos do not provide aws-sdk-cpp packages; build once from source.
+if [ ! -f /usr/local/lib64/libaws-cpp-sdk-dynamodb.so ] && [ ! -f /usr/local/lib/libaws-cpp-sdk-dynamodb.so ]; then
+  if [ ! -d /opt/aws-sdk-cpp ]; then
+    git clone --depth 1 --branch 1.11.676 https://github.com/aws/aws-sdk-cpp.git /opt/aws-sdk-cpp
+  fi
+  cmake -S /opt/aws-sdk-cpp -B /opt/aws-sdk-cpp/build \
+    -DBUILD_ONLY="dynamodb" \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DENABLE_TESTING=OFF
+  cmake --build /opt/aws-sdk-cpp/build -j2
+  cmake --install /opt/aws-sdk-cpp/build
+  echo -e "/usr/local/lib64\n/usr/local/lib" >/etc/ld.so.conf.d/aws-sdk-cpp.conf
+  ldconfig || true
+fi
 
 # Ensure SSM registration is enabled for this instance
 systemctl enable amazon-ssm-agent
@@ -58,7 +74,8 @@ clang++ -std=c++17 -O2 -pthread \
   api/storage/storage_factory.cpp \
   config/runtime_config.cpp \
   -o /opt/snake/snake_server \
-  -lboost_system -laws-cpp-sdk-dynamodb -laws-cpp-sdk-core
+  -lboost_system -laws-cpp-sdk-dynamodb -laws-cpp-sdk-core \
+  -L/usr/local/lib64 -L/usr/local/lib
 
 cat >/etc/snake.env <<EOF
 ${env_lines}

@@ -97,7 +97,8 @@ COMMAND_ID="$(
     --comment "snake deploy from ${APP_REF}" \
     --parameters "commands=[
 \"set -euo pipefail\",
-\"dnf -y install git clang boost-devel aws-sdk-cpp >/dev/null\",
+\"dnf -y install git clang boost-devel cmake gcc-c++ libcurl-devel openssl-devel zlib-devel >/dev/null\",
+\"if [ ! -f /usr/local/lib64/libaws-cpp-sdk-dynamodb.so ] && [ ! -f /usr/local/lib/libaws-cpp-sdk-dynamodb.so ]; then if [ ! -d /opt/aws-sdk-cpp ]; then git clone --depth 1 --branch 1.11.676 https://github.com/aws/aws-sdk-cpp.git /opt/aws-sdk-cpp; fi; cmake -S /opt/aws-sdk-cpp -B /opt/aws-sdk-cpp/build -DBUILD_ONLY='dynamodb' -DCMAKE_BUILD_TYPE=Release -DENABLE_TESTING=OFF >/dev/null; cmake --build /opt/aws-sdk-cpp/build -j2 >/dev/null; cmake --install /opt/aws-sdk-cpp/build >/dev/null; echo -e '/usr/local/lib64\\n/usr/local/lib' >/etc/ld.so.conf.d/aws-sdk-cpp.conf; ldconfig || true; fi\",
 \"mkdir -p /opt/snake\",
 \"if [ ! -d /opt/snake/repo ]; then echo Missing /opt/snake/repo; exit 1; fi\",
 \"cd /opt/snake/repo\",
@@ -111,7 +112,7 @@ COMMAND_ID="$(
 \"chmod 755 /var/www/snake || true\",
 \"chmod 644 /var/www/snake/index.html || true\",
 \"if [ -d /var/www/snake/src ]; then find /var/www/snake/src -type d -exec chmod 755 {} \\;; find /var/www/snake/src -type f -exec chmod 644 {} \\;; fi\",
-\"clang++ -std=c++17 -O2 -pthread ${BUILD_TARGET} api/protocol/encode_json.cpp api/storage/dynamo_storage.cpp api/storage/storage_factory.cpp config/runtime_config.cpp -o /opt/snake/snake_server -lboost_system -laws-cpp-sdk-dynamodb -laws-cpp-sdk-core\",
+\"clang++ -std=c++17 -O2 -pthread ${BUILD_TARGET} api/protocol/encode_json.cpp api/storage/dynamo_storage.cpp api/storage/storage_factory.cpp config/runtime_config.cpp -o /opt/snake/snake_server -lboost_system -laws-cpp-sdk-dynamodb -laws-cpp-sdk-core -L/usr/local/lib64 -L/usr/local/lib\",
 \"if ! command -v caddy >/dev/null 2>&1; then dnf -y install dnf-plugins-core ca-certificates curl tar >/dev/null || true; dnf config-manager --add-repo https://dl.cloudsmith.io/public/caddy/stable/rpm.repo >/dev/null 2>&1 || true; rpm --import https://dl.cloudsmith.io/public/caddy/stable/gpg.key >/dev/null 2>&1 || true; dnf -y install caddy >/dev/null 2>&1 || true; fi\",
 \"if ! command -v caddy >/dev/null 2>&1; then curl -fsSL 'https://caddyserver.com/api/download?os=linux&arch=arm64&p=github.com/caddyserver/caddy/v2' -o /usr/local/bin/caddy && chmod +x /usr/local/bin/caddy; fi\",
 \"if [ -x /usr/local/bin/caddy ]; then mkdir -p /etc/caddy /var/lib/caddy /var/log/caddy; cat > /etc/systemd/system/caddy.service <<'EOF_CADDY_UNIT'\",
@@ -172,11 +173,17 @@ echo "SSM command id: ${COMMAND_ID}"
 
 if ! aws ssm wait command-executed --region "$REGION" --command-id "$COMMAND_ID" --instance-id "$INSTANCE_ID"; then
   echo "SSM command failed. Fetching command output..."
+  aws ssm get-command-invocation \
+    --region "$REGION" \
+    --command-id "$COMMAND_ID" \
+    --instance-id "$INSTANCE_ID" \
+    --query '{Status:Status,StatusDetails:StatusDetails,ResponseCode:ResponseCode,StdOut:StandardOutputContent,StdErr:StandardErrorContent}' \
+    --output json || true
   aws ssm list-command-invocations \
     --region "$REGION" \
     --command-id "$COMMAND_ID" \
     --details \
-    --query 'CommandInvocations[0].CommandPlugins[0].Output' \
+    --query 'CommandInvocations[0].CommandPlugins[].{Name:Name,Status:Status,ResponseCode:ResponseCode,Output:Output}' \
     --output text || true
   exit 4
 fi
@@ -193,11 +200,17 @@ STATUS="$(
 echo "Deploy status: ${STATUS}"
 
 if [[ "$STATUS" != "Success" ]]; then
+  aws ssm get-command-invocation \
+    --region "$REGION" \
+    --command-id "$COMMAND_ID" \
+    --instance-id "$INSTANCE_ID" \
+    --query '{Status:Status,StatusDetails:StatusDetails,ResponseCode:ResponseCode,StdOut:StandardOutputContent,StdErr:StandardErrorContent}' \
+    --output json || true
   aws ssm list-command-invocations \
     --region "$REGION" \
     --command-id "$COMMAND_ID" \
     --details \
-    --query 'CommandInvocations[0].CommandPlugins[0].Output' \
+    --query 'CommandInvocations[0].CommandPlugins[].{Name:Name,Status:Status,ResponseCode:ResponseCode,Output:Output}' \
     --output text || true
   exit 4
 fi
