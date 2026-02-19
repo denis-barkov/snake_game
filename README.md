@@ -32,6 +32,10 @@ Do not inline snapshot JSON shapes in server code.
 - `ENABLE_BROADCAST` (`true`/`false`, default `true`)
 - `LOG_HZ` (`true`/`false`, default `true`)
 
+Default run values in Make:
+- `TICK_HZ=10`
+- `SPECTATOR_HZ=10`
+
 ## Local DynamoDB (Docker)
 
 ### Quick (Make)

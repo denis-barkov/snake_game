@@ -9,6 +9,10 @@ APP_REF="${APP_REF:-main}"
 BUILD_TARGET="${BUILD_TARGET:-api/snake_server.cpp}"
 DOMAIN_NAME="${DOMAIN_NAME:-terrariumsnake.com}"
 APP_PORT="${APP_PORT:-8080}"
+TICK_HZ="${TICK_HZ:-10}"
+SPECTATOR_HZ="${SPECTATOR_HZ:-10}"
+ENABLE_BROADCAST="${ENABLE_BROADCAST:-true}"
+LOG_HZ="${LOG_HZ:-true}"
 POLL_ATTEMPTS="${POLL_ATTEMPTS:-20}"
 POLL_SLEEP_SECONDS="${POLL_SLEEP_SECONDS:-15}"
 SSM_POLL_ATTEMPTS="${SSM_POLL_ATTEMPTS:-20}"
@@ -123,10 +127,10 @@ COMMAND_ID="$(
 \"SNAKE_W=40\",
 \"SNAKE_H=20\",
 \"SNAKE_MAX_PER_USER=3\",
-\"TICK_HZ=20\",
-\"SPECTATOR_HZ=10\",
-\"ENABLE_BROADCAST=true\",
-\"LOG_HZ=true\",
+\"TICK_HZ=${TICK_HZ}\",
+\"SPECTATOR_HZ=${SPECTATOR_HZ}\",
+\"ENABLE_BROADCAST=${ENABLE_BROADCAST}\",
+\"LOG_HZ=${LOG_HZ}\",
 \"EOF_ENV\",
 \"chmod 0644 /etc/snake.env\",
 \"if [ -f /opt/snake/repo/tools/snake-admin.sh ]; then install -m 0755 /opt/snake/repo/tools/snake-admin.sh /usr/local/bin/snake-admin; else echo Missing /opt/snake/repo/tools/snake-admin.sh; exit 1; fi\",
