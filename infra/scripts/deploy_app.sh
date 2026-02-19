@@ -98,7 +98,7 @@ COMMAND_ID="$(
     --parameters "commands=[
 \"set -euo pipefail\",
 \"dnf -y install git clang boost-devel cmake gcc-c++ libcurl-devel openssl-devel zlib-devel >/dev/null\",
-\"if [ ! -f /usr/local/lib64/libaws-cpp-sdk-dynamodb.so ] && [ ! -f /usr/local/lib/libaws-cpp-sdk-dynamodb.so ]; then if [ ! -d /opt/aws-sdk-cpp ]; then git clone --depth 1 --branch 1.11.676 https://github.com/aws/aws-sdk-cpp.git /opt/aws-sdk-cpp; fi; cmake -S /opt/aws-sdk-cpp -B /opt/aws-sdk-cpp/build -DBUILD_ONLY='dynamodb' -DCMAKE_BUILD_TYPE=Release -DENABLE_TESTING=OFF >/dev/null; cmake --build /opt/aws-sdk-cpp/build -j2 >/dev/null; cmake --install /opt/aws-sdk-cpp/build >/dev/null; echo -e '/usr/local/lib64\\n/usr/local/lib' >/etc/ld.so.conf.d/aws-sdk-cpp.conf; ldconfig || true; fi\",
+\"if [ ! -f /usr/local/lib64/libaws-cpp-sdk-dynamodb.so ] && [ ! -f /usr/local/lib/libaws-cpp-sdk-dynamodb.so ]; then if [ ! -d /opt/aws-sdk-cpp ]; then git clone --depth 1 --branch 1.11.676 --recurse-submodules https://github.com/aws/aws-sdk-cpp.git /opt/aws-sdk-cpp; else cd /opt/aws-sdk-cpp; git fetch --tags --force; git checkout 1.11.676; git submodule sync --recursive; git submodule update --init --recursive; fi; cmake -S /opt/aws-sdk-cpp -B /opt/aws-sdk-cpp/build -DBUILD_ONLY='dynamodb' -DCMAKE_BUILD_TYPE=Release -DENABLE_TESTING=OFF >/dev/null; cmake --build /opt/aws-sdk-cpp/build -j2 >/dev/null; cmake --install /opt/aws-sdk-cpp/build >/dev/null; echo -e '/usr/local/lib64\\n/usr/local/lib' >/etc/ld.so.conf.d/aws-sdk-cpp.conf; ldconfig || true; fi\",
 \"mkdir -p /opt/snake\",
 \"if [ ! -d /opt/snake/repo ]; then echo Missing /opt/snake/repo; exit 1; fi\",
 \"cd /opt/snake/repo\",

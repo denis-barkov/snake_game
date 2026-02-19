@@ -18,7 +18,14 @@ dnf -y install git clang boost-devel cmake gcc-c++ libcurl-devel openssl-devel z
 # Some AL2023 repos do not provide aws-sdk-cpp packages; build once from source.
 if [ ! -f /usr/local/lib64/libaws-cpp-sdk-dynamodb.so ] && [ ! -f /usr/local/lib/libaws-cpp-sdk-dynamodb.so ]; then
   if [ ! -d /opt/aws-sdk-cpp ]; then
-    git clone --depth 1 --branch 1.11.676 https://github.com/aws/aws-sdk-cpp.git /opt/aws-sdk-cpp
+    git clone --depth 1 --branch 1.11.676 --recurse-submodules https://github.com/aws/aws-sdk-cpp.git /opt/aws-sdk-cpp
+  else
+    cd /opt/aws-sdk-cpp
+    git fetch --tags --force
+    git checkout 1.11.676
+    git submodule sync --recursive
+    git submodule update --init --recursive
+    cd /opt/snake/repo
   fi
   cmake -S /opt/aws-sdk-cpp -B /opt/aws-sdk-cpp/build \
     -DBUILD_ONLY="dynamodb" \
