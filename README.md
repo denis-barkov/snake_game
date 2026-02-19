@@ -26,7 +26,7 @@ Do not inline snapshot JSON shapes in server code.
 
 ### Runtime Hz config
 
-- `TICK_HZ` (default `20`, min `5`, max `60`)
+- `TICK_HZ` (default `10`, min `5`, max `60`)
 - `SPECTATOR_HZ` (default `10`, min `1`, max `60`)
 - `PLAYER_HZ` (placeholder, currently unused)
 - `ENABLE_BROADCAST` (`true`/`false`, default `true`)

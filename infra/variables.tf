@@ -89,7 +89,7 @@ variable "app_env" {
     SNAKE_W            = "40"
     SNAKE_H            = "20"
     SNAKE_MAX_PER_USER = "3"
-    TICK_HZ            = "20"
+    TICK_HZ            = "10"
     SPECTATOR_HZ       = "10"
     ENABLE_BROADCAST   = "true"
     LOG_HZ             = "true"
