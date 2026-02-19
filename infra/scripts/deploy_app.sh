@@ -97,7 +97,7 @@ COMMAND_ID="$(
     --comment "snake deploy from ${APP_REF}" \
     --parameters "commands=[
 \"set -euo pipefail\",
-\"dnf -y install git clang boost-devel aws-sdk-cpp-devel >/dev/null\",
+\"dnf -y install git clang boost-devel aws-sdk-cpp >/dev/null\",
 \"mkdir -p /opt/snake\",
 \"if [ ! -d /opt/snake/repo ]; then echo Missing /opt/snake/repo; exit 1; fi\",
 \"cd /opt/snake/repo\",
