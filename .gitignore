@@ -2,7 +2,10 @@
 .idea
 .env
 .terraform
+infra/.terraform/
 .DS_Store
 /snake_*
 /snake.*
 infra/ssh.auto.tfvars
+infra/terraform.tfstate
+infra/terraform.tfstate.backup

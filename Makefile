@@ -104,7 +104,11 @@ aws-plan:
 	AWS_PROFILE=$(PROFILE) terraform -chdir=$(TF_DIR) plan -input=false
 
 aws-code-deploy:
-	AWS_PROFILE=$(PROFILE) AWS_REGION=$(AWS_REGION) PROJECT_TAG=$(PROJECT_TAG) ENVIRONMENT_TAG=$(ENVIRONMENT_TAG) ASG_NAME=$(ASG_NAME) APP_REF=$(APP_REF) BUILD_TARGET=$(BUILD_TARGET) DOMAIN_NAME=$(DOMAIN_NAME) APP_PORT=$(APP_PORT) bash infra/scripts/deploy_app.sh
+	@if [ -z "$(BRANCH)" ]; then \
+	  echo "Pass BRANCH=<git_branch> (example: make aws-code-deploy BRANCH=main)"; \
+	  exit 1; \
+	fi
+	AWS_PROFILE=$(PROFILE) AWS_REGION=$(AWS_REGION) PROJECT_TAG=$(PROJECT_TAG) ENVIRONMENT_TAG=$(ENVIRONMENT_TAG) ASG_NAME=$(ASG_NAME) APP_REF=$(BRANCH) BUILD_TARGET=$(BUILD_TARGET) DOMAIN_NAME=$(DOMAIN_NAME) APP_PORT=$(APP_PORT) bash infra/scripts/deploy_app.sh
 
 aws-apply:
 	AWS_PROFILE=$(PROFILE) terraform -chdir=$(TF_DIR) apply
