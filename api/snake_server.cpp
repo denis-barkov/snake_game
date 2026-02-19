@@ -197,7 +197,11 @@ class GameEngine {
     next_snake_id_ = max_snake_id + 1;
     while (static_cast<int>(foods_.size()) < FOOD_COUNT) foods_.push_back(rand_free_cell_locked());
     resolve_overlaps_on_start_locked();
-    persist_all_snakes_locked();
+    const uint64_t now = now_ms();
+    if (now >= next_persist_ms_) {
+      persist_all_snakes_locked();
+      next_persist_ms_ = now + persist_interval_ms_;
+    }
   }
 
   void tick() {
@@ -475,6 +479,8 @@ class GameEngine {
   storage::IStorage& storage_;
   mutex mu_;
   uint64_t tick_ = 0;
+  uint64_t next_persist_ms_ = 0;
+  static constexpr uint64_t persist_interval_ms_ = 500;
   int next_snake_id_ = 1;
   vector<Snake> snakes_;
   vector<Vec2> foods_;

@@ -15,10 +15,12 @@ GAME_ENABLE_BROADCAST?=true
 GAME_LOG_HZ?=true
 
 LOCAL_DYNAMO_ENDPOINT?=http://127.0.0.1:8000
+LOCAL_DYNAMO_ENDPOINT_DOCKER?=http://host.docker.internal:8000
 LOCAL_DYNAMO_USERS?=snake-local-users
 LOCAL_DYNAMO_SNAKE?=snake-local-snake_checkpoints
 LOCAL_DYNAMO_EVENTS?=snake-local-event_ledger
 LOCAL_DYNAMO_SETTINGS?=snake-local-settings
+DOCKER_LOCAL_IMAGE?=snake-local-run:dev
 
 local-dynamo-up:
 	docker compose -f docker/dynamodb-local.yml up -d
@@ -30,6 +32,9 @@ local-setup:
 
 local-dynamo-down:
 	docker compose -f docker/dynamodb-local.yml down
+
+local-docker-build:
+	docker build -f docker/local-run.Dockerfile -t $(DOCKER_LOCAL_IMAGE) .
 
 local-dynamo-create:
 	DYNAMO_ENDPOINT=$(LOCAL_DYNAMO_ENDPOINT) AWS_REGION=$(AWS_REGION) AWS_ACCESS_KEY_ID=local AWS_SECRET_ACCESS_KEY=local \
@@ -45,6 +50,28 @@ local-run:
 	DYNAMO_ENDPOINT=$(LOCAL_DYNAMO_ENDPOINT) AWS_REGION=$(AWS_REGION) DYNAMO_REGION=$(AWS_REGION) TICK_HZ=$(GAME_TICK_HZ) SPECTATOR_HZ=$(GAME_SPECTATOR_HZ) ENABLE_BROADCAST=$(GAME_ENABLE_BROADCAST) LOG_HZ=$(GAME_LOG_HZ) AWS_ACCESS_KEY_ID=local AWS_SECRET_ACCESS_KEY=local \
 	DYNAMO_TABLE_USERS=$(LOCAL_DYNAMO_USERS) DYNAMO_TABLE_SNAKE_CHECKPOINTS=$(LOCAL_DYNAMO_SNAKE) DYNAMO_TABLE_EVENT_LEDGER=$(LOCAL_DYNAMO_EVENTS) DYNAMO_TABLE_SETTINGS=$(LOCAL_DYNAMO_SETTINGS) \
 	./snake_server serve
+
+local-run-docker: local-dynamo-up local-dynamo-create local-docker-build
+	docker run --rm -it \
+	  --add-host=host.docker.internal:host-gateway \
+	  -p 8080:8080 \
+	  -v "$(CURDIR)":/work \
+	  -w /work \
+	  -e DYNAMO_ENDPOINT=$(LOCAL_DYNAMO_ENDPOINT_DOCKER) \
+	  -e AWS_REGION=$(AWS_REGION) \
+	  -e DYNAMO_REGION=$(AWS_REGION) \
+	  -e AWS_ACCESS_KEY_ID=local \
+	  -e AWS_SECRET_ACCESS_KEY=local \
+	  -e DYNAMO_TABLE_USERS=$(LOCAL_DYNAMO_USERS) \
+	  -e DYNAMO_TABLE_SNAKE_CHECKPOINTS=$(LOCAL_DYNAMO_SNAKE) \
+	  -e DYNAMO_TABLE_EVENT_LEDGER=$(LOCAL_DYNAMO_EVENTS) \
+	  -e DYNAMO_TABLE_SETTINGS=$(LOCAL_DYNAMO_SETTINGS) \
+	  -e TICK_HZ=$(GAME_TICK_HZ) \
+	  -e SPECTATOR_HZ=$(GAME_SPECTATOR_HZ) \
+	  -e ENABLE_BROADCAST=$(GAME_ENABLE_BROADCAST) \
+	  -e LOG_HZ=$(GAME_LOG_HZ) \
+	  $(DOCKER_LOCAL_IMAGE) \
+	  bash -lc 'clang++ -std=c++17 -O2 -pthread api/snake_server.cpp api/protocol/encode_json.cpp api/storage/dynamo_storage.cpp api/storage/storage_factory.cpp config/runtime_config.cpp -lboost_system -laws-cpp-sdk-dynamodb -laws-cpp-sdk-core -L/usr/local/lib64 -L/usr/local/lib -o snake_server && ./snake_server serve'
 
 local-seed:
 	DYNAMO_ENDPOINT=$(LOCAL_DYNAMO_ENDPOINT) AWS_REGION=$(AWS_REGION) DYNAMO_REGION=$(AWS_REGION) AWS_ACCESS_KEY_ID=local AWS_SECRET_ACCESS_KEY=local \

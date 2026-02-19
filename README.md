@@ -7,6 +7,16 @@ Required libs:
 - `aws-sdk-cpp` (DynamoDB + core)
 - single-header `cpp-httplib` in `api/httplib.h`
 
+macOS install example:
+```bash
+brew install boost aws-sdk-cpp
+```
+
+If you want to avoid local installs, use Docker local runner:
+```bash
+make local-run-docker
+```
+
 Example build:
 ```bash
 clang++ -std=c++17 -O2 -pthread \
@@ -44,6 +54,8 @@ Default run values in Make:
 make local-setup
 make local-run
 ```
+
+`make local-run-docker` builds/runs the server inside Docker and talks to local DynamoDB.
 
 Reset local data:
 ```bash
