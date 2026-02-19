@@ -1,0 +1,201 @@
+#!/bin/bash
+set -euo pipefail
+
+exec > >(tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1
+
+NAME_PREFIX="${name_prefix}"
+APP_PORT="${app_port}"
+EIP_ALLOC_ID="${eip_allocation_id}"
+DOMAIN_NAME="${domain_name}"
+LE_EMAIL="${letsencrypt_email}"
+
+dnf -y update
+
+# Build/runtime deps + AWS tools (avoid curl/curl-minimal conflicts on AL2023)
+dnf -y install git clang sqlite-devel boost-devel amazon-cloudwatch-agent amazon-ssm-agent awscli
+
+# Ensure SSM registration is enabled for this instance
+systemctl enable amazon-ssm-agent
+systemctl restart amazon-ssm-agent
+
+# ---- CloudWatch Agent ----
+mkdir -p /opt/aws/amazon-cloudwatch-agent/etc
+echo "${cwagent_config_b64}" | base64 -d > /opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json
+/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl \
+  -a fetch-config -m ec2 \
+  -c file:/opt/aws/amazon-cloudwatch-agent/etc/amazon-cloudwatch-agent.json -s
+
+# ---- App build/deploy ----
+mkdir -p /opt/snake
+cd /opt/snake
+
+if [ ! -d repo ]; then
+  git clone "${app_git_repo}" repo
+fi
+
+cd repo
+git fetch --all
+git checkout "${app_git_ref}"
+
+mkdir -p /var/www/snake
+cp -f /opt/snake/repo/index.html /var/www/snake/index.html
+if [ -d /opt/snake/repo/src ]; then
+  rm -rf /var/www/snake/src
+  cp -a /opt/snake/repo/src /var/www/snake/src
+fi
+sed -i 's|const API = "http://127.0.0.1:8080";|const API = window.location.origin;|' /var/www/snake/index.html || true
+chmod 755 /var/www/snake || true
+chmod 644 /var/www/snake/index.html || true
+if [ -d /var/www/snake/src ]; then
+  find /var/www/snake/src -type d -exec chmod 755 {} \;
+  find /var/www/snake/src -type f -exec chmod 644 {} \;
+fi
+
+clang++ -std=c++17 -O2 -pthread "${app_build_target}" \
+  -o /opt/snake/snake_server -lboost_system -lsqlite3
+
+cat >/etc/snake.env <<EOF
+${env_lines}
+EOF
+
+cat >/etc/systemd/system/snake.service <<EOF
+[Unit]
+Description=Snake WebSocket Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/snake
+EnvironmentFile=/etc/snake.env
+ExecStart=/opt/snake/snake_server serve
+Restart=always
+RestartSec=2
+StandardOutput=append:/var/log/snake_server.log
+StandardError=append:/var/log/snake_server.log
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+touch /var/log/snake_server.log
+chmod 0644 /var/log/snake_server.log
+
+systemctl daemon-reload
+systemctl enable snake
+systemctl start snake
+
+# ---- Elastic IP association ----
+if [ -n "$EIP_ALLOC_ID" ]; then
+  TOKEN=$(curl -sS -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+  INSTANCE_ID=$(curl -sS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/instance-id)
+  AWS_REGION=$(curl -sS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/placement/region)
+  aws ec2 associate-address --region "$AWS_REGION" --allocation-id "$EIP_ALLOC_ID" --instance-id "$INSTANCE_ID" --allow-reassociation || true
+fi
+
+# ---- Reverse proxy ----
+# Try Caddy first; if unavailable, fallback to nginx (HTTP-only).
+if ! command -v caddy >/dev/null 2>&1; then
+  dnf -y install dnf-plugins-core ca-certificates curl tar || true
+  dnf config-manager --add-repo https://dl.cloudsmith.io/public/caddy/stable/rpm.repo >/dev/null 2>&1 || true
+  rpm --import https://dl.cloudsmith.io/public/caddy/stable/gpg.key >/dev/null 2>&1 || true
+  dnf -y install caddy >/dev/null 2>&1 || true
+fi
+
+if ! command -v caddy >/dev/null 2>&1; then
+  curl -fsSL "https://caddyserver.com/api/download?os=linux&arch=arm64&p=github.com/caddyserver/caddy/v2" -o /usr/local/bin/caddy
+  chmod +x /usr/local/bin/caddy
+fi
+
+if [ -x /usr/local/bin/caddy ]; then
+  mkdir -p /etc/caddy /var/lib/caddy /var/log/caddy
+  cat >/etc/systemd/system/caddy.service <<EOF
+[Unit]
+Description=Caddy web server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=root
+Group=root
+ExecStart=/usr/local/bin/caddy run --environ --config /etc/caddy/Caddyfile
+ExecReload=/usr/local/bin/caddy reload --config /etc/caddy/Caddyfile
+Restart=on-failure
+LimitNOFILE=1048576
+
+[Install]
+WantedBy=multi-user.target
+EOF
+fi
+
+if command -v caddy >/dev/null 2>&1; then
+  cat >/etc/caddy/Caddyfile <<EOF
+{
+  email $${LE_EMAIL}
+}
+
+$${DOMAIN_NAME} {
+  encode zstd gzip
+
+  @api path /auth/* /me/* /snakes/* /game/*
+  handle @api {
+    reverse_proxy 127.0.0.1:$${APP_PORT}
+  }
+
+  root * /var/www/snake
+  file_server
+}
+EOF
+
+  systemctl daemon-reload || true
+  systemctl stop nginx >/dev/null 2>&1 || true
+  systemctl disable nginx >/dev/null 2>&1 || true
+  systemctl enable --now caddy || true
+  if ! systemctl is-active --quiet caddy; then
+    dnf -y install nginx
+    rm -f /etc/nginx/conf.d/*.conf /etc/nginx/default.d/*.conf
+    cat >/etc/nginx/conf.d/snake.conf <<EOF
+server {
+  listen 80 default_server;
+  server_name $${DOMAIN_NAME};
+
+  root /var/www/snake;
+  index index.html;
+
+  location = / { try_files /index.html =404; }
+  location = /index.html { try_files /index.html =404; }
+  location /auth/ { proxy_pass http://127.0.0.1:$${APP_PORT}; }
+  location /me/ { proxy_pass http://127.0.0.1:$${APP_PORT}; }
+  location /snakes/ { proxy_pass http://127.0.0.1:$${APP_PORT}; }
+  location /game/ { proxy_pass http://127.0.0.1:$${APP_PORT}; }
+  location / { try_files $$uri $$uri/ /index.html; }
+}
+EOF
+    nginx -t
+    systemctl enable nginx
+    systemctl restart nginx
+  fi
+else
+  dnf -y install nginx
+  rm -f /etc/nginx/conf.d/*.conf /etc/nginx/default.d/*.conf
+  cat >/etc/nginx/conf.d/snake.conf <<EOF
+server {
+  listen 80 default_server;
+  server_name $${DOMAIN_NAME};
+
+  root /var/www/snake;
+  index index.html;
+
+  location = / { try_files /index.html =404; }
+  location = /index.html { try_files /index.html =404; }
+  location /auth/ { proxy_pass http://127.0.0.1:$${APP_PORT}; }
+  location /me/ { proxy_pass http://127.0.0.1:$${APP_PORT}; }
+  location /snakes/ { proxy_pass http://127.0.0.1:$${APP_PORT}; }
+  location /game/ { proxy_pass http://127.0.0.1:$${APP_PORT}; }
+  location / { try_files $$uri $$uri/ /index.html; }
+}
+EOF
+  nginx -t
+  systemctl enable nginx
+  systemctl restart nginx
+fi

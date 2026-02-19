@@ -1,0 +1,49 @@
+name: Deploy App
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+      PROJECT_TAG: ${{ vars.PROJECT_TAG || 'snake' }}
+      ENVIRONMENT_TAG: ${{ vars.ENVIRONMENT_TAG || 'mvp' }}
+      ASG_NAME: ${{ vars.ASG_NAME || 'snake-mvp-asg' }}
+      APP_REF: main
+      BUILD_TARGET: api/snake_server.cpp
+      DOMAIN_NAME: ${{ vars.DOMAIN_NAME || 'terrariumsnake.com' }}
+      APP_PORT: ${{ vars.APP_PORT || '8080' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Debug AWS Identity And Tagged Instances
+        run: |
+          set -euo pipefail
+          echo "AWS_REGION=${AWS_REGION}"
+          echo "PROJECT_TAG=${PROJECT_TAG}"
+          echo "ENVIRONMENT_TAG=${ENVIRONMENT_TAG}"
+          aws sts get-caller-identity
+          aws ec2 describe-instances \
+            --region "${AWS_REGION}" \
+            --filters \
+              "Name=instance-state-name,Values=running" \
+              "Name=tag:project,Values=${PROJECT_TAG}" \
+              "Name=tag:environment,Values=${ENVIRONMENT_TAG}" \
+            --query 'Reservations[].Instances[].{InstanceId:InstanceId,PrivateIp:PrivateIpAddress,PublicIp:PublicIpAddress,Tags:Tags}' \
+            --output json || true
+
+      - name: Deploy To Tagged Environment
+        timeout-minutes: 1
+        run: bash infra/scripts/deploy_app.sh
