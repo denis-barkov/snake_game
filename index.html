@@ -53,7 +53,12 @@
 
     .panel { border: 1px solid #ddd; padding: 12px; border-radius: 8px; margin-bottom: 12px; }
     .row { margin: 6px 0; }
-    input { width: 100%; padding: 6px; }
+    input {
+      width: 100%;
+      max-width: 100%;
+      padding: 6px;
+      box-sizing: border-box;
+    }
     button { padding: 8px 10px; cursor: pointer; }
 
     .snake-item {
@@ -281,8 +286,23 @@
     await loadMySnakes();
   }
 
+  function isTextEditingTarget(el) {
+    if (!el) return false;
+    if (el.isContentEditable) return true;
+    const tag = (el.tagName || "").toLowerCase();
+    if (tag === "textarea" || tag === "select") return true;
+    if (tag === "input") {
+      const t = (el.type || "text").toLowerCase();
+      return !["button","checkbox","color","file","hidden","image","radio","range","reset","submit"].includes(t);
+    }
+    return false;
+  }
+
   // Input
   document.addEventListener("keydown", async (e) => {
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (isTextEditingTarget(document.activeElement) || isTextEditingTarget(e.target)) return;
+
     const k = e.key.toLowerCase();
     if (["w","a","s","d","p"].includes(k)) e.preventDefault();
 
