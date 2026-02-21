@@ -23,6 +23,12 @@ LOCAL_DYNAMO_SETTINGS?=snake-local-settings
 DOCKER_LOCAL_IMAGE?=snake-local-run:dev
 LOCAL_COMPILE_CMD=clang++ -std=c++17 -O2 -pthread api/snake_server.cpp api/protocol/encode_json.cpp api/storage/dynamo_storage.cpp api/storage/storage_factory.cpp config/runtime_config.cpp api/world/world.cpp api/world/entities/snake.cpp api/world/entities/food.cpp api/world/systems/movement_system.cpp api/world/systems/collision_system.cpp api/world/systems/spawn_system.cpp -lboost_system -laws-cpp-sdk-dynamodb -laws-cpp-sdk-core -L/usr/local/lib64 -L/usr/local/lib -o snake_server
 
+# Accept both upper/lower-case CLI vars for convenience.
+ifneq ($(strip $(branch)),)
+APP_REF:=$(branch)
+endif
+DEPLOY_BRANCH:=$(if $(strip $(BRANCH)),$(strip $(BRANCH)),$(strip $(APP_REF)))
+
 local-dynamo-up:
 	docker compose -f docker/dynamodb-local.yml up -d
 
@@ -204,15 +210,15 @@ aws-plan:
 	AWS_PROFILE=$(PROFILE) terraform -chdir=$(TF_DIR) plan -input=false
 
 aws-code-deploy:
-	@if [ -z "$(BRANCH)" ]; then \
-	  echo "Pass BRANCH=<git_branch> (example: make aws-code-deploy BRANCH=main)"; \
+	@if [ -z "$(DEPLOY_BRANCH)" ]; then \
+	  echo "Pass BRANCH=<git_branch> (or branch=<git_branch>). Example: make aws-code-deploy BRANCH=main"; \
 	  exit 1; \
 	fi
-	DEPLOY_TIMEOUT_SEC=$(DEPLOY_TIMEOUT_SEC) TICK_HZ=$(GAME_TICK_HZ) SPECTATOR_HZ=$(GAME_SPECTATOR_HZ) ENABLE_BROADCAST=$(GAME_ENABLE_BROADCAST) DEBUG_TPS=$(GAME_DEBUG_TPS) AWS_PROFILE=$(PROFILE) AWS_REGION=$(AWS_REGION) PROJECT_TAG=$(PROJECT_TAG) ENVIRONMENT_TAG=$(ENVIRONMENT_TAG) ASG_NAME=$(ASG_NAME) APP_REF=$(BRANCH) BUILD_TARGET=$(BUILD_TARGET) DOMAIN_NAME=$(DOMAIN_NAME) APP_PORT=$(APP_PORT) bash infra/scripts/deploy_app.sh
+	DEPLOY_TIMEOUT_SEC=$(DEPLOY_TIMEOUT_SEC) TICK_HZ=$(GAME_TICK_HZ) SPECTATOR_HZ=$(GAME_SPECTATOR_HZ) ENABLE_BROADCAST=$(GAME_ENABLE_BROADCAST) DEBUG_TPS=$(GAME_DEBUG_TPS) AWS_PROFILE=$(PROFILE) AWS_REGION=$(AWS_REGION) PROJECT_TAG=$(PROJECT_TAG) ENVIRONMENT_TAG=$(ENVIRONMENT_TAG) ASG_NAME=$(ASG_NAME) APP_REF=$(DEPLOY_BRANCH) BUILD_TARGET=$(BUILD_TARGET) DOMAIN_NAME=$(DOMAIN_NAME) APP_PORT=$(APP_PORT) bash infra/scripts/deploy_app.sh
 
 aws-apply:
 	AWS_PROFILE=$(PROFILE) terraform -chdir=$(TF_DIR) apply
-	@$(MAKE) aws-code-deploy BRANCH=$(APP_REF)
+	@$(MAKE) aws-code-deploy BRANCH=$(DEPLOY_BRANCH)
 
 aws-destroy:
 	AWS_PROFILE=$(PROFILE) terraform -chdir=$(TF_DIR) destroy
