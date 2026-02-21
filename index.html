@@ -134,6 +134,8 @@
     <div class="panel">
       <div><strong>Live Game</strong></div>
       <div>Tick: <span id="tick">0</span></div>
+      <div>Expected speed: <span id="expectedTickHz">-</span> tick/s</div>
+      <div>Actual speed: <span id="actualTickHz">-</span> tick/s</div>
     </div>
     <div id="game-board-wrap">
       <div id="game-board"></div>
@@ -153,9 +155,15 @@
 
   const board = document.getElementById("game-board");
   const tickEl = document.getElementById("tick");
+  const expectedTickHzEl = document.getElementById("expectedTickHz");
+  const actualTickHzEl = document.getElementById("actualTickHz");
   const authStatus = document.getElementById("authStatus");
   const mySnakesEl = document.getElementById("mySnakes");
   const createSnakeBtn = document.getElementById("createSnakeBtn");
+
+  let lastTickSample = null;
+  let expectedTickHz = null;
+  const FALLBACK_EXPECTED_TICK_HZ = 10;
 
   function buildBoard(w, h) {
     gridW = w; gridH = h;
@@ -181,6 +189,7 @@
 
   function drawFrame(state) {
     tickEl.textContent = state.tick;
+    updateActualTickHz(state.tick);
 
     if (state.w !== gridW || state.h !== gridH || cells.length === 0) {
       buildBoard(state.w, state.h);
@@ -203,6 +212,40 @@
         // color each snake
         cells[i].style.background = s.color;
       }
+    }
+  }
+
+  function updateActualTickHz(currentTick) {
+    const now = performance.now();
+    if (!lastTickSample) {
+      lastTickSample = { tick: currentTick, t: now };
+      return;
+    }
+
+    const dtMs = now - lastTickSample.t;
+    const dTick = currentTick - lastTickSample.tick;
+    if (dtMs >= 800 && dTick >= 0) {
+      const hz = dTick / (dtMs / 1000);
+      actualTickHzEl.textContent = hz.toFixed(2);
+      lastTickSample = { tick: currentTick, t: now };
+    }
+  }
+
+  async function loadRuntimeSpeed() {
+    try {
+      const res = await fetch(API + "/game/runtime");
+      if (!res.ok) throw new Error("runtime endpoint unavailable");
+      const data = await res.json();
+      if (typeof data.tick_hz === "number" && data.tick_hz > 0) {
+        expectedTickHz = data.tick_hz;
+        expectedTickHzEl.textContent = String(expectedTickHz);
+        return;
+      }
+      throw new Error("runtime endpoint missing tick_hz");
+    } catch (_) {
+      // Fallback keeps local/prod UI readable when talking to an older backend binary.
+      expectedTickHz = FALLBACK_EXPECTED_TICK_HZ;
+      expectedTickHzEl.textContent = `${expectedTickHz} (fallback)`;
     }
   }
 
@@ -331,6 +374,8 @@
   }
 
   startStream();
+  loadRuntimeSpeed();
+  setInterval(loadRuntimeSpeed, 10000);
 </script>
 </body>
 </html>

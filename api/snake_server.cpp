@@ -789,6 +789,18 @@ int main(int argc, char** argv) {
     res.set_content(state_to_json(game.snapshot()), "application/json");
   });
 
+  // Public: runtime speed settings for UI diagnostics.
+  srv.Get("/game/runtime", [&](const httplib::Request&, httplib::Response& res) {
+    add_cors(res);
+    ostringstream o;
+    o << "{"
+      << "\"tick_hz\":" << runtime_cfg.tick_hz << ","
+      << "\"spectator_hz\":" << runtime_cfg.spectator_hz << ","
+      << "\"enable_broadcast\":" << (runtime_cfg.enable_broadcast ? "true" : "false")
+      << "}";
+    res.set_content(o.str(), "application/json");
+  });
+
   srv.Get("/game/stream", [&](const httplib::Request&, httplib::Response& res) {
     add_cors(res);
     res.set_header("Cache-Control", "no-cache");
