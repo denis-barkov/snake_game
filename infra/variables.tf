@@ -92,6 +92,6 @@ variable "app_env" {
     TICK_HZ            = "10"
     SPECTATOR_HZ       = "10"
     ENABLE_BROADCAST   = "true"
-    LOG_HZ             = "true"
+    DEBUG_TPS          = "false"
   }
 }

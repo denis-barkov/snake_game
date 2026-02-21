@@ -40,7 +40,7 @@ Do not inline snapshot JSON shapes in server code.
 - `SPECTATOR_HZ` (default `10`, min `1`, max `60`)
 - `PLAYER_HZ` (placeholder, currently unused)
 - `ENABLE_BROADCAST` (`true`/`false`, default `true`)
-- `LOG_HZ` (`true`/`false`, default `true`)
+- `DEBUG_TPS` (`true`/`false`, default `false`)
 
 Default run values in Make:
 - `TICK_HZ=10`

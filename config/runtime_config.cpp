@@ -55,7 +55,11 @@ RuntimeConfig RuntimeConfig::FromEnv() {
   cfg.spectator_hz = clamp_int(getenv_int("SPECTATOR_HZ", cfg.spectator_hz), 1, 60);
   cfg.player_hz = clamp_int(getenv_int("PLAYER_HZ", cfg.player_hz), 1, 60);
   cfg.enable_broadcast = getenv_bool("ENABLE_BROADCAST", cfg.enable_broadcast);
-  cfg.log_hz = getenv_bool("LOG_HZ", cfg.log_hz);
+  cfg.debug_tps = getenv_bool("DEBUG_TPS", cfg.debug_tps);
+  if (!has_env("DEBUG_TPS")) {
+    // Backward compatibility for older deployments that used LOG_HZ.
+    cfg.debug_tps = getenv_bool("LOG_HZ", cfg.debug_tps);
+  }
 
   // Backward compatibility with existing env-based deployments.
   if (!has_env("TICK_HZ")) {

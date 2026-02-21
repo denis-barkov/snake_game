@@ -197,13 +197,9 @@ class GameEngine {
     next_snake_id_ = max_snake_id + 1;
     while (static_cast<int>(foods_.size()) < FOOD_COUNT) foods_.push_back(rand_free_cell_locked());
     resolve_overlaps_on_start_locked();
-    const uint64_t now = now_ms();
-    if (now >= next_persist_ms_) {
-      persist_all_snakes_locked();
-      next_persist_ms_ = now + persist_interval_ms_;
-    }
   }
 
+  // Single authoritative world-step. This function intentionally does no I/O.
   void tick() {
     lock_guard<mutex> lock(mu_);
     ++tick_;
@@ -290,7 +286,9 @@ class GameEngine {
     }
 
     for (const auto& s : snakes_) {
-      if (!s.alive) persist_dead_snake_locked(s);
+      if (!s.alive) {
+        pending_tombstones_.push_back({s.id, s.user_id});
+      }
     }
     snakes_.erase(remove_if(snakes_.begin(), snakes_.end(), [](const Snake& s) { return !s.alive; }), snakes_.end());
 
@@ -305,7 +303,6 @@ class GameEngine {
       }
     }
 
-    persist_all_snakes_locked();
   }
 
   GameState snapshot() {
@@ -323,7 +320,6 @@ class GameEngine {
     if (!s || s->user_id != user_id) return false;
     s->dir = d;
     s->paused = false;
-    persist_snake_locked(*s);
     return true;
   }
 
@@ -332,7 +328,6 @@ class GameEngine {
     Snake* s = find_snake_locked(snake_id);
     if (!s || s->user_id != user_id) return false;
     s->paused = !s->paused;
-    persist_snake_locked(*s);
     return true;
   }
 
@@ -364,8 +359,56 @@ class GameEngine {
     s.body = {rand_free_cell_locked()};
 
     snakes_.push_back(s);
-    persist_snake_locked(snakes_.back());
     return s.id;
+  }
+
+  // Flushes a compact persistence batch. Data copy happens under lock, I/O out of lock.
+  void flush_persistence_batch() {
+    struct PendingBatch {
+      vector<storage::SnakeCheckpoint> live;
+      vector<storage::SnakeCheckpoint> tombstones;
+    };
+
+    PendingBatch batch;
+    {
+      lock_guard<mutex> lock(mu_);
+      const int64_t ts = static_cast<int64_t>(now_ms());
+      batch.live.reserve(snakes_.size());
+      for (const auto& s : snakes_) {
+        storage::SnakeCheckpoint cp;
+        cp.snake_id = to_string(s.id);
+        cp.owner_user_id = to_string(s.user_id);
+        cp.ts = ts;
+        cp.dir = static_cast<int>(s.dir);
+        cp.paused = s.paused;
+        cp.length = static_cast<int>(s.body.size());
+        cp.score = static_cast<int>(s.body.size());
+        cp.w = GRID_W;
+        cp.h = GRID_H;
+        cp.body.reserve(s.body.size());
+        for (const auto& cell : s.body) cp.body.push_back({cell.x, cell.y});
+        batch.live.push_back(std::move(cp));
+      }
+
+      batch.tombstones.reserve(pending_tombstones_.size());
+      for (const auto& t : pending_tombstones_) {
+        storage::SnakeCheckpoint cp;
+        cp.snake_id = to_string(t.first);
+        cp.owner_user_id = to_string(t.second);
+        cp.ts = ts;
+        cp.dir = static_cast<int>(Dir::Stop);
+        cp.paused = true;
+        cp.length = 0;
+        cp.score = 0;
+        cp.w = GRID_W;
+        cp.h = GRID_H;
+        batch.tombstones.push_back(std::move(cp));
+      }
+      pending_tombstones_.clear();
+    }
+
+    for (const auto& cp : batch.live) storage_.PutSnakeCheckpoint(cp);
+    for (const auto& cp : batch.tombstones) storage_.PutSnakeCheckpoint(cp);
   }
 
  private:
@@ -442,46 +485,11 @@ class GameEngine {
     }
   }
 
-  void persist_snake_locked(const Snake& s) {
-    storage::SnakeCheckpoint cp;
-    cp.snake_id = to_string(s.id);
-    cp.owner_user_id = to_string(s.user_id);
-    cp.ts = static_cast<int64_t>(now_ms());
-    cp.dir = static_cast<int>(s.dir);
-    cp.paused = s.paused;
-    cp.length = static_cast<int>(s.body.size());
-    cp.score = static_cast<int>(s.body.size());
-    cp.w = GRID_W;
-    cp.h = GRID_H;
-    cp.body.reserve(s.body.size());
-    for (const auto& cell : s.body) cp.body.push_back({cell.x, cell.y});
-    storage_.PutSnakeCheckpoint(cp);
-  }
-
-  void persist_all_snakes_locked() {
-    for (const auto& s : snakes_) persist_snake_locked(s);
-  }
-
-  void persist_dead_snake_locked(const Snake& s) {
-    storage::SnakeCheckpoint cp;
-    cp.snake_id = to_string(s.id);
-    cp.owner_user_id = to_string(s.user_id);
-    cp.ts = static_cast<int64_t>(now_ms());
-    cp.dir = static_cast<int>(Dir::Stop);
-    cp.paused = true;
-    cp.length = 0;
-    cp.score = 0;
-    cp.w = GRID_W;
-    cp.h = GRID_H;
-    storage_.PutSnakeCheckpoint(cp);
-  }
-
   storage::IStorage& storage_;
   mutex mu_;
   uint64_t tick_ = 0;
-  uint64_t next_persist_ms_ = 0;
-  static constexpr uint64_t persist_interval_ms_ = 500;
   int next_snake_id_ = 1;
+  vector<pair<int, int>> pending_tombstones_;
   vector<Snake> snakes_;
   vector<Vec2> foods_;
 };
@@ -600,6 +608,7 @@ static void seed(storage::IStorage& storage, GameEngine& game) {
   game.load_from_storage_or_seed_positions();
   if (game.list_user_snakes(1).empty()) game.create_snake_for_user(1, "#00ff00");
   if (game.list_user_snakes(2).empty()) game.create_snake_for_user(2, "#00aaff");
+  game.flush_persistence_batch();
   game.load_from_storage_or_seed_positions();
   cout << "Seeded users: user1/pass1, user2/pass2 (1 snake each)\n";
 }
@@ -620,14 +629,13 @@ int main(int argc, char** argv) {
   if (envH) GRID_H = max(10, atoi(envH));
   if (envMax) MAX_SNAKES_PER_USER = max(1, atoi(envMax));
 
-  if (runtime_cfg.log_hz) {
-    cout << "RuntimeConfig: "
-         << "TICK_HZ=" << runtime_cfg.tick_hz
-         << ", SPECTATOR_HZ=" << runtime_cfg.spectator_hz
-         << ", PLAYER_HZ=" << runtime_cfg.player_hz
-         << ", ENABLE_BROADCAST=" << (runtime_cfg.enable_broadcast ? "true" : "false")
-         << "\n";
-  }
+  cout << "RuntimeConfig: "
+       << "TICK_HZ=" << runtime_cfg.tick_hz
+       << ", SPECTATOR_HZ=" << runtime_cfg.spectator_hz
+       << ", PLAYER_HZ=" << runtime_cfg.player_hz
+       << ", ENABLE_BROADCAST=" << (runtime_cfg.enable_broadcast ? "true" : "false")
+       << ", DEBUG_TPS=" << (runtime_cfg.debug_tps ? "true" : "false")
+       << "\n";
 
   unique_ptr<storage::IStorage> storage;
   try {
@@ -676,6 +684,7 @@ int main(int argc, char** argv) {
   signal(SIGUSR1, on_reload_signal);
   signal(SIGHUP, on_reload_signal);
 
+  // Dedicated simulation thread: fixed-step scheduler based on steady_clock.
   thread loop([&] {
     using clock = chrono::steady_clock;
     using ms = chrono::milliseconds;
@@ -684,6 +693,8 @@ int main(int argc, char** argv) {
     const ms spectator_dt(runtime_cfg.SpectatorIntervalMs());
     auto next_tick = clock::now() + tick_dt;
     auto next_broadcast = clock::now() + spectator_dt;
+    const int max_catch_up_ticks = 3;
+    const auto max_lag = tick_dt * 5;
 
     uint64_t ticks_since_log = 0;
     uint64_t broadcasts_since_log = 0;
@@ -703,14 +714,21 @@ int main(int argc, char** argv) {
 
       auto now = clock::now();
 
-      if (now >= next_tick) {
+      int catch_up_ticks = 0;
+      while (now >= next_tick && catch_up_ticks < max_catch_up_ticks) {
         game.tick();
         ++ticks_since_log;
-        next_tick = now + tick_dt;
+        ++catch_up_ticks;
+        next_tick += tick_dt;
         now = clock::now();
       }
 
-      if (runtime_cfg.enable_broadcast && now >= next_broadcast) {
+      // Backlog protection: avoid long catch-up bursts when the server falls behind.
+      if ((now - next_tick) > max_lag) {
+        next_tick = now + tick_dt;
+      }
+
+      while (runtime_cfg.enable_broadcast && now >= next_broadcast) {
         string snap = state_to_json(game.snapshot());
         {
           lock_guard<mutex> lock(snapshot_mu);
@@ -718,11 +736,15 @@ int main(int argc, char** argv) {
           ++snapshot_seq;
         }
         ++broadcasts_since_log;
-        next_broadcast = now + spectator_dt;
+        next_broadcast += spectator_dt;
         now = clock::now();
       }
 
-      if (runtime_cfg.log_hz && now >= next_log_at) {
+      if ((now - next_broadcast) > (spectator_dt * 5)) {
+        next_broadcast = now + spectator_dt;
+      }
+
+      if (runtime_cfg.debug_tps && now >= next_log_at) {
         cout << "[rate] ticks/5s=" << ticks_since_log
              << ", broadcasts/5s=" << broadcasts_since_log << "\n";
         ticks_since_log = 0;
@@ -733,6 +755,24 @@ int main(int argc, char** argv) {
       auto next_deadline = runtime_cfg.enable_broadcast ? min(next_tick, next_broadcast) : next_tick;
       auto max_sleep_until = clock::now() + ms(5);
       this_thread::sleep_until(min(next_deadline, max_sleep_until));
+    }
+  });
+
+  // Persistence thread: writes checkpoints outside the simulation loop.
+  thread persistence([&] {
+    using clock = chrono::steady_clock;
+    using ms = chrono::milliseconds;
+    const ms persist_dt(500);
+    auto next_persist = clock::now() + persist_dt;
+
+    while (running.load()) {
+      game.flush_persistence_batch();
+      next_persist += persist_dt;
+      const auto now = clock::now();
+      if (now > next_persist + (persist_dt * 5)) {
+        next_persist = now + persist_dt;
+      }
+      this_thread::sleep_until(next_persist);
     }
   });
 
@@ -903,6 +943,8 @@ int main(int argc, char** argv) {
 
   running.store(false);
   loop.join();
+  persistence.join();
+  game.flush_persistence_batch();
   Aws::ShutdownAPI(aws_options);
   return 0;
 }
