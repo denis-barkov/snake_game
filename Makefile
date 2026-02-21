@@ -21,6 +21,7 @@ LOCAL_DYNAMO_SNAKE?=snake-local-snake_checkpoints
 LOCAL_DYNAMO_EVENTS?=snake-local-event_ledger
 LOCAL_DYNAMO_SETTINGS?=snake-local-settings
 DOCKER_LOCAL_IMAGE?=snake-local-run:dev
+LOCAL_COMPILE_CMD=clang++ -std=c++17 -O2 -pthread api/snake_server.cpp api/protocol/encode_json.cpp api/storage/dynamo_storage.cpp api/storage/storage_factory.cpp config/runtime_config.cpp api/world/world.cpp api/world/entities/snake.cpp api/world/entities/food.cpp api/world/systems/movement_system.cpp api/world/systems/collision_system.cpp api/world/systems/spawn_system.cpp -lboost_system -laws-cpp-sdk-dynamodb -laws-cpp-sdk-core -L/usr/local/lib64 -L/usr/local/lib -o snake_server
 
 local-dynamo-up:
 	docker compose -f docker/dynamodb-local.yml up -d
@@ -36,6 +37,13 @@ local-dynamo-down:
 local-docker-build:
 	docker build -f docker/local-run.Dockerfile -t $(DOCKER_LOCAL_IMAGE) .
 
+local-build: local-docker-build
+	docker run --rm \
+	  -v "$(CURDIR)":/work \
+	  -w /work \
+	  $(DOCKER_LOCAL_IMAGE) \
+	  bash -lc '$(LOCAL_COMPILE_CMD)'
+
 local-dynamo-create:
 	DYNAMO_ENDPOINT=$(LOCAL_DYNAMO_ENDPOINT) AWS_REGION=$(AWS_REGION) AWS_ACCESS_KEY_ID=local AWS_SECRET_ACCESS_KEY=local \
 	DYNAMO_TABLE_USERS=$(LOCAL_DYNAMO_USERS) DYNAMO_TABLE_SNAKE_CHECKPOINTS=$(LOCAL_DYNAMO_SNAKE) DYNAMO_TABLE_EVENT_LEDGER=$(LOCAL_DYNAMO_EVENTS) DYNAMO_TABLE_SETTINGS=$(LOCAL_DYNAMO_SETTINGS) \
@@ -46,13 +54,17 @@ local-dynamo-seed:
 	DYNAMO_TABLE_USERS=$(LOCAL_DYNAMO_USERS) DYNAMO_TABLE_SNAKE_CHECKPOINTS=$(LOCAL_DYNAMO_SNAKE) DYNAMO_TABLE_EVENT_LEDGER=$(LOCAL_DYNAMO_EVENTS) DYNAMO_TABLE_SETTINGS=$(LOCAL_DYNAMO_SETTINGS) \
 	python3 tools/seed_local.py
 
-local-run:
+local-run-native: local-setup local-build
 	DYNAMO_ENDPOINT=$(LOCAL_DYNAMO_ENDPOINT) AWS_REGION=$(AWS_REGION) DYNAMO_REGION=$(AWS_REGION) TICK_HZ=$(GAME_TICK_HZ) SPECTATOR_HZ=$(GAME_SPECTATOR_HZ) ENABLE_BROADCAST=$(GAME_ENABLE_BROADCAST) DEBUG_TPS=$(GAME_DEBUG_TPS) AWS_ACCESS_KEY_ID=local AWS_SECRET_ACCESS_KEY=local \
 	DYNAMO_TABLE_USERS=$(LOCAL_DYNAMO_USERS) DYNAMO_TABLE_SNAKE_CHECKPOINTS=$(LOCAL_DYNAMO_SNAKE) DYNAMO_TABLE_EVENT_LEDGER=$(LOCAL_DYNAMO_EVENTS) DYNAMO_TABLE_SETTINGS=$(LOCAL_DYNAMO_SETTINGS) \
 	./snake_server serve
 
+local-run: local-run-docker
+
 local-run-docker: local-dynamo-up local-dynamo-create local-docker-build
-	docker run --rm -it \
+	-docker rm -f snake-local-run >/dev/null 2>&1 || true
+	docker run --rm -it --init \
+	  --name snake-local-run \
 	  --add-host=host.docker.internal:host-gateway \
 	  -p 8080:8080 \
 	  -v "$(CURDIR)":/work \
@@ -70,27 +82,65 @@ local-run-docker: local-dynamo-up local-dynamo-create local-docker-build
 	  -e SPECTATOR_HZ=$(GAME_SPECTATOR_HZ) \
 	  -e ENABLE_BROADCAST=$(GAME_ENABLE_BROADCAST) \
 	  -e DEBUG_TPS=$(GAME_DEBUG_TPS) \
+	  -e SERVER_BIND_HOST=0.0.0.0 \
+	  -e SERVER_BIND_PORT=8080 \
 	  $(DOCKER_LOCAL_IMAGE) \
-	  bash -lc 'clang++ -std=c++17 -O2 -pthread api/snake_server.cpp api/protocol/encode_json.cpp api/storage/dynamo_storage.cpp api/storage/storage_factory.cpp config/runtime_config.cpp -lboost_system -laws-cpp-sdk-dynamodb -laws-cpp-sdk-core -L/usr/local/lib64 -L/usr/local/lib -o snake_server && ./snake_server serve'
+	  bash -lc '$(LOCAL_COMPILE_CMD) && exec ./snake_server serve'
 
-local-seed:
-	DYNAMO_ENDPOINT=$(LOCAL_DYNAMO_ENDPOINT) AWS_REGION=$(AWS_REGION) DYNAMO_REGION=$(AWS_REGION) AWS_ACCESS_KEY_ID=local AWS_SECRET_ACCESS_KEY=local \
-	DYNAMO_TABLE_USERS=$(LOCAL_DYNAMO_USERS) DYNAMO_TABLE_SNAKE_CHECKPOINTS=$(LOCAL_DYNAMO_SNAKE) DYNAMO_TABLE_EVENT_LEDGER=$(LOCAL_DYNAMO_EVENTS) DYNAMO_TABLE_SETTINGS=$(LOCAL_DYNAMO_SETTINGS) \
-	./snake_server seed
+local-seed: local-dynamo-up local-dynamo-create local-docker-build
+	docker run --rm \
+	  --add-host=host.docker.internal:host-gateway \
+	  -v "$(CURDIR)":/work \
+	  -w /work \
+	  -e DYNAMO_ENDPOINT=$(LOCAL_DYNAMO_ENDPOINT_DOCKER) \
+	  -e AWS_REGION=$(AWS_REGION) \
+	  -e DYNAMO_REGION=$(AWS_REGION) \
+	  -e AWS_ACCESS_KEY_ID=local \
+	  -e AWS_SECRET_ACCESS_KEY=local \
+	  -e DYNAMO_TABLE_USERS=$(LOCAL_DYNAMO_USERS) \
+	  -e DYNAMO_TABLE_SNAKE_CHECKPOINTS=$(LOCAL_DYNAMO_SNAKE) \
+	  -e DYNAMO_TABLE_EVENT_LEDGER=$(LOCAL_DYNAMO_EVENTS) \
+	  -e DYNAMO_TABLE_SETTINGS=$(LOCAL_DYNAMO_SETTINGS) \
+	  $(DOCKER_LOCAL_IMAGE) \
+	  bash -lc '$(LOCAL_COMPILE_CMD) && ./snake_server seed'
 
-local-reset:
-	DYNAMO_ENDPOINT=$(LOCAL_DYNAMO_ENDPOINT) AWS_REGION=$(AWS_REGION) DYNAMO_REGION=$(AWS_REGION) AWS_ACCESS_KEY_ID=local AWS_SECRET_ACCESS_KEY=local \
-	DYNAMO_TABLE_USERS=$(LOCAL_DYNAMO_USERS) DYNAMO_TABLE_SNAKE_CHECKPOINTS=$(LOCAL_DYNAMO_SNAKE) DYNAMO_TABLE_EVENT_LEDGER=$(LOCAL_DYNAMO_EVENTS) DYNAMO_TABLE_SETTINGS=$(LOCAL_DYNAMO_SETTINGS) \
-	./snake_server reset
+local-reset: local-dynamo-up local-dynamo-create local-docker-build
+	docker run --rm \
+	  --add-host=host.docker.internal:host-gateway \
+	  -v "$(CURDIR)":/work \
+	  -w /work \
+	  -e DYNAMO_ENDPOINT=$(LOCAL_DYNAMO_ENDPOINT_DOCKER) \
+	  -e AWS_REGION=$(AWS_REGION) \
+	  -e DYNAMO_REGION=$(AWS_REGION) \
+	  -e AWS_ACCESS_KEY_ID=local \
+	  -e AWS_SECRET_ACCESS_KEY=local \
+	  -e DYNAMO_TABLE_USERS=$(LOCAL_DYNAMO_USERS) \
+	  -e DYNAMO_TABLE_SNAKE_CHECKPOINTS=$(LOCAL_DYNAMO_SNAKE) \
+	  -e DYNAMO_TABLE_EVENT_LEDGER=$(LOCAL_DYNAMO_EVENTS) \
+	  -e DYNAMO_TABLE_SETTINGS=$(LOCAL_DYNAMO_SETTINGS) \
+	  $(DOCKER_LOCAL_IMAGE) \
+	  bash -lc '$(LOCAL_COMPILE_CMD) && ./snake_server reset'
 
-local-admin:
+local-admin: local-dynamo-up local-dynamo-create local-docker-build
 	@if [ -z "$(CMD)" ]; then \
 	  echo "Pass CMD=<seed|reset|reload|seed-reload|reset-seed|reset-seed-reload>"; \
 	  exit 1; \
 	fi
-	DYNAMO_ENDPOINT=$(LOCAL_DYNAMO_ENDPOINT) AWS_REGION=$(AWS_REGION) DYNAMO_REGION=$(AWS_REGION) AWS_ACCESS_KEY_ID=local AWS_SECRET_ACCESS_KEY=local \
-	DYNAMO_TABLE_USERS=$(LOCAL_DYNAMO_USERS) DYNAMO_TABLE_SNAKE_CHECKPOINTS=$(LOCAL_DYNAMO_SNAKE) DYNAMO_TABLE_EVENT_LEDGER=$(LOCAL_DYNAMO_EVENTS) DYNAMO_TABLE_SETTINGS=$(LOCAL_DYNAMO_SETTINGS) \
-	bash tools/snake-admin.sh $(CMD)
+	docker run --rm \
+	  --add-host=host.docker.internal:host-gateway \
+	  -v "$(CURDIR)":/work \
+	  -w /work \
+	  -e DYNAMO_ENDPOINT=$(LOCAL_DYNAMO_ENDPOINT_DOCKER) \
+	  -e AWS_REGION=$(AWS_REGION) \
+	  -e DYNAMO_REGION=$(AWS_REGION) \
+	  -e AWS_ACCESS_KEY_ID=local \
+	  -e AWS_SECRET_ACCESS_KEY=local \
+	  -e DYNAMO_TABLE_USERS=$(LOCAL_DYNAMO_USERS) \
+	  -e DYNAMO_TABLE_SNAKE_CHECKPOINTS=$(LOCAL_DYNAMO_SNAKE) \
+	  -e DYNAMO_TABLE_EVENT_LEDGER=$(LOCAL_DYNAMO_EVENTS) \
+	  -e DYNAMO_TABLE_SETTINGS=$(LOCAL_DYNAMO_SETTINGS) \
+	  $(DOCKER_LOCAL_IMAGE) \
+	  bash -lc '$(LOCAL_COMPILE_CMD) && bash tools/snake-admin.sh $(CMD)'
 
 local-reload:
 	@$(MAKE) local-admin CMD=reload

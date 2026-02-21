@@ -2,45 +2,39 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <csignal>
+#include <cctype>
 #include <cstdint>
-#include <cstring>
 #include <cstdlib>
+#include <cstring>
 #include <ctime>
-#include <functional>
 #include <iomanip>
 #include <iostream>
-#include <map>
 #include <mutex>
 #include <optional>
 #include <random>
-#include <set>
 #include <sstream>
 #include <stdexcept>
 #include <string>
 #include <thread>
 #include <unordered_map>
-#include <unordered_set>
 #include <utility>
 #include <vector>
-#include <csignal>
 
 #include <aws/core/Aws.h>
 
 #include "httplib.h"
 #include "protocol/encode_json.h"
 #include "storage/storage_factory.h"
+#include "world/world.h"
 #include "../config/runtime_config.h"
 
 using namespace std;
 
 static constexpr int DEFAULT_W = 40;
 static constexpr int DEFAULT_H = 20;
+static constexpr int FOOD_COUNT = 1;
 
-static int GRID_W = DEFAULT_W;
-static int GRID_H = DEFAULT_H;
-
-static int FOOD_COUNT = 1;
-static int MAX_SNAKES_PER_USER = 3;
 static volatile sig_atomic_t g_reload_requested = 0;
 
 static void on_reload_signal(int) {
@@ -56,13 +50,27 @@ static string json_escape(const string& s) {
   ostringstream o;
   for (char c : s) {
     switch (c) {
-      case '"': o << "\\\""; break;
-      case '\\': o << "\\\\"; break;
-      case '\b': o << "\\b"; break;
-      case '\f': o << "\\f"; break;
-      case '\n': o << "\\n"; break;
-      case '\r': o << "\\r"; break;
-      case '\t': o << "\\t"; break;
+      case '"':
+        o << "\\\"";
+        break;
+      case '\\':
+        o << "\\\\";
+        break;
+      case '\b':
+        o << "\\b";
+        break;
+      case '\f':
+        o << "\\f";
+        break;
+      case '\n':
+        o << "\\n";
+        break;
+      case '\r':
+        o << "\\r";
+        break;
+      case '\t':
+        o << "\\t";
+        break;
       default:
         if (static_cast<unsigned char>(c) < 0x20) {
           o << "\\u" << hex << setw(4) << setfill('0') << static_cast<int>(c);
@@ -83,62 +91,6 @@ static string rand_token(size_t n = 32) {
   for (size_t i = 0; i < n; ++i) t.push_back(chars[dist(rng)]);
   return t;
 }
-
-struct Vec2 {
-  int x = 0;
-  int y = 0;
-  bool operator==(const Vec2& o) const { return x == o.x && y == o.y; }
-};
-
-struct Vec2Hash {
-  size_t operator()(const Vec2& v) const noexcept {
-    return static_cast<size_t>(v.x) * 1315423911u + static_cast<size_t>(v.y);
-  }
-};
-
-enum class Dir : int { Stop = 0, Left = 1, Right = 2, Up = 3, Down = 4 };
-
-static Dir opposite(Dir d) {
-  switch (d) {
-    case Dir::Left: return Dir::Right;
-    case Dir::Right: return Dir::Left;
-    case Dir::Up: return Dir::Down;
-    case Dir::Down: return Dir::Up;
-    default: return Dir::Stop;
-  }
-}
-
-static Vec2 step(Vec2 p, Dir d) {
-  switch (d) {
-    case Dir::Left: --p.x; break;
-    case Dir::Right: ++p.x; break;
-    case Dir::Up: --p.y; break;
-    case Dir::Down: ++p.y; break;
-    default: break;
-  }
-  if (p.x < 0) p.x = GRID_W - 1;
-  if (p.x >= GRID_W) p.x = 0;
-  if (p.y < 0) p.y = GRID_H - 1;
-  if (p.y >= GRID_H) p.y = 0;
-  return p;
-}
-
-struct Snake {
-  int id = 0;
-  int user_id = 0;
-  string color = "#00ff00";
-  Dir dir = Dir::Stop;
-  bool paused = false;
-  bool alive = true;
-  int grow = 0;
-  vector<Vec2> body;
-};
-
-struct GameState {
-  vector<Snake> snakes;
-  vector<Vec2> foods;
-  uint64_t tick = 0;
-};
 
 class AuthState {
  public:
@@ -161,337 +113,50 @@ class AuthState {
   unordered_map<string, int> token_to_uid_;
 };
 
-class GameEngine {
+class GameService {
  public:
-  explicit GameEngine(storage::IStorage& storage) : storage_(storage) {}
+  GameService(storage::IStorage& storage, int width, int height, int food_count, int max_snakes_per_user)
+      : storage_(storage),
+        world_(width, height, food_count, max_snakes_per_user) {}
 
   void load_from_storage_or_seed_positions() {
-    lock_guard<mutex> lock(mu_);
-
-    snakes_.clear();
-    foods_.clear();
-
-    auto checkpoints = storage_.ListLatestSnakeCheckpoints();
-    int max_snake_id = 0;
-
-    for (const auto& cp : checkpoints) {
-      if (cp.body.empty() || cp.length <= 0) continue;
-      Snake s;
-      s.id = to_int(cp.snake_id);
-      s.user_id = to_int(cp.owner_user_id);
-      s.dir = static_cast<Dir>(cp.dir);
-      s.paused = cp.paused;
-      s.alive = true;
-      s.grow = 0;
-      s.color = color_for_user(s.user_id);
-      s.body.reserve(cp.body.size());
-      for (const auto& cell : cp.body) {
-        s.body.push_back({cell.first, cell.second});
-      }
-      if (!s.body.empty() && s.id > 0 && s.user_id > 0) {
-        snakes_.push_back(std::move(s));
-        max_snake_id = max(max_snake_id, snakes_.back().id);
-      }
-    }
-
-    next_snake_id_ = max_snake_id + 1;
-    while (static_cast<int>(foods_.size()) < FOOD_COUNT) foods_.push_back(rand_free_cell_locked());
-    resolve_overlaps_on_start_locked();
+    world_.LoadFromCheckpoints(storage_.ListLatestSnakeCheckpoints());
   }
 
-  // Single authoritative world-step. This function intentionally does no I/O.
   void tick() {
-    lock_guard<mutex> lock(mu_);
-    ++tick_;
-
-    unordered_map<long long, vector<int>> cellOwners;
-    auto key = [](Vec2 v) -> long long {
-      return (static_cast<long long>(v.x) << 32) ^ static_cast<unsigned long long>(v.y & 0xffffffff);
-    };
-
-    unordered_map<int, Vec2> next_head;
-    for (auto& s : snakes_) {
-      if (!s.alive || s.paused || s.dir == Dir::Stop || s.body.empty()) continue;
-      next_head[s.id] = step(s.body[0], s.dir);
-    }
-
-    for (auto& s : snakes_) {
-      if (!s.alive) continue;
-      auto it = next_head.find(s.id);
-      if (it == next_head.end()) continue;
-
-      s.body.insert(s.body.begin(), it->second);
-      if (s.grow > 0) {
-        --s.grow;
-      } else if (!s.body.empty()) {
-        s.body.pop_back();
-      }
-    }
-
-    for (auto& s : snakes_) {
-      if (!s.alive || s.body.size() < 2) continue;
-      const Vec2 h = s.body[0];
-      bool hit_self = false;
-      for (size_t i = 1; i < s.body.size(); ++i) {
-        if (s.body[i] == h) {
-          hit_self = true;
-          break;
-        }
-      }
-      if (hit_self) {
-        if (!s.body.empty()) s.body.pop_back();
-        s.paused = true;
-        if (s.body.empty()) s.alive = false;
-      }
-    }
-
-    for (auto& s : snakes_) {
-      if (!s.alive) continue;
-      for (auto& c : s.body) cellOwners[key(c)].push_back(s.id);
-    }
-
-    vector<int> snake_ids;
-    snake_ids.reserve(snakes_.size());
-    for (const auto& s : snakes_) {
-      if (s.alive) snake_ids.push_back(s.id);
-    }
-    sort(snake_ids.begin(), snake_ids.end());
-
-    for (int sid : snake_ids) {
-      Snake* attacker = find_snake_locked(sid);
-      if (!attacker || !attacker->alive || attacker->body.empty()) continue;
-      const Vec2 h = attacker->body[0];
-
-      auto it = cellOwners.find(key(h));
-      if (it == cellOwners.end()) continue;
-
-      int defender_id = 0;
-      for (int ownerId : it->second) {
-        if (ownerId != attacker->id) {
-          defender_id = ownerId;
-          break;
-        }
-      }
-      if (defender_id == 0) continue;
-
-      Snake* defender = find_snake_locked(defender_id);
-      if (!defender || !defender->alive) continue;
-
-      attacker->grow += 1;
-      attacker->dir = opposite(attacker->dir);
-      attacker->paused = false;
-
-      if (!defender->body.empty()) defender->body.pop_back();
-      if (defender->body.empty()) defender->alive = false;
-    }
-
-    for (const auto& s : snakes_) {
-      if (!s.alive) {
-        pending_tombstones_.push_back({s.id, s.user_id});
-      }
-    }
-    snakes_.erase(remove_if(snakes_.begin(), snakes_.end(), [](const Snake& s) { return !s.alive; }), snakes_.end());
-
-    for (auto& s : snakes_) {
-      if (!s.alive || s.body.empty()) continue;
-      const Vec2 h = s.body[0];
-      for (auto& f : foods_) {
-        if (f == h) {
-          s.grow += 1;
-          f = rand_free_cell_locked();
-        }
-      }
-    }
-
+    world_.Tick();
   }
 
-  GameState snapshot() {
-    lock_guard<mutex> lock(mu_);
-    GameState gs;
-    gs.tick = tick_;
-    gs.snakes = snakes_;
-    gs.foods = foods_;
-    return gs;
+  world::WorldSnapshot snapshot() {
+    return world_.Snapshot();
   }
 
-  bool set_snake_dir(int user_id, int snake_id, Dir d) {
-    lock_guard<mutex> lock(mu_);
-    Snake* s = find_snake_locked(snake_id);
-    if (!s || s->user_id != user_id) return false;
-    s->dir = d;
-    s->paused = false;
-    return true;
+  bool set_snake_dir(int user_id, int snake_id, world::Dir d) {
+    return world_.QueueDirectionInput(user_id, snake_id, d);
   }
 
   bool toggle_snake_pause(int user_id, int snake_id) {
-    lock_guard<mutex> lock(mu_);
-    Snake* s = find_snake_locked(snake_id);
-    if (!s || s->user_id != user_id) return false;
-    s->paused = !s->paused;
-    return true;
+    return world_.QueuePauseToggle(user_id, snake_id);
   }
 
-  vector<Snake> list_user_snakes(int user_id) {
-    lock_guard<mutex> lock(mu_);
-    vector<Snake> out;
-    for (const auto& s : snakes_) {
-      if (s.user_id == user_id) out.push_back(s);
-    }
-    return out;
+  vector<world::Snake> list_user_snakes(int user_id) {
+    return world_.ListUserSnakes(user_id);
   }
 
   optional<int> create_snake_for_user(int user_id, const string& color) {
-    lock_guard<mutex> lock(mu_);
-    int count = 0;
-    for (const auto& s : snakes_) {
-      if (s.user_id == user_id) ++count;
-    }
-    if (count >= MAX_SNAKES_PER_USER) return nullopt;
-
-    Snake s;
-    s.id = next_snake_id_++;
-    s.user_id = user_id;
-    s.color = color;
-    s.dir = Dir::Stop;
-    s.paused = false;
-    s.alive = true;
-    s.grow = 0;
-    s.body = {rand_free_cell_locked()};
-
-    snakes_.push_back(s);
-    return s.id;
+    return world_.CreateSnakeForUser(user_id, color);
   }
 
-  // Flushes a compact persistence batch. Data copy happens under lock, I/O out of lock.
+  // Data snapshot is captured inside World lock, DB I/O happens out of lock.
   void flush_persistence_batch() {
-    struct PendingBatch {
-      vector<storage::SnakeCheckpoint> live;
-      vector<storage::SnakeCheckpoint> tombstones;
-    };
-
-    PendingBatch batch;
-    {
-      lock_guard<mutex> lock(mu_);
-      const int64_t ts = static_cast<int64_t>(now_ms());
-      batch.live.reserve(snakes_.size());
-      for (const auto& s : snakes_) {
-        storage::SnakeCheckpoint cp;
-        cp.snake_id = to_string(s.id);
-        cp.owner_user_id = to_string(s.user_id);
-        cp.ts = ts;
-        cp.dir = static_cast<int>(s.dir);
-        cp.paused = s.paused;
-        cp.length = static_cast<int>(s.body.size());
-        cp.score = static_cast<int>(s.body.size());
-        cp.w = GRID_W;
-        cp.h = GRID_H;
-        cp.body.reserve(s.body.size());
-        for (const auto& cell : s.body) cp.body.push_back({cell.x, cell.y});
-        batch.live.push_back(std::move(cp));
-      }
-
-      batch.tombstones.reserve(pending_tombstones_.size());
-      for (const auto& t : pending_tombstones_) {
-        storage::SnakeCheckpoint cp;
-        cp.snake_id = to_string(t.first);
-        cp.owner_user_id = to_string(t.second);
-        cp.ts = ts;
-        cp.dir = static_cast<int>(Dir::Stop);
-        cp.paused = true;
-        cp.length = 0;
-        cp.score = 0;
-        cp.w = GRID_W;
-        cp.h = GRID_H;
-        batch.tombstones.push_back(std::move(cp));
-      }
-      pending_tombstones_.clear();
-    }
-
+    const auto batch = world_.BuildPersistenceBatch(static_cast<int64_t>(now_ms()));
     for (const auto& cp : batch.live) storage_.PutSnakeCheckpoint(cp);
     for (const auto& cp : batch.tombstones) storage_.PutSnakeCheckpoint(cp);
   }
 
  private:
-  static int to_int(const string& s) {
-    try {
-      return stoi(s);
-    } catch (...) {
-      return 0;
-    }
-  }
-
-  string color_for_user(int user_id) {
-    static const vector<string> palette = {
-      "#00ff00", "#00aaff", "#ff00ff", "#ff8800", "#00ffaa", "#ffaa00"
-    };
-    if (user_id <= 0) return "#00ff00";
-    return palette[static_cast<size_t>(user_id - 1) % palette.size()];
-  }
-
-  Snake* find_snake_locked(int snake_id) {
-    for (auto& s : snakes_) {
-      if (s.id == snake_id) return &s;
-    }
-    return nullptr;
-  }
-
-  Vec2 rand_free_cell_locked() {
-    static thread_local mt19937 rng(static_cast<uint32_t>(random_device{}()));
-    uniform_int_distribution<int> dx(0, GRID_W - 1);
-    uniform_int_distribution<int> dy(0, GRID_H - 1);
-
-    unordered_set<long long> occ;
-    auto key = [](Vec2 v) -> long long {
-      return (static_cast<long long>(v.x) << 32) ^ static_cast<unsigned long long>(v.y & 0xffffffff);
-    };
-
-    for (const auto& s : snakes_) {
-      if (!s.alive) continue;
-      for (const auto& c : s.body) occ.insert(key(c));
-    }
-    for (const auto& f : foods_) occ.insert(key(f));
-
-    for (int tries = 0; tries < 2000; ++tries) {
-      Vec2 v{dx(rng), dy(rng)};
-      if (!occ.count(key(v))) return v;
-    }
-    return {0, 0};
-  }
-
-  void resolve_overlaps_on_start_locked() {
-    unordered_set<long long> occ;
-    auto key = [](Vec2 v) -> long long {
-      return (static_cast<long long>(v.x) << 32) ^ static_cast<unsigned long long>(v.y & 0xffffffff);
-    };
-
-    for (auto& s : snakes_) {
-      if (!s.alive) continue;
-      if (s.body.empty()) s.body.push_back(rand_free_cell_locked());
-
-      bool bad = false;
-      for (const auto& c : s.body) {
-        if (occ.count(key(c))) {
-          bad = true;
-          break;
-        }
-      }
-      if (bad) {
-        s.body = {rand_free_cell_locked()};
-        s.grow = 0;
-        s.dir = Dir::Stop;
-        s.paused = false;
-      }
-      for (const auto& c : s.body) occ.insert(key(c));
-    }
-  }
-
   storage::IStorage& storage_;
-  mutex mu_;
-  uint64_t tick_ = 0;
-  int next_snake_id_ = 1;
-  vector<pair<int, int>> pending_tombstones_;
-  vector<Snake> snakes_;
-  vector<Vec2> foods_;
+  world::World world_;
 };
 
 static optional<string> get_json_string_field(const string& body, const string& key) {
@@ -523,19 +188,19 @@ static optional<int> get_json_int_field(const string& body, const string& key) {
   return stoi(body.substr(p, e - p));
 }
 
-static protocol::Snapshot to_protocol_snapshot(const GameState& gs) {
+static protocol::Snapshot to_protocol_snapshot(const world::WorldSnapshot& snap_in) {
   protocol::Snapshot snap;
-  snap.tick = gs.tick;
-  snap.w = GRID_W;
-  snap.h = GRID_H;
+  snap.tick = snap_in.tick;
+  snap.w = snap_in.w;
+  snap.h = snap_in.h;
 
-  snap.foods.reserve(gs.foods.size());
-  for (const auto& f : gs.foods) {
+  snap.foods.reserve(snap_in.foods.size());
+  for (const auto& f : snap_in.foods) {
     snap.foods.push_back(protocol::Vec2{f.x, f.y});
   }
 
-  snap.snakes.reserve(gs.snakes.size());
-  for (const auto& s : gs.snakes) {
+  snap.snakes.reserve(snap_in.snakes.size());
+  for (const auto& s : snap_in.snakes) {
     protocol::SnakeState out;
     out.id = s.id;
     out.user_id = s.user_id;
@@ -552,7 +217,7 @@ static protocol::Snapshot to_protocol_snapshot(const GameState& gs) {
   return snap;
 }
 
-static string state_to_json(const GameState& gs) {
+static string state_to_json(const world::WorldSnapshot& gs) {
   return protocol::encode_snapshot_json(to_protocol_snapshot(gs));
 }
 
@@ -599,7 +264,7 @@ static bool ensure_user(storage::IStorage& storage, const string& user_id, const
   return storage.PutUser(u);
 }
 
-static void seed(storage::IStorage& storage, GameEngine& game) {
+static void seed(storage::IStorage& storage, GameService& game) {
   if (!ensure_user(storage, "1", "user1", "pass1") || !ensure_user(storage, "2", "user2", "pass2")) {
     cerr << "Failed to seed users into DynamoDB\n";
     return;
@@ -621,13 +286,23 @@ int main(int argc, char** argv) {
 
   RuntimeConfig runtime_cfg = RuntimeConfig::FromEnv();
 
+  int grid_w = DEFAULT_W;
+  int grid_h = DEFAULT_H;
+  int max_snakes_per_user = 3;
+  string bind_host = "127.0.0.1";
+  int bind_port = 8080;
+
   const char* envW = getenv("SNAKE_W");
   const char* envH = getenv("SNAKE_H");
   const char* envMax = getenv("SNAKE_MAX_PER_USER");
+  const char* envBindHost = getenv("SERVER_BIND_HOST");
+  const char* envBindPort = getenv("SERVER_BIND_PORT");
 
-  if (envW) GRID_W = max(10, atoi(envW));
-  if (envH) GRID_H = max(10, atoi(envH));
-  if (envMax) MAX_SNAKES_PER_USER = max(1, atoi(envMax));
+  if (envW) grid_w = max(10, atoi(envW));
+  if (envH) grid_h = max(10, atoi(envH));
+  if (envMax) max_snakes_per_user = max(1, atoi(envMax));
+  if (envBindHost && *envBindHost) bind_host = envBindHost;
+  if (envBindPort) bind_port = max(1, atoi(envBindPort));
 
   cout << "RuntimeConfig: "
        << "TICK_HZ=" << runtime_cfg.tick_hz
@@ -652,7 +327,7 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  GameEngine game(*storage);
+  GameService game(*storage, grid_w, grid_h, FOOD_COUNT, max_snakes_per_user);
   game.load_from_storage_or_seed_positions();
 
   if (mode == "reset") {
@@ -684,7 +359,6 @@ int main(int argc, char** argv) {
   signal(SIGUSR1, on_reload_signal);
   signal(SIGHUP, on_reload_signal);
 
-  // Dedicated simulation thread: fixed-step scheduler based on steady_clock.
   thread loop([&] {
     using clock = chrono::steady_clock;
     using ms = chrono::milliseconds;
@@ -723,7 +397,6 @@ int main(int argc, char** argv) {
         now = clock::now();
       }
 
-      // Backlog protection: avoid long catch-up bursts when the server falls behind.
       if ((now - next_tick) > max_lag) {
         next_tick = now + tick_dt;
       }
@@ -745,8 +418,7 @@ int main(int argc, char** argv) {
       }
 
       if (runtime_cfg.debug_tps && now >= next_log_at) {
-        cout << "[rate] ticks/5s=" << ticks_since_log
-             << ", broadcasts/5s=" << broadcasts_since_log << "\n";
+        cout << "[rate] ticks/5s=" << ticks_since_log << ", broadcasts/5s=" << broadcasts_since_log << "\n";
         ticks_since_log = 0;
         broadcasts_since_log = 0;
         next_log_at += chrono::seconds(5);
@@ -758,7 +430,6 @@ int main(int argc, char** argv) {
     }
   });
 
-  // Persistence thread: writes checkpoints outside the simulation loop.
   thread persistence([&] {
     using clock = chrono::steady_clock;
     using ms = chrono::milliseconds;
@@ -789,7 +460,6 @@ int main(int argc, char** argv) {
     res.set_content(state_to_json(game.snapshot()), "application/json");
   });
 
-  // Public: runtime speed settings for UI diagnostics.
   srv.Get("/game/runtime", [&](const httplib::Request&, httplib::Response& res) {
     add_cors(res);
     ostringstream o;
@@ -809,37 +479,35 @@ int main(int argc, char** argv) {
     res.set_header("Content-Type", "text/event-stream");
 
     res.set_chunked_content_provider(
-      "text/event-stream",
-      [&](size_t, httplib::DataSink& sink) {
-        uint64_t last_seq = 0;
-        auto last_heartbeat = chrono::steady_clock::now();
-        // Keep SSE links alive through proxies even when no new frame is available.
-        const auto heartbeat_every = chrono::seconds(10);
-        while (true) {
-          string payload;
-          {
-            lock_guard<mutex> lock(snapshot_mu);
-            if (snapshot_seq != last_seq) {
-              last_seq = snapshot_seq;
-              payload = "event: frame\n";
-              payload += "data: " + latest_snapshot + "\n\n";
+        "text/event-stream",
+        [&](size_t, httplib::DataSink& sink) {
+          uint64_t last_seq = 0;
+          auto last_heartbeat = chrono::steady_clock::now();
+          const auto heartbeat_every = chrono::seconds(10);
+          while (true) {
+            string payload;
+            {
+              lock_guard<mutex> lock(snapshot_mu);
+              if (snapshot_seq != last_seq) {
+                last_seq = snapshot_seq;
+                payload = "event: frame\n";
+                payload += "data: " + latest_snapshot + "\n\n";
+              }
             }
-          }
-          if (payload.empty()) {
-            const auto now = chrono::steady_clock::now();
-            if (now - last_heartbeat >= heartbeat_every) {
-              payload = ": keepalive\n\n";
-              last_heartbeat = now;
+            if (payload.empty()) {
+              const auto now = chrono::steady_clock::now();
+              if (now - last_heartbeat >= heartbeat_every) {
+                payload = ": keepalive\n\n";
+                last_heartbeat = now;
+              }
             }
+            if (!payload.empty() && !sink.write(payload.data(), payload.size())) break;
+            const int poll_ms = max(1, runtime_cfg.SpectatorIntervalMs() / 2);
+            this_thread::sleep_for(chrono::milliseconds(poll_ms));
           }
-          if (!payload.empty() && !sink.write(payload.data(), payload.size())) break;
-          const int poll_ms = max(1, runtime_cfg.SpectatorIntervalMs() / 2);
-          this_thread::sleep_for(chrono::milliseconds(poll_ms));
-        }
-        sink.done();
-        return true;
-      }
-    );
+          sink.done();
+          return true;
+        });
   });
 
   srv.Post("/auth/login", [&](const httplib::Request& req, httplib::Response& res) {
@@ -905,7 +573,7 @@ int main(int argc, char** argv) {
       return;
     }
 
-    bool ok = game.set_snake_dir(*uid, snake_id, static_cast<Dir>(*d));
+    bool ok = game.set_snake_dir(*uid, snake_id, static_cast<world::Dir>(*d));
     if (!ok) {
       res.status = 403;
       res.set_content("{\"error\":\"forbidden\"}", "application/json");
@@ -957,12 +625,12 @@ int main(int argc, char** argv) {
     res.set_content(o.str(), "application/json");
   });
 
-  cout << "Server on http://127.0.0.1:8080\n";
+  cout << "Server on http://" << bind_host << ":" << bind_port << "\n";
   cout << "SSE:   GET /game/stream\n";
   cout << "State: GET /game/state\n";
   cout << "Login: POST /auth/login {username,password}\n";
 
-  srv.listen("127.0.0.1", 8080);
+  srv.listen(bind_host, bind_port);
 
   running.store(false);
   loop.join();

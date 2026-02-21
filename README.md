@@ -2,37 +2,22 @@
 
 ### Build
 
-Required libs:
-- `boost`
-- `aws-sdk-cpp` (DynamoDB + core)
-- single-header `cpp-httplib` in `api/httplib.h`
-
-macOS install example:
+Preferred build (no host SDK installs needed):
 ```bash
-brew install boost aws-sdk-cpp
+make local-build
 ```
 
-If you want to avoid local installs, use Docker local runner:
-```bash
-make local-run-docker
-```
-
-Example build:
-```bash
-clang++ -std=c++17 -O2 -pthread \
-  api/snake_server.cpp \
-  api/protocol/encode_json.cpp \
-  api/storage/dynamo_storage.cpp \
-  api/storage/storage_factory.cpp \
-  config/runtime_config.cpp \
-  -lboost_system -laws-cpp-sdk-dynamodb -laws-cpp-sdk-core \
-  -o snake_server
-```
+`make local-build` compiles `snake_server` inside Docker and writes the binary to this repo.
 
 ### Protocol source of truth
 
 Snapshot JSON protocol is defined in `api/protocol`.
 Do not inline snapshot JSON shapes in server code.
+
+Simulation internals are structured in `api/world`:
+- `World` owns state
+- `systems/*` mutate state each tick
+- server/network layer only queues intents and reads snapshots
 
 ### Runtime Hz config
 
@@ -55,7 +40,18 @@ make local-setup
 make local-run
 ```
 
-`make local-run-docker` builds/runs the server inside Docker and talks to local DynamoDB.
+`make local-run` runs fully in Docker and talks to local DynamoDB.  
+It publishes app on `http://127.0.0.1:8080`.
+If you want to run the server process natively on your host shell (using Docker-built binary), use:
+```bash
+make local-run-native
+```
+
+Note: `make local-run` stays in foreground by design (it is the running server). Open the app in browser while it is running; stop with `Ctrl+C`.
+
+`make local-seed`, `make local-reset`, and `make local-admin ...` also run inside Docker (same runtime as `local-run`) to avoid host binary/SDK mismatch.
+
+`make local-run-docker` remains available explicitly.
 
 Reset local data:
 ```bash
