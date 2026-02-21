@@ -796,6 +796,7 @@ int main(int argc, char** argv) {
     o << "{"
       << "\"tick_hz\":" << runtime_cfg.tick_hz << ","
       << "\"spectator_hz\":" << runtime_cfg.spectator_hz << ","
+      << "\"player_hz\":" << runtime_cfg.player_hz << ","
       << "\"enable_broadcast\":" << (runtime_cfg.enable_broadcast ? "true" : "false")
       << "}";
     res.set_content(o.str(), "application/json");
@@ -811,6 +812,9 @@ int main(int argc, char** argv) {
       "text/event-stream",
       [&](size_t, httplib::DataSink& sink) {
         uint64_t last_seq = 0;
+        auto last_heartbeat = chrono::steady_clock::now();
+        // Keep SSE links alive through proxies even when no new frame is available.
+        const auto heartbeat_every = chrono::seconds(10);
         while (true) {
           string payload;
           {
@@ -819,6 +823,13 @@ int main(int argc, char** argv) {
               last_seq = snapshot_seq;
               payload = "event: frame\n";
               payload += "data: " + latest_snapshot + "\n\n";
+            }
+          }
+          if (payload.empty()) {
+            const auto now = chrono::steady_clock::now();
+            if (now - last_heartbeat >= heartbeat_every) {
+              payload = ": keepalive\n\n";
+              last_heartbeat = now;
             }
           }
           if (!payload.empty() && !sink.write(payload.data(), payload.size())) break;

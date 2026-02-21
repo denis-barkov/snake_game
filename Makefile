@@ -162,7 +162,7 @@ aws-code-deploy:
 
 aws-apply:
 	AWS_PROFILE=$(PROFILE) terraform -chdir=$(TF_DIR) apply
-	@$(MAKE) aws-code-deploy
+	@$(MAKE) aws-code-deploy BRANCH=$(APP_REF)
 
 aws-destroy:
 	AWS_PROFILE=$(PROFILE) terraform -chdir=$(TF_DIR) destroy

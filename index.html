@@ -164,6 +164,7 @@
   let lastTickSample = null;
   let expectedTickHz = null;
   const FALLBACK_EXPECTED_TICK_HZ = 10;
+  let runtimeSpeedPollTimer = null;
 
   function buildBoard(w, h) {
     gridW = w; gridH = h;
@@ -246,6 +247,11 @@
       // Fallback keeps local/prod UI readable when talking to an older backend binary.
       expectedTickHz = FALLBACK_EXPECTED_TICK_HZ;
       expectedTickHzEl.textContent = `${expectedTickHz} (fallback)`;
+      // Stop repeated failing polls on older binaries that do not expose /game/runtime.
+      if (runtimeSpeedPollTimer) {
+        clearInterval(runtimeSpeedPollTimer);
+        runtimeSpeedPollTimer = null;
+      }
     }
   }
 
@@ -375,7 +381,7 @@
 
   startStream();
   loadRuntimeSpeed();
-  setInterval(loadRuntimeSpeed, 10000);
+  runtimeSpeedPollTimer = setInterval(loadRuntimeSpeed, 10000);
 </script>
 </body>
 </html>
