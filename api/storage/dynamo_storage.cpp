@@ -156,6 +156,34 @@ DynamoStorage::DynamoStorage(DynamoConfig cfg) : cfg_(std::move(cfg)) {
   client_ = std::make_shared<Aws::DynamoDB::DynamoDBClient>(cc);
 }
 
+std::vector<User> DynamoStorage::ListUsers() {
+  std::vector<User> out;
+  Aws::DynamoDB::Model::ScanRequest req;
+  req.SetTableName(cfg_.users_table.c_str());
+
+  while (true) {
+    auto res = client_->Scan(req);
+    if (!res.IsSuccess()) break;
+    for (const auto& item : res.GetResult().GetItems()) {
+      User u;
+      u.user_id = GetString(item, "user_id");
+      u.username = GetString(item, "username");
+      u.password_hash = GetString(item, "password_hash");
+      u.balance_mi = GetInt64(item, "balance_mi");
+      u.role = GetString(item, "role", "player");
+      u.created_at = GetInt64(item, "created_at");
+      u.company_name = GetString(item, "company_name");
+      out.push_back(std::move(u));
+    }
+
+    const auto& lek = res.GetResult().GetLastEvaluatedKey();
+    if (lek.empty()) break;
+    req.SetExclusiveStartKey(lek);
+  }
+
+  return out;
+}
+
 std::optional<User> DynamoStorage::GetUserByUsername(const std::string& username) {
   Aws::DynamoDB::Model::QueryRequest req;
   req.SetTableName(cfg_.users_table.c_str());

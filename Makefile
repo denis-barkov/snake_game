@@ -24,7 +24,7 @@ LOCAL_DYNAMO_SETTINGS?=snake-local-settings
 LOCAL_DYNAMO_ECONOMY_PARAMS?=snake-local-economy_params
 LOCAL_DYNAMO_ECONOMY_PERIOD?=snake-local-economy_period
 DOCKER_LOCAL_IMAGE?=snake-local-run:dev
-LOCAL_COMPILE_CMD=clang++ -std=c++17 -O2 -pthread api/snake_server.cpp api/protocol/encode_json.cpp api/storage/dynamo_storage.cpp api/storage/storage_factory.cpp config/runtime_config.cpp api/world/world.cpp api/world/entities/snake.cpp api/world/entities/food.cpp api/world/systems/movement_system.cpp api/world/systems/collision_system.cpp api/world/systems/spawn_system.cpp -lboost_system -laws-cpp-sdk-dynamodb -laws-cpp-sdk-core -L/usr/local/lib64 -L/usr/local/lib -o snake_server
+LOCAL_COMPILE_CMD=clang++ -std=c++17 -O2 -pthread api/snake_server.cpp api/protocol/encode_json.cpp api/storage/dynamo_storage.cpp api/storage/storage_factory.cpp api/economy/economy_v1.cpp config/runtime_config.cpp api/world/world.cpp api/world/entities/snake.cpp api/world/entities/food.cpp api/world/systems/movement_system.cpp api/world/systems/collision_system.cpp api/world/systems/spawn_system.cpp -lboost_system -laws-cpp-sdk-dynamodb -laws-cpp-sdk-core -L/usr/local/lib64 -L/usr/local/lib -o snake_server
 
 # Accept both upper/lower-case CLI vars for convenience.
 ifneq ($(strip $(branch)),)

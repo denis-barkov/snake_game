@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <cmath>
 #include <iomanip>
 #include <iostream>
 #include <mutex>
@@ -23,6 +24,7 @@
 
 #include <aws/core/Aws.h>
 
+#include "economy/economy_v1.h"
 #include "httplib.h"
 #include "protocol/encode_json.h"
 #include "storage/storage_factory.h"
@@ -44,6 +46,19 @@ static void on_reload_signal(int) {
 static uint64_t now_ms() {
   using namespace std::chrono;
   return duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
+}
+
+static string utc_period_key_yyyymmddhh() {
+  time_t t = time(nullptr);
+  tm tm_utc{};
+#if defined(_WIN32)
+  gmtime_s(&tm_utc, &t);
+#else
+  gmtime_r(&t, &tm_utc);
+#endif
+  char buf[16];
+  if (strftime(buf, sizeof(buf), "%Y%m%d%H", &tm_utc) == 0) return "1970010100";
+  return buf;
 }
 
 static string json_escape(const string& s) {
@@ -80,6 +95,17 @@ static string json_escape(const string& s) {
     }
   }
   return o.str();
+}
+
+static string json_number(double v) {
+  if (!std::isfinite(v)) return "0";
+  ostringstream out;
+  out << fixed << setprecision(6) << v;
+  string s = out.str();
+  while (!s.empty() && s.back() == '0') s.pop_back();
+  if (!s.empty() && s.back() == '.') s.push_back('0');
+  if (s.empty()) s = "0";
+  return s;
 }
 
 static string rand_token(size_t n = 32) {
@@ -160,6 +186,83 @@ class GameService {
  private:
   storage::IStorage& storage_;
   world::World world_;
+};
+
+class EconomyService {
+ public:
+  explicit EconomyService(storage::IStorage& storage)
+      : storage_(storage),
+        cache_ttl_ms_([] {
+          const char* env = getenv("ECONOMY_CACHE_MS");
+          if (!env) return 2000;
+          const int parsed = atoi(env);
+          return max(500, min(10000, parsed));
+        }()) {}
+
+  struct Snapshot {
+    economy::EconomyState state;
+    storage::EconomyParams params;
+    int64_t delta_m_buy = 0;
+    int64_t k_snakes = 0;
+  };
+
+  Snapshot GetState() {
+    using clock = chrono::steady_clock;
+    const auto now = clock::now();
+
+    {
+      lock_guard<mutex> lock(mu_);
+      if (cache_valid_ && now < cache_expire_at_) return cache_;
+    }
+
+    Snapshot fresh = ComputeFresh();
+    {
+      lock_guard<mutex> lock(mu_);
+      cache_ = fresh;
+      cache_valid_ = true;
+      cache_expire_at_ = now + chrono::milliseconds(cache_ttl_ms_);
+      return cache_;
+    }
+  }
+
+ private:
+  Snapshot ComputeFresh() {
+    Snapshot out;
+    const string period_key = utc_period_key_yyyymmddhh();
+
+    out.params = storage_.GetEconomyParams().value_or(storage::EconomyParams{});
+    const auto period = storage_.GetEconomyPeriod(period_key);
+    out.delta_m_buy = period ? period->delta_m_buy : 0;
+
+    const auto users = storage_.ListUsers();
+    int64_t sum_mi = 0;
+    for (const auto& u : users) sum_mi += u.balance_mi;
+
+    const auto snakes = storage_.ListSnakes();
+    out.k_snakes = 0;
+    for (const auto& s : snakes) {
+      if (s.alive) out.k_snakes += max<int64_t>(0, s.length_k);
+    }
+
+    economy::EconomyInputs in;
+    in.params = out.params;
+    in.sum_mi = sum_mi;
+    in.m_g = out.params.m_gov_reserve;
+    in.delta_m_buy = out.delta_m_buy;
+    in.delta_m_issue = out.params.delta_m_issue;
+    in.cap_delta_m = out.params.cap_delta_m;
+    in.k_snakes = out.k_snakes;
+    in.delta_k_obs = out.params.delta_k_obs;
+    out.state = economy::ComputeEconomyV1(in, period_key);
+    return out;
+  }
+
+  storage::IStorage& storage_;
+  int cache_ttl_ms_ = 2000;
+  mutex mu_;
+  bool cache_valid_ = false;
+  chrono::steady_clock::time_point cache_expire_at_{};
+  Snapshot cache_{};
 };
 
 static optional<string> get_json_string_field(const string& body, const string& key) {
@@ -331,6 +434,7 @@ int main(int argc, char** argv) {
   }
 
   GameService game(*storage, grid_w, grid_h, FOOD_COUNT, max_snakes_per_user);
+  EconomyService economy(*storage);
   game.load_from_storage_or_seed_positions();
   game.flush_persistence_delta();
 
@@ -456,6 +560,35 @@ int main(int argc, char** argv) {
       << "\"spectator_hz\":" << runtime_cfg.spectator_hz << ","
       << "\"player_hz\":" << runtime_cfg.player_hz << ","
       << "\"enable_broadcast\":" << (runtime_cfg.enable_broadcast ? "true" : "false")
+      << "}";
+    res.set_content(o.str(), "application/json");
+  });
+
+  srv.Get("/economy/state", [&](const httplib::Request&, httplib::Response& res) {
+    add_cors(res);
+    const auto s = economy.GetState();
+    ostringstream o;
+    o << "{"
+      << "\"period_key\":\"" << json_escape(s.state.period_key) << "\","
+      << "\"M\":" << s.state.m << ","
+      << "\"K\":" << s.state.k << ","
+      << "\"Y\":" << json_number(s.state.y) << ","
+      << "\"P\":" << json_number(s.state.p) << ","
+      << "\"pi\":" << json_number(s.state.pi) << ","
+      << "\"A_world\":" << s.state.a_world << ","
+      << "\"M_white\":" << s.state.m_white << ","
+      << "\"inputs\":{"
+      << "\"k_land\":" << s.params.k_land << ","
+      << "\"A\":" << json_number(s.params.a_productivity) << ","
+      << "\"V\":" << json_number(s.params.v_velocity) << ","
+      << "\"M_G\":" << s.params.m_gov_reserve << ","
+      << "\"cap_delta_m\":" << s.params.cap_delta_m << ","
+      << "\"delta_m_issue\":" << s.params.delta_m_issue << ","
+      << "\"delta_m_buy\":" << s.delta_m_buy << ","
+      << "\"delta_k_obs\":" << s.params.delta_k_obs << ","
+      << "\"sum_mi\":" << s.state.sum_mi << ","
+      << "\"k_snakes\":" << s.k_snakes
+      << "}"
       << "}";
     res.set_content(o.str(), "application/json");
   });

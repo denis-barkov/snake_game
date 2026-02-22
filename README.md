@@ -26,10 +26,18 @@ Simulation internals are structured in `api/world`:
 - `PLAYER_HZ` (placeholder, currently unused)
 - `ENABLE_BROADCAST` (`true`/`false`, default `true`)
 - `DEBUG_TPS` (`true`/`false`, default `false`)
+- `ECONOMY_CACHE_MS` (default `2000`, min `500`, max `10000`) for `/economy/state` read cache
 
 Default run values in Make:
 - `TICK_HZ=10`
 - `SPECTATOR_HZ=10`
+
+### Economy v1 (read-only)
+
+- Backend endpoint: `GET /economy/state`
+- Frontend HUD polls this endpoint every 2 seconds.
+- Economy is computed outside the tick loop and cached in-process to avoid DynamoDB hammering.
+- No gameplay rules are changed by economy values in this step (display-only).
 
 ## Local DynamoDB (Docker)
 

@@ -27,6 +27,7 @@ class DynamoStorage : public IStorage {
  public:
   explicit DynamoStorage(DynamoConfig cfg);
 
+  std::vector<User> ListUsers() override;
   std::optional<User> GetUserByUsername(const std::string& username) override;
   std::optional<User> GetUserById(const std::string& user_id) override;
   bool PutUser(const User& u) override;

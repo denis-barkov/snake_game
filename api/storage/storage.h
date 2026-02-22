@@ -12,6 +12,8 @@ class IStorage {
  public:
   virtual ~IStorage() = default;
 
+  // Full user listing is used by low-frequency aggregated reads (economy endpoint).
+  virtual std::vector<User> ListUsers() = 0;
   virtual std::optional<User> GetUserByUsername(const std::string& username) = 0;
   virtual std::optional<User> GetUserById(const std::string& user_id) = 0;
   virtual bool PutUser(const User& u) = 0;

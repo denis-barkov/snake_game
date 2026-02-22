@@ -29,6 +29,11 @@
     .layout { display: flex; gap: 16px; align-items: flex-start; }
     #left { width: 260px; flex: 0 0 260px; }
     #game { flex: 1; }
+    #game-main {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
     #game-board-wrap {
       overflow: auto;
       max-width: 100%;
@@ -52,6 +57,20 @@
     .snake-cell { background: #00aa00; }
 
     .panel { border: 1px solid #ddd; padding: 12px; border-radius: 8px; margin-bottom: 12px; }
+    .compact-panel {
+      margin-bottom: 0;
+      padding: 10px;
+      background: #ffffff;
+    }
+    .compact-panel h3 {
+      margin: 0 0 8px 0;
+      font-size: 15px;
+    }
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 6px 12px;
+    }
     .row { margin: 6px 0; }
     input {
       width: 100%;
@@ -131,14 +150,29 @@
   </div>
 
   <div id="game">
-    <div class="panel">
-      <div><strong>Live Game</strong></div>
-      <div>Tick: <span id="tick">0</span></div>
-      <div>Expected speed: <span id="expectedTickHz">-</span> tick/s</div>
-      <div>Actual speed: <span id="actualTickHz">-</span> tick/s</div>
-    </div>
-    <div id="game-board-wrap">
-      <div id="game-board"></div>
+    <div id="game-main">
+      <div class="panel compact-panel">
+        <h3>Economy (Read-Only)</h3>
+        <div class="stats-grid">
+          <div title="Total issued cells">Money Supply (M): <span id="ecoM">—</span></div>
+          <div title="Cost multiplier (read-only for now)">Price Index (P): <span id="ecoP">—</span></div>
+          <div title="Money growth this period">Inflation (pi): <span id="ecoPi">—</span></div>
+          <div title="World area implied by money supply">World Size (A_world): <span id="ecoAWorld">—</span></div>
+          <div title="Slack capacity">Free Space (M_white): <span id="ecoMWhite">—</span></div>
+        </div>
+      </div>
+      <div id="game-board-wrap">
+        <div id="game-board"></div>
+      </div>
+      <div class="panel compact-panel">
+        <h3>Live Game</h3>
+        <div class="stats-grid">
+          <div>Tick: <span id="tick">0</span></div>
+          <div>Expected speed: <span id="expectedTickHz">-</span> tick/s</div>
+          <div>Actual speed: <span id="actualTickHz">-</span> tick/s</div>
+          <div><small>Period: <span id="ecoPeriod">—</span></small></div>
+        </div>
+      </div>
     </div>
   </div>
   </div>
@@ -157,6 +191,12 @@
   const tickEl = document.getElementById("tick");
   const expectedTickHzEl = document.getElementById("expectedTickHz");
   const actualTickHzEl = document.getElementById("actualTickHz");
+  const ecoMEl = document.getElementById("ecoM");
+  const ecoPEl = document.getElementById("ecoP");
+  const ecoPiEl = document.getElementById("ecoPi");
+  const ecoAWorldEl = document.getElementById("ecoAWorld");
+  const ecoMWhiteEl = document.getElementById("ecoMWhite");
+  const ecoPeriodEl = document.getElementById("ecoPeriod");
   const authStatus = document.getElementById("authStatus");
   const mySnakesEl = document.getElementById("mySnakes");
   const createSnakeBtn = document.getElementById("createSnakeBtn");
@@ -165,6 +205,7 @@
   let expectedTickHz = null;
   const FALLBACK_EXPECTED_TICK_HZ = 10;
   let runtimeSpeedPollTimer = null;
+  let economyPollTimer = null;
 
   function buildBoard(w, h) {
     gridW = w; gridH = h;
@@ -252,6 +293,36 @@
         clearInterval(runtimeSpeedPollTimer);
         runtimeSpeedPollTimer = null;
       }
+    }
+  }
+
+  function setEconomyFallback() {
+    ecoMEl.textContent = "—";
+    ecoPEl.textContent = "—";
+    ecoPiEl.textContent = "—";
+    ecoAWorldEl.textContent = "—";
+    ecoMWhiteEl.textContent = "—";
+    ecoPeriodEl.textContent = "—";
+  }
+
+  function fmtInt(v) {
+    if (!Number.isFinite(v)) return "—";
+    return Math.trunc(v).toLocaleString();
+  }
+
+  async function loadEconomyState() {
+    try {
+      const res = await fetch(API + "/economy/state");
+      if (!res.ok) throw new Error("economy endpoint unavailable");
+      const s = await res.json();
+      ecoMEl.textContent = fmtInt(Number(s.M));
+      ecoPEl.textContent = Number.isFinite(Number(s.P)) ? Number(s.P).toFixed(3) : "—";
+      ecoPiEl.textContent = Number.isFinite(Number(s.pi)) ? Number(s.pi).toFixed(4) : "—";
+      ecoAWorldEl.textContent = fmtInt(Number(s.A_world));
+      ecoMWhiteEl.textContent = fmtInt(Number(s.M_white));
+      ecoPeriodEl.textContent = typeof s.period_key === "string" ? s.period_key : "—";
+    } catch (_) {
+      setEconomyFallback();
     }
   }
 
@@ -381,7 +452,9 @@
 
   startStream();
   loadRuntimeSpeed();
+  loadEconomyState();
   runtimeSpeedPollTimer = setInterval(loadRuntimeSpeed, 10000);
+  economyPollTimer = setInterval(loadEconomyState, 2000);
 </script>
 </body>
 </html>
