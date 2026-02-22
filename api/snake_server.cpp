@@ -120,7 +120,7 @@ class GameService {
         world_(width, height, food_count, max_snakes_per_user) {}
 
   void load_from_storage_or_seed_positions() {
-    world_.LoadFromCheckpoints(storage_.ListLatestSnakeCheckpoints());
+    world_.LoadFromStorage(storage_.ListSnakes(), storage_.GetWorldChunk("main"));
   }
 
   void tick() {
@@ -147,11 +147,14 @@ class GameService {
     return world_.CreateSnakeForUser(user_id, color);
   }
 
-  // Data snapshot is captured inside World lock, DB I/O happens out of lock.
-  void flush_persistence_batch() {
-    const auto batch = world_.BuildPersistenceBatch(static_cast<int64_t>(now_ms()));
-    for (const auto& cp : batch.live) storage_.PutSnakeCheckpoint(cp);
-    for (const auto& cp : batch.tombstones) storage_.PutSnakeCheckpoint(cp);
+  // Writes only event-driven deltas. No per-tick checkpoint persistence.
+  void flush_persistence_delta() {
+    const auto delta = world_.DrainPersistenceDelta(static_cast<int64_t>(now_ms()));
+    if (delta.empty()) return;
+    for (const auto& s : delta.upsert_snakes) storage_.PutSnake(s);
+    for (const auto& sid : delta.delete_snake_ids) storage_.DeleteSnake(sid);
+    if (delta.upsert_world_chunk.has_value()) storage_.PutWorldChunk(*delta.upsert_world_chunk);
+    for (const auto& e : delta.snake_events) storage_.AppendSnakeEvent(e);
   }
 
  private:
@@ -273,7 +276,7 @@ static void seed(storage::IStorage& storage, GameService& game) {
   game.load_from_storage_or_seed_positions();
   if (game.list_user_snakes(1).empty()) game.create_snake_for_user(1, "#00ff00");
   if (game.list_user_snakes(2).empty()) game.create_snake_for_user(2, "#00aaff");
-  game.flush_persistence_batch();
+  game.flush_persistence_delta();
   game.load_from_storage_or_seed_positions();
   cout << "Seeded users: user1/pass1, user2/pass2 (1 snake each)\n";
 }
@@ -329,6 +332,7 @@ int main(int argc, char** argv) {
 
   GameService game(*storage, grid_w, grid_h, FOOD_COUNT, max_snakes_per_user);
   game.load_from_storage_or_seed_positions();
+  game.flush_persistence_delta();
 
   if (mode == "reset") {
     if (!storage->ResetForDev()) {
@@ -391,6 +395,7 @@ int main(int argc, char** argv) {
       int catch_up_ticks = 0;
       while (now >= next_tick && catch_up_ticks < max_catch_up_ticks) {
         game.tick();
+        game.flush_persistence_delta();
         ++ticks_since_log;
         ++catch_up_ticks;
         next_tick += tick_dt;
@@ -427,23 +432,6 @@ int main(int argc, char** argv) {
       auto next_deadline = runtime_cfg.enable_broadcast ? min(next_tick, next_broadcast) : next_tick;
       auto max_sleep_until = clock::now() + ms(5);
       this_thread::sleep_until(min(next_deadline, max_sleep_until));
-    }
-  });
-
-  thread persistence([&] {
-    using clock = chrono::steady_clock;
-    using ms = chrono::milliseconds;
-    const ms persist_dt(500);
-    auto next_persist = clock::now() + persist_dt;
-
-    while (running.load()) {
-      game.flush_persistence_batch();
-      next_persist += persist_dt;
-      const auto now = clock::now();
-      if (now > next_persist + (persist_dt * 5)) {
-        next_persist = now + persist_dt;
-      }
-      this_thread::sleep_until(next_persist);
     }
   });
 
@@ -619,6 +607,7 @@ int main(int argc, char** argv) {
       res.set_content("{\"error\":\"snake_limit\"}", "application/json");
       return;
     }
+    game.flush_persistence_delta();
 
     ostringstream o;
     o << "{\"id\":" << *id << "}";
@@ -634,8 +623,7 @@ int main(int argc, char** argv) {
 
   running.store(false);
   loop.join();
-  persistence.join();
-  game.flush_persistence_batch();
+  game.flush_persistence_delta();
   Aws::ShutdownAPI(aws_options);
   return 0;
 }

@@ -42,12 +42,7 @@ make local-run
 
 `make local-run` runs fully in Docker and talks to local DynamoDB.  
 It publishes app on `http://127.0.0.1:8080`.
-If you want to run the server process natively on your host shell (using Docker-built binary), use:
-```bash
-make local-run-native
-```
-
-Note: `make local-run` stays in foreground by design (it is the running server). Open the app in browser while it is running; stop with `Ctrl+C`.
+`make local-run` stays in foreground by design (it is the running server). Open the app in browser while it is running; stop with `Ctrl+C`.
 
 `make local-seed`, `make local-reset`, and `make local-admin ...` also run inside Docker (same runtime as `local-run`) to avoid host binary/SDK mismatch.
 
@@ -90,9 +85,12 @@ export AWS_ACCESS_KEY_ID=local
 export AWS_SECRET_ACCESS_KEY=local
 
 export DYNAMO_TABLE_USERS=snake-local-users
-export DYNAMO_TABLE_SNAKE_CHECKPOINTS=snake-local-snake_checkpoints
-export DYNAMO_TABLE_EVENT_LEDGER=snake-local-event_ledger
+export DYNAMO_TABLE_SNAKES=snake-local-snakes
+export DYNAMO_TABLE_WORLD_CHUNKS=snake-local-world_chunks
+export DYNAMO_TABLE_SNAKE_EVENTS=snake-local-snake_events
 export DYNAMO_TABLE_SETTINGS=snake-local-settings
+export DYNAMO_TABLE_ECONOMY_PARAMS=snake-local-economy_params
+export DYNAMO_TABLE_ECONOMY_PERIOD=snake-local-economy_period
 
 python3 tools/create_local_tables.py
 python3 tools/seed_local.py
@@ -108,9 +106,12 @@ Use instance role (no `DYNAMO_ENDPOINT`).
 export AWS_REGION=us-east-1
 export DYNAMO_REGION=us-east-1
 export DYNAMO_TABLE_USERS=snake-mvp-users
-export DYNAMO_TABLE_SNAKE_CHECKPOINTS=snake-mvp-snake_checkpoints
-export DYNAMO_TABLE_EVENT_LEDGER=snake-mvp-event_ledger
+export DYNAMO_TABLE_SNAKES=snake-mvp-snakes
+export DYNAMO_TABLE_WORLD_CHUNKS=snake-mvp-world_chunks
+export DYNAMO_TABLE_SNAKE_EVENTS=snake-mvp-snake_events
 export DYNAMO_TABLE_SETTINGS=snake-mvp-settings
+export DYNAMO_TABLE_ECONOMY_PARAMS=snake-mvp-economy_params
+export DYNAMO_TABLE_ECONOMY_PERIOD=snake-mvp-economy_period
 
 ./snake_server serve
 ```

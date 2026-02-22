@@ -42,9 +42,12 @@ module "iam" {
 
   dynamodb_table_arns = [
     module.dynamodb.users_table_arn,
-    module.dynamodb.snake_checkpoints_table_arn,
-    module.dynamodb.event_ledger_table_arn,
-    module.dynamodb.settings_table_arn
+    module.dynamodb.snakes_table_arn,
+    module.dynamodb.world_chunks_table_arn,
+    module.dynamodb.snake_events_table_arn,
+    module.dynamodb.settings_table_arn,
+    module.dynamodb.economy_params_table_arn,
+    module.dynamodb.economy_period_table_arn
   ]
 
   cloudwatch_log_group_arn = module.observability.log_group_arn
@@ -89,12 +92,15 @@ module "compute" {
   app_build_target = var.app_build_target
   app_listen_port  = var.app_control_port
   app_env = merge(var.app_env, {
-    AWS_REGION                     = var.aws_region
-    DYNAMO_REGION                  = var.aws_region
-    DYNAMO_TABLE_USERS             = "${var.project}-${var.environment}-users"
-    DYNAMO_TABLE_SNAKE_CHECKPOINTS = "${var.project}-${var.environment}-snake_checkpoints"
-    DYNAMO_TABLE_EVENT_LEDGER      = "${var.project}-${var.environment}-event_ledger"
-    DYNAMO_TABLE_SETTINGS          = "${var.project}-${var.environment}-settings"
+    AWS_REGION                 = var.aws_region
+    DYNAMO_REGION              = var.aws_region
+    DYNAMO_TABLE_USERS         = "${var.project}-${var.environment}-users"
+    DYNAMO_TABLE_SNAKES        = "${var.project}-${var.environment}-snakes"
+    DYNAMO_TABLE_WORLD_CHUNKS  = "${var.project}-${var.environment}-world_chunks"
+    DYNAMO_TABLE_SNAKE_EVENTS  = "${var.project}-${var.environment}-snake_events"
+    DYNAMO_TABLE_SETTINGS      = "${var.project}-${var.environment}-settings"
+    DYNAMO_TABLE_ECONOMY_PARAMS = "${var.project}-${var.environment}-economy_params"
+    DYNAMO_TABLE_ECONOMY_PERIOD = "${var.project}-${var.environment}-economy_period"
   })
   domain_name       = var.domain_name
   letsencrypt_email = var.letsencrypt_email

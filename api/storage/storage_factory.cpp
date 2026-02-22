@@ -29,9 +29,12 @@ std::unique_ptr<IStorage> CreateStorageFromEnv() {
   cfg.endpoint = GetEnvOrDefault("DYNAMO_ENDPOINT", "");
   cfg.region = GetEnvOrDefault("DYNAMO_REGION", GetEnvOrDefault("AWS_REGION", "us-east-1"));
   cfg.users_table = RequireEnv("DYNAMO_TABLE_USERS");
-  cfg.snake_checkpoints_table = RequireEnv("DYNAMO_TABLE_SNAKE_CHECKPOINTS");
-  cfg.event_ledger_table = RequireEnv("DYNAMO_TABLE_EVENT_LEDGER");
+  cfg.snakes_table = RequireEnv("DYNAMO_TABLE_SNAKES");
+  cfg.world_chunks_table = RequireEnv("DYNAMO_TABLE_WORLD_CHUNKS");
+  cfg.snake_events_table = RequireEnv("DYNAMO_TABLE_SNAKE_EVENTS");
   cfg.settings_table = RequireEnv("DYNAMO_TABLE_SETTINGS");
+  cfg.economy_params_table = RequireEnv("DYNAMO_TABLE_ECONOMY_PARAMS");
+  cfg.economy_period_table = RequireEnv("DYNAMO_TABLE_ECONOMY_PERIOD");
   return std::make_unique<DynamoStorage>(cfg);
 }
 

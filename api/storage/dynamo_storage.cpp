@@ -4,7 +4,6 @@
 #include <cctype>
 #include <iostream>
 #include <sstream>
-#include <unordered_map>
 
 #include <aws/core/client/ClientConfiguration.h>
 #include <aws/dynamodb/model/AttributeValue.h>
@@ -175,7 +174,9 @@ std::optional<User> DynamoStorage::GetUserByUsername(const std::string& username
   u.username = GetString(items[0], "username");
   u.password_hash = GetString(items[0], "password_hash");
   u.balance_mi = GetInt64(items[0], "balance_mi");
+  u.role = GetString(items[0], "role", "player");
   u.created_at = GetInt64(items[0], "created_at");
+  u.company_name = GetString(items[0], "company_name");
   return u;
 }
 
@@ -194,7 +195,9 @@ std::optional<User> DynamoStorage::GetUserById(const std::string& user_id) {
   u.username = GetString(item, "username");
   u.password_hash = GetString(item, "password_hash");
   u.balance_mi = GetInt64(item, "balance_mi");
+  u.role = GetString(item, "role", "player");
   u.created_at = GetInt64(item, "created_at");
+  u.company_name = GetString(item, "company_name");
   return u;
 }
 
@@ -205,7 +208,9 @@ bool DynamoStorage::PutUser(const User& u) {
   req.AddItem("username", S(u.username));
   req.AddItem("password_hash", S(u.password_hash));
   req.AddItem("balance_mi", N(u.balance_mi));
+  req.AddItem("role", S(u.role.empty() ? "player" : u.role));
   req.AddItem("created_at", N(u.created_at));
+  if (!u.company_name.empty()) req.AddItem("company_name", S(u.company_name));
   return client_->PutItem(req).IsSuccess();
 }
 
@@ -218,35 +223,30 @@ bool DynamoStorage::UpdateUserBalance(const std::string& user_id, int64_t new_ba
   return client_->UpdateItem(req).IsSuccess();
 }
 
-std::vector<SnakeCheckpoint> DynamoStorage::ListLatestSnakeCheckpoints() {
-  std::vector<SnakeCheckpoint> out;
-  std::unordered_map<std::string, SnakeCheckpoint> latest;
-
+std::vector<Snake> DynamoStorage::ListSnakes() {
+  std::vector<Snake> out;
   Aws::DynamoDB::Model::ScanRequest req;
-  req.SetTableName(cfg_.snake_checkpoints_table.c_str());
+  req.SetTableName(cfg_.snakes_table.c_str());
 
   while (true) {
     auto res = client_->Scan(req);
     if (!res.IsSuccess()) break;
-
-    const auto& items = res.GetResult().GetItems();
-    for (const auto& item : items) {
-      SnakeCheckpoint cp;
-      cp.snake_id = GetString(item, "snake_id");
-      cp.owner_user_id = GetString(item, "owner_user_id");
-      cp.ts = GetInt64(item, "ts");
-      cp.dir = static_cast<int>(GetInt64(item, "dir"));
-      cp.paused = GetBool(item, "paused");
-      cp.body = DecodeBody(GetString(item, "body", "[]"));
-      cp.length = static_cast<int>(GetInt64(item, "length"));
-      cp.score = static_cast<int>(GetInt64(item, "score"));
-      cp.w = static_cast<int>(GetInt64(item, "w"));
-      cp.h = static_cast<int>(GetInt64(item, "h"));
-
-      auto it = latest.find(cp.snake_id);
-      if (it == latest.end() || cp.ts > it->second.ts) {
-        latest[cp.snake_id] = cp;
-      }
+    for (const auto& item : res.GetResult().GetItems()) {
+      Snake s;
+      s.snake_id = GetString(item, "snake_id");
+      s.owner_user_id = GetString(item, "owner_user_id");
+      s.alive = GetBool(item, "alive", true);
+      s.head_x = static_cast<int>(GetInt64(item, "head_x", 0));
+      s.head_y = static_cast<int>(GetInt64(item, "head_y", 0));
+      s.direction = static_cast<int>(GetInt64(item, "direction", 0));
+      s.paused = GetBool(item, "paused", false);
+      s.length_k = static_cast<int>(GetInt64(item, "length_k", 0));
+      s.body_compact = GetString(item, "body_compact", "[]");
+      s.color = GetString(item, "color", "#00ff00");
+      s.last_event_id = GetString(item, "last_event_id");
+      s.created_at = GetInt64(item, "created_at", 0);
+      s.updated_at = GetInt64(item, "updated_at", 0);
+      out.push_back(std::move(s));
     }
 
     const auto& lek = res.GetResult().GetLastEvaluatedKey();
@@ -254,35 +254,150 @@ std::vector<SnakeCheckpoint> DynamoStorage::ListLatestSnakeCheckpoints() {
     req.SetExclusiveStartKey(lek);
   }
 
-  out.reserve(latest.size());
-  for (auto& kv : latest) out.push_back(std::move(kv.second));
-  std::sort(out.begin(), out.end(), [](const SnakeCheckpoint& a, const SnakeCheckpoint& b) {
-    return a.snake_id < b.snake_id;
-  });
   return out;
 }
 
-bool DynamoStorage::PutSnakeCheckpoint(const SnakeCheckpoint& cp) {
+std::optional<Snake> DynamoStorage::GetSnakeById(const std::string& snake_id) {
+  Aws::DynamoDB::Model::GetItemRequest req;
+  req.SetTableName(cfg_.snakes_table.c_str());
+  req.AddKey("snake_id", S(snake_id));
+
+  auto out = client_->GetItem(req);
+  if (!out.IsSuccess()) return std::nullopt;
+  const auto& item = out.GetResult().GetItem();
+  if (item.empty()) return std::nullopt;
+
+  Snake s;
+  s.snake_id = GetString(item, "snake_id");
+  s.owner_user_id = GetString(item, "owner_user_id");
+  s.alive = GetBool(item, "alive", true);
+  s.head_x = static_cast<int>(GetInt64(item, "head_x", 0));
+  s.head_y = static_cast<int>(GetInt64(item, "head_y", 0));
+  s.direction = static_cast<int>(GetInt64(item, "direction", 0));
+  s.paused = GetBool(item, "paused", false);
+  s.length_k = static_cast<int>(GetInt64(item, "length_k", 0));
+  s.body_compact = GetString(item, "body_compact", "[]");
+  s.color = GetString(item, "color", "#00ff00");
+  s.last_event_id = GetString(item, "last_event_id");
+  s.created_at = GetInt64(item, "created_at", 0);
+  s.updated_at = GetInt64(item, "updated_at", 0);
+  return s;
+}
+
+bool DynamoStorage::PutSnake(const Snake& s) {
   Aws::DynamoDB::Model::PutItemRequest req;
-  req.SetTableName(cfg_.snake_checkpoints_table.c_str());
-  req.AddItem("snake_id", S(cp.snake_id));
-  req.AddItem("ts", N(cp.ts));
-  req.AddItem("owner_user_id", S(cp.owner_user_id));
-  req.AddItem("dir", N(cp.dir));
-  req.AddItem("paused", B(cp.paused));
-  req.AddItem("body", S(EncodeBody(cp.body)));
-  req.AddItem("length", N(cp.length));
-  req.AddItem("score", N(cp.score));
-  req.AddItem("w", N(cp.w));
-  req.AddItem("h", N(cp.h));
+  req.SetTableName(cfg_.snakes_table.c_str());
+  req.AddItem("snake_id", S(s.snake_id));
+  req.AddItem("owner_user_id", S(s.owner_user_id));
+  req.AddItem("alive", B(s.alive));
+  req.AddItem("head_x", N(s.head_x));
+  req.AddItem("head_y", N(s.head_y));
+  req.AddItem("direction", N(s.direction));
+  req.AddItem("paused", B(s.paused));
+  req.AddItem("length_k", N(s.length_k));
+  req.AddItem("body_compact", S(s.body_compact));
+  req.AddItem("color", S(s.color));
+  if (!s.last_event_id.empty()) req.AddItem("last_event_id", S(s.last_event_id));
+  req.AddItem("created_at", N(s.created_at));
+  req.AddItem("updated_at", N(s.updated_at));
+  return client_->PutItem(req).IsSuccess();
+}
+
+bool DynamoStorage::DeleteSnake(const std::string& snake_id) {
+  Aws::DynamoDB::Model::DeleteItemRequest req;
+  req.SetTableName(cfg_.snakes_table.c_str());
+  req.AddKey("snake_id", S(snake_id));
+  return client_->DeleteItem(req).IsSuccess();
+}
+
+std::optional<WorldChunk> DynamoStorage::GetWorldChunk(const std::string& chunk_id) {
+  Aws::DynamoDB::Model::GetItemRequest req;
+  req.SetTableName(cfg_.world_chunks_table.c_str());
+  req.AddKey("chunk_id", S(chunk_id));
+
+  auto out = client_->GetItem(req);
+  if (!out.IsSuccess()) return std::nullopt;
+  const auto& item = out.GetResult().GetItem();
+  if (item.empty()) return std::nullopt;
+
+  WorldChunk w;
+  w.chunk_id = GetString(item, "chunk_id");
+  w.width = static_cast<int>(GetInt64(item, "width", 0));
+  w.height = static_cast<int>(GetInt64(item, "height", 0));
+  w.obstacles = GetString(item, "obstacles", "[]");
+  w.food_state = GetString(item, "food_state", "[]");
+  w.version = GetInt64(item, "version", 0);
+  w.updated_at = GetInt64(item, "updated_at", 0);
+  return w;
+}
+
+bool DynamoStorage::PutWorldChunk(const WorldChunk& chunk) {
+  Aws::DynamoDB::Model::PutItemRequest req;
+  req.SetTableName(cfg_.world_chunks_table.c_str());
+  req.AddItem("chunk_id", S(chunk.chunk_id));
+  req.AddItem("width", N(chunk.width));
+  req.AddItem("height", N(chunk.height));
+  req.AddItem("obstacles", S(chunk.obstacles));
+  req.AddItem("food_state", S(chunk.food_state));
+  req.AddItem("version", N(chunk.version));
+  req.AddItem("updated_at", N(chunk.updated_at));
+  return client_->PutItem(req).IsSuccess();
+}
+
+bool DynamoStorage::AppendSnakeEvent(const SnakeEvent& e) {
+  Aws::DynamoDB::Model::PutItemRequest req;
+  req.SetTableName(cfg_.snake_events_table.c_str());
+  req.AddItem("snake_id", S(e.snake_id));
+  req.AddItem("event_id", S(e.event_id));
+  req.AddItem("event_type", S(e.event_type));
+  req.AddItem("x", N(e.x));
+  req.AddItem("y", N(e.y));
+  if (!e.other_snake_id.empty()) req.AddItem("other_snake_id", S(e.other_snake_id));
+  req.AddItem("delta_length", N(e.delta_length));
+  req.AddItem("tick_number", N(static_cast<int64_t>(e.tick_number)));
+  req.AddItem("world_version", N(e.world_version));
+  req.AddItem("created_at", N(e.created_at));
+  return client_->PutItem(req).IsSuccess();
+}
+
+std::optional<Settings> DynamoStorage::GetSettings(const std::string& settings_id) {
+  Aws::DynamoDB::Model::GetItemRequest req;
+  req.SetTableName(cfg_.settings_table.c_str());
+  req.AddKey("settings_id", S(settings_id));
+
+  auto out = client_->GetItem(req);
+  if (!out.IsSuccess()) return std::nullopt;
+  const auto& item = out.GetResult().GetItem();
+  if (item.empty()) return std::nullopt;
+
+  Settings s;
+  s.settings_id = GetString(item, "settings_id", "global");
+  s.tick_hz = static_cast<int>(GetInt64(item, "tick_hz", 10));
+  s.spectator_hz = static_cast<int>(GetInt64(item, "spectator_hz", 10));
+  s.max_snakes_per_user = static_cast<int>(GetInt64(item, "max_snakes_per_user", 3));
+  s.feature_flags_json = GetString(item, "feature_flags", "{}");
+  s.economy_refs_json = GetString(item, "economy_refs", "{}");
+  s.updated_at = GetInt64(item, "updated_at", 0);
+  return s;
+}
+
+bool DynamoStorage::PutSettings(const Settings& settings) {
+  Aws::DynamoDB::Model::PutItemRequest req;
+  req.SetTableName(cfg_.settings_table.c_str());
+  req.AddItem("settings_id", S(settings.settings_id));
+  req.AddItem("tick_hz", N(settings.tick_hz));
+  req.AddItem("spectator_hz", N(settings.spectator_hz));
+  req.AddItem("max_snakes_per_user", N(settings.max_snakes_per_user));
+  req.AddItem("feature_flags", S(settings.feature_flags_json));
+  req.AddItem("economy_refs", S(settings.economy_refs_json));
+  req.AddItem("updated_at", N(settings.updated_at));
   return client_->PutItem(req).IsSuccess();
 }
 
 std::optional<EconomyParams> DynamoStorage::GetEconomyParams() {
   Aws::DynamoDB::Model::GetItemRequest req;
-  req.SetTableName(cfg_.settings_table.c_str());
-  req.AddKey("pk", S("SYSTEM"));
-  req.AddKey("sk", S("ECONOMY_PARAMS"));
+  req.SetTableName(cfg_.economy_params_table.c_str());
+  req.AddKey("params_id", S("global"));
 
   auto out = client_->GetItem(req);
   if (!out.IsSuccess()) return std::nullopt;
@@ -305,9 +420,8 @@ std::optional<EconomyParams> DynamoStorage::GetEconomyParams() {
 
 bool DynamoStorage::PutEconomyParams(const EconomyParams& p) {
   Aws::DynamoDB::Model::PutItemRequest req;
-  req.SetTableName(cfg_.settings_table.c_str());
-  req.AddItem("pk", S("SYSTEM"));
-  req.AddItem("sk", S("ECONOMY_PARAMS"));
+  req.SetTableName(cfg_.economy_params_table.c_str());
+  req.AddItem("params_id", S("global"));
   req.AddItem("version", N(p.version));
   req.AddItem("k_land", N(p.k_land));
   req.AddItem("a_productivity", D(p.a_productivity));
@@ -323,9 +437,8 @@ bool DynamoStorage::PutEconomyParams(const EconomyParams& p) {
 
 std::optional<EconomyPeriod> DynamoStorage::GetEconomyPeriod(const std::string& period_key) {
   Aws::DynamoDB::Model::GetItemRequest req;
-  req.SetTableName(cfg_.settings_table.c_str());
-  req.AddKey("pk", S("SYSTEM"));
-  req.AddKey("sk", S(std::string("ECONOMY_PERIOD#") + period_key));
+  req.SetTableName(cfg_.economy_period_table.c_str());
+  req.AddKey("period_key", S(period_key));
 
   auto out = client_->GetItem(req);
   if (!out.IsSuccess()) return std::nullopt;
@@ -334,29 +447,31 @@ std::optional<EconomyPeriod> DynamoStorage::GetEconomyPeriod(const std::string& 
 
   EconomyPeriod p;
   p.period_key = period_key;
-  p.delta_m_buy = GetInt64(item, "delta_m_buy");
-  p.computed_at = GetInt64(item, "computed_at");
+  p.delta_m_buy = GetInt64(item, "delta_m_buy", 0);
+  p.computed_m = GetInt64(item, "computed_m", 0);
+  p.computed_k = GetInt64(item, "computed_k", 0);
+  p.computed_y = GetInt64(item, "computed_y", 0);
+  p.computed_p = GetInt64(item, "computed_p", 0);
+  p.computed_pi = GetInt64(item, "computed_pi", 0);
+  p.computed_world_area = GetInt64(item, "computed_world_area", 0);
+  p.computed_white = GetInt64(item, "computed_white", 0);
+  p.computed_at = GetInt64(item, "computed_at", 0);
   return p;
 }
 
 bool DynamoStorage::PutEconomyPeriod(const EconomyPeriod& p) {
   Aws::DynamoDB::Model::PutItemRequest req;
-  req.SetTableName(cfg_.settings_table.c_str());
-  req.AddItem("pk", S("SYSTEM"));
-  req.AddItem("sk", S(std::string("ECONOMY_PERIOD#") + p.period_key));
+  req.SetTableName(cfg_.economy_period_table.c_str());
+  req.AddItem("period_key", S(p.period_key));
   req.AddItem("delta_m_buy", N(p.delta_m_buy));
+  req.AddItem("computed_m", N(p.computed_m));
+  req.AddItem("computed_k", N(p.computed_k));
+  req.AddItem("computed_y", N(p.computed_y));
+  req.AddItem("computed_p", N(p.computed_p));
+  req.AddItem("computed_pi", N(p.computed_pi));
+  req.AddItem("computed_world_area", N(p.computed_world_area));
+  req.AddItem("computed_white", N(p.computed_white));
   req.AddItem("computed_at", N(p.computed_at));
-  return client_->PutItem(req).IsSuccess();
-}
-
-bool DynamoStorage::AppendEvent(const Event& e) {
-  Aws::DynamoDB::Model::PutItemRequest req;
-  req.SetTableName(cfg_.event_ledger_table.c_str());
-  req.AddItem("pk", S(e.pk));
-  req.AddItem("sk", S(e.sk));
-  req.AddItem("type", S(e.type));
-  req.AddItem("payload", S(e.payload_json));
-  req.AddItem("created_at", N(e.created_at));
   return client_->PutItem(req).IsSuccess();
 }
 
@@ -398,9 +513,12 @@ bool DynamoStorage::ResetForDev() {
     return true;
   };
 
-  return delete_by_scan(cfg_.event_ledger_table, "pk", std::optional<std::string>("sk")) &&
-         delete_by_scan(cfg_.settings_table, "pk", std::optional<std::string>("sk")) &&
-         delete_by_scan(cfg_.snake_checkpoints_table, "snake_id", std::optional<std::string>("ts")) &&
+  return delete_by_scan(cfg_.snake_events_table, "snake_id", std::optional<std::string>("event_id")) &&
+         delete_by_scan(cfg_.economy_period_table, "period_key", std::nullopt) &&
+         delete_by_scan(cfg_.economy_params_table, "params_id", std::nullopt) &&
+         delete_by_scan(cfg_.settings_table, "settings_id", std::nullopt) &&
+         delete_by_scan(cfg_.world_chunks_table, "chunk_id", std::nullopt) &&
+         delete_by_scan(cfg_.snakes_table, "snake_id", std::nullopt) &&
          delete_by_scan(cfg_.users_table, "user_id", std::nullopt);
 }
 

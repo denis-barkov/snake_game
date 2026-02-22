@@ -15,9 +15,12 @@ struct DynamoConfig {
   std::string region = "us-east-1";
   std::string endpoint;
   std::string users_table;
-  std::string snake_checkpoints_table;
-  std::string event_ledger_table;
+  std::string snakes_table;
+  std::string world_chunks_table;
+  std::string snake_events_table;
   std::string settings_table;
+  std::string economy_params_table;
+  std::string economy_period_table;
 };
 
 class DynamoStorage : public IStorage {
@@ -29,15 +32,24 @@ class DynamoStorage : public IStorage {
   bool PutUser(const User& u) override;
   bool UpdateUserBalance(const std::string& user_id, int64_t new_balance) override;
 
-  std::vector<SnakeCheckpoint> ListLatestSnakeCheckpoints() override;
-  bool PutSnakeCheckpoint(const SnakeCheckpoint& cp) override;
+  std::vector<Snake> ListSnakes() override;
+  std::optional<Snake> GetSnakeById(const std::string& snake_id) override;
+  bool PutSnake(const Snake& s) override;
+  bool DeleteSnake(const std::string& snake_id) override;
+
+  std::optional<WorldChunk> GetWorldChunk(const std::string& chunk_id) override;
+  bool PutWorldChunk(const WorldChunk& chunk) override;
+
+  bool AppendSnakeEvent(const SnakeEvent& e) override;
+
+  std::optional<Settings> GetSettings(const std::string& settings_id = "global") override;
+  bool PutSettings(const Settings& settings) override;
 
   std::optional<EconomyParams> GetEconomyParams() override;
   bool PutEconomyParams(const EconomyParams& p) override;
   std::optional<EconomyPeriod> GetEconomyPeriod(const std::string& period_key) override;
   bool PutEconomyPeriod(const EconomyPeriod& p) override;
 
-  bool AppendEvent(const Event& e) override;
   bool HealthCheck() override;
   bool ResetForDev() override;
 
