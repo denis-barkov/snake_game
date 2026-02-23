@@ -191,11 +191,23 @@ Expected:
 
 - Frontend stream now uses a stable session id (`sid`) via `/game/stream?sid=...`.
 - Frontend optionally posts camera center to `POST /game/camera` (low rate) so backend can apply AOI filtering when enabled.
+- Frontend also sends `zoom` with camera updates (schema-compatible, optional).
 - In **My Snakes**, a `watch` checkbox appears under each snake:
   - only the selected snake can be watched
   - only one snake can be watched at a time
   - selecting another snake clears previous watch selection
 - Old clients remain compatible: if no camera updates are sent, server defaults to center-camera behavior.
+
+### Zoom + debug overlay (Step 9)
+
+- UI controls:
+  - `+ Zoom In`
+  - `- Zoom Out`
+  - `Reset` (returns zoom to `1.0` and default/follow center)
+- Zoom bounds: `0.25 .. 4.0`
+- Optional debug overlay:
+  - add `?debug=1` to URL
+  - shows camera center, zoom, AOI chunk count, and last snapshot payload size
 
 ## Modes
 

@@ -143,6 +143,8 @@ struct ClientSession {
   string session_id;
   int camera_x = DEFAULT_W / 2;
   int camera_y = DEFAULT_H / 2;
+  double camera_zoom = 1.0;
+  int subscribed_chunks_count = 1;
   optional<int> watched_snake_id;
   bool is_watcher = true;
   uint64_t updated_at_ms = 0;
@@ -333,6 +335,38 @@ static optional<int> get_json_int_field(const string& body, const string& key) {
   while (e < body.size() && (isdigit(static_cast<unsigned char>(body[e])) || body[e] == '-')) ++e;
   if (e == p) return nullopt;
   return stoi(body.substr(p, e - p));
+}
+
+static optional<double> get_json_double_field(const string& body, const string& key) {
+  const string pat = "\"" + key + "\"";
+  size_t p = body.find(pat);
+  if (p == string::npos) return nullopt;
+  p = body.find(':', p);
+  if (p == string::npos) return nullopt;
+  ++p;
+  while (p < body.size() && isspace(static_cast<unsigned char>(body[p]))) ++p;
+  size_t e = p;
+  bool seen_digit = false;
+  if (e < body.size() && (body[e] == '-' || body[e] == '+')) ++e;
+  while (e < body.size()) {
+    const char c = body[e];
+    if (isdigit(static_cast<unsigned char>(c))) {
+      seen_digit = true;
+      ++e;
+      continue;
+    }
+    if (c == '.' || c == 'e' || c == 'E' || c == '-' || c == '+') {
+      ++e;
+      continue;
+    }
+    break;
+  }
+  if (!seen_digit || e == p) return nullopt;
+  try {
+    return stod(body.substr(p, e - p));
+  } catch (...) {
+    return nullopt;
+  }
 }
 
 static protocol::Snapshot to_protocol_snapshot(const world::WorldSnapshot& snap_in) {
@@ -597,6 +631,12 @@ int main(int argc, char** argv) {
   httplib::Server srv;
   mutex sessions_mu;
   unordered_map<string, ClientSession> sessions;
+  auto compute_subscribed_chunks_count = [&](const ClientSession&) -> int {
+    if (!runtime_cfg.aoi_enabled) return -1;  // all-entities mode
+    if (runtime_cfg.single_chunk_mode) return 1;
+    const int span = runtime_cfg.aoi_radius * 2 + 1;
+    return span * span;
+  };
 
   auto get_or_create_session = [&](const string& sid) {
     lock_guard<mutex> lock(sessions_mu);
@@ -606,6 +646,8 @@ int main(int argc, char** argv) {
       s.session_id = sid;
       s.camera_x = grid_w / 2;
       s.camera_y = grid_h / 2;
+      s.camera_zoom = 1.0;
+      s.subscribed_chunks_count = compute_subscribed_chunks_count(s);
       s.updated_at_ms = now_ms();
       it = sessions.emplace(sid, s).first;
     }
@@ -704,6 +746,11 @@ int main(int argc, char** argv) {
     ClientSession session = get_or_create_session(*sid);
     session.camera_x = max(0, min(grid_w - 1, *x));
     session.camera_y = max(0, min(grid_h - 1, *y));
+    auto zoom = get_json_double_field(req.body, "zoom");
+    if (zoom.has_value()) {
+      session.camera_zoom = max(0.25, min(4.0, *zoom));
+    }
+    session.subscribed_chunks_count = compute_subscribed_chunks_count(session);
     session.updated_at_ms = now_ms();
 
     auto watch_snake = get_json_int_field(req.body, "watch_snake_id");
@@ -717,7 +764,16 @@ int main(int argc, char** argv) {
       lock_guard<mutex> lock(sessions_mu);
       sessions[*sid] = session;
     }
-    res.set_content("{\"status\":\"OK\"}", "application/json");
+    ostringstream out;
+    out << "{"
+        << "\"status\":\"OK\","
+        << "\"camera_x\":" << session.camera_x << ","
+        << "\"camera_y\":" << session.camera_y << ","
+        << "\"camera_zoom\":" << json_number(session.camera_zoom) << ","
+        << "\"aoi_chunks\":" << session.subscribed_chunks_count << ","
+        << "\"aoi_enabled\":" << (runtime_cfg.aoi_enabled ? "true" : "false")
+        << "}";
+    res.set_content(out.str(), "application/json");
   });
 
   srv.Post("/economy/purchase", [&](const httplib::Request& req, httplib::Response& res) {

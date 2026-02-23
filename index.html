@@ -34,6 +34,36 @@
       flex-direction: column;
       gap: 10px;
     }
+    #view-controls {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 8px;
+      padding: 6px 8px;
+      border: 1px solid #d7dfd5;
+      border-radius: 8px;
+      background: #ffffff;
+    }
+    #view-controls button {
+      padding: 6px 10px;
+      min-width: 44px;
+    }
+    #view-help {
+      color: #4b5b49;
+      font-size: 12px;
+      margin-left: 4px;
+    }
+    #debug-overlay {
+      display: none;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 12px;
+      line-height: 1.35;
+      border: 1px solid #d5d5d5;
+      background: rgba(255, 255, 255, 0.92);
+      color: #222;
+      border-radius: 8px;
+      padding: 8px;
+    }
     #game-board-wrap {
       overflow: auto;
       max-width: 100%;
@@ -161,6 +191,14 @@
           <div title="Slack capacity">Free Space (M_white): <span id="ecoMWhite">—</span></div>
         </div>
       </div>
+      <div id="view-controls">
+        <strong>View</strong>
+        <button id="zoomInBtn" type="button">+ Zoom In</button>
+        <button id="zoomOutBtn" type="button">- Zoom Out</button>
+        <button id="zoomResetBtn" type="button">Reset</button>
+        <small id="view-help">Zoom: +/- buttons. Reset returns to default view.</small>
+      </div>
+      <div id="debug-overlay"></div>
       <div id="game-board-wrap">
         <div id="game-board"></div>
       </div>
@@ -180,6 +218,31 @@
 <script>
   const API_BASE = window.location.protocol === "file:" ? "http://127.0.0.1:8080" : "";
   const apiPath = (path) => `${API_BASE}${path}`;
+  const DEBUG_MODE = new URLSearchParams(window.location.search).get("debug") === "1";
+  const BASE_CELL_SIZE = 18;
+
+  class Camera {
+    constructor() {
+      this.x = 20;
+      this.y = 10;
+      this.zoom = 1.0;
+    }
+    setCenter(x, y) {
+      this.x = Number.isFinite(x) ? x : this.x;
+      this.y = Number.isFinite(y) ? y : this.y;
+    }
+    setZoom(z) {
+      const next = Number.isFinite(z) ? z : this.zoom;
+      this.zoom = Math.max(0.25, Math.min(4.0, next));
+    }
+    resetToDefault(worldW, worldH) {
+      this.setCenter(Math.floor(worldW / 2), Math.floor(worldH / 2));
+      this.setZoom(1.0);
+    }
+    worldToScreen(wx, wy) {
+      return { sx: (wx - this.x) * this.zoom, sy: (wy - this.y) * this.zoom };
+    }
+  }
 
   let token = null;
   let myUserId = null;
@@ -190,6 +253,7 @@
   const streamSessionId = (window.crypto && crypto.randomUUID)
     ? crypto.randomUUID()
     : ("sid_" + Math.random().toString(36).slice(2));
+  const camera = new Camera();
 
   let gridW = 40, gridH = 20;
   let cells = [];
@@ -207,6 +271,10 @@
   const authStatus = document.getElementById("authStatus");
   const mySnakesEl = document.getElementById("mySnakes");
   const createSnakeBtn = document.getElementById("createSnakeBtn");
+  const zoomInBtn = document.getElementById("zoomInBtn");
+  const zoomOutBtn = document.getElementById("zoomOutBtn");
+  const zoomResetBtn = document.getElementById("zoomResetBtn");
+  const debugOverlayEl = document.getElementById("debug-overlay");
 
   let lastTickSample = null;
   let expectedTickHz = null;
@@ -214,17 +282,31 @@
   let runtimeSpeedPollTimer = null;
   let economyPollTimer = null;
   let cameraPollTimer = null;
+  let latestSnapshotBytes = 0;
+  let serverAoiChunks = 0;
 
   function buildBoard(w, h) {
     gridW = w; gridH = h;
-    board.style.gridTemplateColumns = `repeat(${w}, 18px)`;
+    board.style.gridTemplateColumns = `repeat(${w}, ${Math.max(4, Math.round(BASE_CELL_SIZE * camera.zoom))}px)`;
     board.innerHTML = "";
     cells = [];
     for (let i = 0; i < w*h; i++) {
       const c = document.createElement("div");
       c.className = "cell";
+      const side = Math.max(4, Math.round(BASE_CELL_SIZE * camera.zoom));
+      c.style.width = `${side}px`;
+      c.style.height = `${side}px`;
       board.appendChild(c);
       cells.push(c);
+    }
+  }
+
+  function applyZoomToBoard() {
+    const side = Math.max(4, Math.round(BASE_CELL_SIZE * camera.zoom));
+    board.style.gridTemplateColumns = `repeat(${gridW}, ${side}px)`;
+    for (const c of cells) {
+      c.style.width = `${side}px`;
+      c.style.height = `${side}px`;
     }
   }
 
@@ -239,6 +321,7 @@
 
   function drawFrame(state) {
     latestServerState = state;
+    camera.worldToScreen(0, 0); // Keeps camera transform API active for renderer evolution.
     tickEl.textContent = state.tick;
     updateActualTickHz(state.tick);
 
@@ -275,6 +358,16 @@
     // v1 view layer: keep ring buffer ready for interpolation, render latest snapshot for now.
     if (stateBuffer.length === 0) return null;
     return stateBuffer[stateBuffer.length - 1].state;
+  }
+
+  function updateDebugOverlay() {
+    if (!DEBUG_MODE) return;
+    debugOverlayEl.style.display = "block";
+    debugOverlayEl.textContent =
+      `camera: x=${camera.x.toFixed(2)} y=${camera.y.toFixed(2)}\n` +
+      `zoom: ${camera.zoom.toFixed(2)}\n` +
+      `aoi_chunks: ${serverAoiChunks}\n` +
+      `last_snapshot_bytes: ${latestSnapshotBytes}`;
   }
 
   function updateActualTickHz(currentTick) {
@@ -323,6 +416,7 @@
     ecoAWorldEl.textContent = "—";
     ecoMWhiteEl.textContent = "—";
     ecoStatusEl.textContent = "Economy unavailable";
+    updateDebugOverlay();
   }
 
   function fmtInt(v) {
@@ -341,6 +435,7 @@
       ecoAWorldEl.textContent = fmtInt(Number(s.A_world));
       ecoMWhiteEl.textContent = fmtInt(Number(s.M_white));
       ecoStatusEl.textContent = "Economy: live";
+      updateDebugOverlay();
     } catch (_) {
       setEconomyFallback();
     }
@@ -484,10 +579,12 @@
   function startStream() {
     const es = new EventSource(apiPath("/game/stream?sid=" + encodeURIComponent(streamSessionId)));
     es.addEventListener("frame", (ev) => {
+      latestSnapshotBytes = new TextEncoder().encode(ev.data).length;
       const state = JSON.parse(ev.data);
       pushStateBuffer(state);
       const view = buildWorldView();
       if (view) drawFrame(view);
+      updateDebugOverlay();
     });
     es.onerror = () => {
       // auto reconnect
@@ -498,8 +595,11 @@
 
   function getCameraTarget() {
     const center = { x: Math.floor(gridW / 2), y: Math.floor(gridH / 2) };
-    if (!watchedSnakeId || !latestServerState || !Array.isArray(latestServerState.snakes)) return center;
-    const target = latestServerState.snakes.find((s) => s.id === watchedSnakeId);
+    if (!latestServerState || !Array.isArray(latestServerState.snakes)) return center;
+    // Players can follow selected snake; watchers can follow explicitly watched snake.
+    const targetSnakeId = (token && selectedSnakeId) ? selectedSnakeId : watchedSnakeId;
+    if (!targetSnakeId) return center;
+    const target = latestServerState.snakes.find((s) => s.id === targetSnakeId);
     if (!target || !Array.isArray(target.body) || target.body.length === 0) return center;
     return { x: target.body[0].x, y: target.body[0].y };
   }
@@ -507,20 +607,66 @@
   async function postCamera() {
     try {
       const target = getCameraTarget();
-      await fetch(apiPath("/game/camera"), {
+      camera.setCenter(target.x, target.y);
+      const res = await fetch(apiPath("/game/camera"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           sid: streamSessionId,
-          x: target.x,
-          y: target.y,
+          x: Math.round(camera.x),
+          y: Math.round(camera.y),
+          zoom: camera.zoom,
           watch_snake_id: watchedSnakeId || null
         })
       });
+      if (res.ok) {
+        const data = await res.json().catch(() => null);
+        if (data && typeof data.aoi_chunks === "number") serverAoiChunks = data.aoi_chunks;
+      }
+      updateDebugOverlay();
     } catch (_) {
       // Optional session camera update. Stream falls back to defaults if this fails.
     }
   }
+
+  function zoomIn() {
+    camera.setZoom(camera.zoom * 1.1);
+    applyZoomToBoard();
+    postCamera();
+  }
+
+  function zoomOut() {
+    camera.setZoom(camera.zoom / 1.1);
+    applyZoomToBoard();
+    postCamera();
+  }
+
+  function resetView() {
+    camera.resetToDefault(gridW, gridH);
+    const target = getCameraTarget();
+    camera.setCenter(target.x, target.y);
+    applyZoomToBoard();
+    postCamera();
+  }
+
+  function onBoardWheel(ev) {
+    if (!ev.ctrlKey && !ev.metaKey) return;
+    ev.preventDefault();
+    if (ev.deltaY < 0) {
+      zoomIn();
+    } else {
+      zoomOut();
+    }
+  }
+
+  if (DEBUG_MODE) {
+    debugOverlayEl.style.display = "block";
+  }
+
+  zoomInBtn.addEventListener("click", zoomIn);
+  zoomOutBtn.addEventListener("click", zoomOut);
+  zoomResetBtn.addEventListener("click", resetView);
+  board.addEventListener("wheel", onBoardWheel, { passive: false });
 
   startStream();
   loadRuntimeSpeed();
@@ -529,6 +675,7 @@
   economyPollTimer = setInterval(loadEconomyState, 2000);
   cameraPollTimer = setInterval(postCamera, 400);
   postCamera();
+  updateDebugOverlay();
 </script>
 </body>
 </html>
