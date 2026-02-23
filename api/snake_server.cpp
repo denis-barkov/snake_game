@@ -225,12 +225,32 @@ class EconomyService {
     }
   }
 
- private:
-  Snapshot ComputeFresh() {
-    Snapshot out;
-    const string period_key = utc_period_key_yyyymmddhh();
+  Snapshot RecomputeAndPersist(const string& period_key) {
+    Snapshot fresh = ComputeFresh(period_key);
+    storage::EconomyPeriod period;
+    period.period_key = period_key;
+    period.delta_m_buy = fresh.delta_m_buy;
+    period.computed_m = fresh.state.m;
+    period.computed_k = fresh.state.k;
+    period.computed_y = static_cast<int64_t>(fresh.state.y);
+    period.computed_p = static_cast<int64_t>(fresh.state.p * 1000000.0);
+    period.computed_pi = static_cast<int64_t>(fresh.state.pi * 1000000.0);
+    period.computed_world_area = fresh.state.a_world;
+    period.computed_white = fresh.state.m_white;
+    period.computed_at = static_cast<int64_t>(time(nullptr));
+    storage_.PutEconomyPeriod(period);
+    return fresh;
+  }
 
-    out.params = storage_.GetEconomyParams().value_or(storage::EconomyParams{});
+  void InvalidateCache() {
+    lock_guard<mutex> lock(mu_);
+    cache_valid_ = false;
+  }
+
+ private:
+  Snapshot ComputeFresh(const string& period_key) {
+    Snapshot out;
+    out.params = storage_.GetEconomyParamsActive().value_or(storage::EconomyParams{});
     const auto period = storage_.GetEconomyPeriod(period_key);
     out.delta_m_buy = period ? period->delta_m_buy : 0;
 
@@ -241,7 +261,7 @@ class EconomyService {
     const auto snakes = storage_.ListSnakes();
     out.k_snakes = 0;
     for (const auto& s : snakes) {
-      if (s.alive) out.k_snakes += max<int64_t>(0, s.length_k);
+      if (s.alive && s.is_on_field) out.k_snakes += max<int64_t>(0, s.length_k);
     }
 
     economy::EconomyInputs in;
@@ -255,6 +275,10 @@ class EconomyService {
     in.delta_k_obs = out.params.delta_k_obs;
     out.state = economy::ComputeEconomyV1(in, period_key);
     return out;
+  }
+
+  Snapshot ComputeFresh() {
+    return ComputeFresh(utc_period_key_yyyymmddhh());
   }
 
   storage::IStorage& storage_;
@@ -433,6 +457,19 @@ int main(int argc, char** argv) {
     return 1;
   }
 
+  // Ensure an active economy policy row exists for read/write paths and CLI tooling.
+  if (!storage->GetEconomyParamsActive().has_value()) {
+    storage::EconomyParams defaults;
+    defaults.version = 1;
+    defaults.updated_at = static_cast<int64_t>(time(nullptr));
+    defaults.updated_by = "bootstrap";
+    if (!storage->PutEconomyParamsActiveAndVersioned(defaults, "bootstrap")) {
+      cerr << "Failed to initialize active economy params\n";
+      Aws::ShutdownAPI(aws_options);
+      return 1;
+    }
+  }
+
   GameService game(*storage, grid_w, grid_h, FOOD_COUNT, max_snakes_per_user);
   EconomyService economy(*storage);
   game.load_from_storage_or_seed_positions();
@@ -589,6 +626,52 @@ int main(int argc, char** argv) {
       << "\"sum_mi\":" << s.state.sum_mi << ","
       << "\"k_snakes\":" << s.k_snakes
       << "}"
+      << "}";
+    res.set_content(o.str(), "application/json");
+  });
+
+  srv.Post("/economy/purchase", [&](const httplib::Request& req, httplib::Response& res) {
+    add_cors(res);
+    auto uid = require_auth_user(auth, req);
+    if (!uid) {
+      res.status = 401;
+      res.set_content("{\"error\":\"unauthorized\"}", "application/json");
+      return;
+    }
+
+    auto cells = get_json_int_field(req.body, "cells");
+    if (!cells) cells = get_json_int_field(req.body, "purchased_cells");
+    if (!cells || *cells <= 0) {
+      res.status = 400;
+      res.set_content("{\"error\":\"bad_cells\"}", "application/json");
+      return;
+    }
+
+    const string user_id = std::to_string(*uid);
+    const string period_key = utc_period_key_yyyymmddhh();
+
+    if (!storage->IncrementUserBalance(user_id, *cells)) {
+      res.status = 500;
+      res.set_content("{\"error\":\"purchase_user_update_failed\"}", "application/json");
+      return;
+    }
+    if (!storage->IncrementEconomyPeriodDeltaMBuy(period_key, *cells)) {
+      // Best-effort compensation for partial failure in non-transactional MVP flow.
+      storage->IncrementUserBalance(user_id, -*cells);
+      res.status = 500;
+      res.set_content("{\"error\":\"purchase_period_update_failed\"}", "application/json");
+      return;
+    }
+
+    economy.InvalidateCache();
+    const auto eco = economy.GetState();
+    ostringstream o;
+    o << "{"
+      << "\"status\":\"OK\","
+      << "\"cells\":" << *cells << ","
+      << "\"period_key\":\"" << json_escape(period_key) << "\","
+      << "\"M\":" << eco.state.m << ","
+      << "\"P\":" << json_number(eco.state.p)
       << "}";
     res.set_content(o.str(), "application/json");
   });

@@ -95,12 +95,20 @@ module "compute" {
     AWS_REGION                 = var.aws_region
     DYNAMO_REGION              = var.aws_region
     DYNAMO_TABLE_USERS         = "${var.project}-${var.environment}-users"
+    TABLE_USERS                = "${var.project}-${var.environment}-users"
     DYNAMO_TABLE_SNAKES        = "${var.project}-${var.environment}-snakes"
+    TABLE_SNAKES               = "${var.project}-${var.environment}-snakes"
     DYNAMO_TABLE_WORLD_CHUNKS  = "${var.project}-${var.environment}-world_chunks"
+    TABLE_WORLD_CHUNKS         = "${var.project}-${var.environment}-world_chunks"
     DYNAMO_TABLE_SNAKE_EVENTS  = "${var.project}-${var.environment}-snake_events"
+    TABLE_SNAKE_EVENTS         = "${var.project}-${var.environment}-snake_events"
     DYNAMO_TABLE_SETTINGS      = "${var.project}-${var.environment}-settings"
+    TABLE_SETTINGS             = "${var.project}-${var.environment}-settings"
     DYNAMO_TABLE_ECONOMY_PARAMS = "${var.project}-${var.environment}-economy_params"
+    TABLE_ECONOMY_PARAMS       = "${var.project}-${var.environment}-economy_params"
     DYNAMO_TABLE_ECONOMY_PERIOD = "${var.project}-${var.environment}-economy_period"
+    TABLE_ECONOMY_PERIOD       = "${var.project}-${var.environment}-economy_period"
+    ADMIN_TOKEN                = "change-me"
   })
   domain_name       = var.domain_name
   letsencrypt_email = var.letsencrypt_email

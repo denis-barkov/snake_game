@@ -44,7 +44,7 @@ void World::LoadFromStorage(const std::vector<storage::Snake>& stored_snakes,
       s.body.push_back({ss.head_x, ss.head_y});
     }
 
-    if (!s.body.empty() && s.id > 0 && s.user_id > 0 && s.alive) {
+    if (!s.body.empty() && s.id > 0 && s.user_id > 0 && s.alive && ss.is_on_field) {
       snakes_.push_back(std::move(s));
       snake_created_at_ms_[snakes_.back().id] = ss.created_at;
       max_snake_id = std::max(max_snake_id, snakes_.back().id);
@@ -242,6 +242,7 @@ PersistenceDelta World::DrainPersistenceDelta(int64_t ts_ms) {
     out.snake_id = std::to_string(s->id);
     out.owner_user_id = std::to_string(s->user_id);
     out.alive = s->alive;
+    out.is_on_field = s->alive;
     out.head_x = s->body.empty() ? 0 : s->body[0].x;
     out.head_y = s->body.empty() ? 0 : s->body[0].y;
     out.direction = static_cast<int>(s->dir);

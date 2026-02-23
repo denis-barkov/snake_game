@@ -39,6 +39,25 @@ Default run values in Make:
 - Economy is computed outside the tick loop and cached in-process to avoid DynamoDB hammering.
 - No gameplay rules are changed by economy values in this step (display-only).
 
+### Economy v1 write paths (Step 5)
+
+- Purchase write endpoint: `POST /economy/purchase` (auth required)
+  - body: `{"cells": <positive_int>}` (or `purchased_cells`)
+  - writes:
+    - `users.balance_mi += cells`
+    - `economy_period[YYYYMMDDHH].delta_m_buy += cells`
+- Economy params now use:
+  - active row: `params_id=active`
+  - history rows: `params_id=ver#<version>`
+
+Storage env naming:
+- Server and `snakecli` accept both naming styles:
+  - `TABLE_*` (preferred)
+  - `DYNAMO_TABLE_*` (legacy-compatible)
+- Endpoint env supports both:
+  - `DDB_ENDPOINT` (preferred)
+  - `DYNAMO_ENDPOINT` (legacy-compatible)
+
 ## Local DynamoDB (Docker)
 
 ### Quick (Make)
@@ -52,28 +71,13 @@ make local-run
 It publishes app on `http://127.0.0.1:8080`.
 `make local-run` stays in foreground by design (it is the running server). Open the app in browser while it is running; stop with `Ctrl+C`.
 
-`make local-seed`, `make local-reset`, and `make local-admin ...` also run inside Docker (same runtime as `local-run`) to avoid host binary/SDK mismatch.
-
 `make local-run-docker` remains available explicitly.
 
 Reset local data:
 ```bash
-make local-reset
-make local-seed
-```
-
-Local admin CLI (mirrors EC2 verbs):
-```bash
-make local-admin CMD=reload
-make local-admin CMD=seed-reload
-make local-admin CMD=reset-seed-reload
-```
-
-Shortcuts:
-```bash
-make local-reload
-make local-seed-reload
-make local-reset-seed-reload
+docker exec -it snake-local-run bash
+export ADMIN_TOKEN=devtoken
+snakecli --token "$ADMIN_TOKEN" app reset-seed-reload
 ```
 
 Stop local Dynamo:
@@ -89,6 +93,7 @@ docker compose -f docker/dynamodb-local.yml up -d
 export DYNAMO_ENDPOINT=http://127.0.0.1:8000
 export AWS_REGION=us-east-1
 export DYNAMO_REGION=us-east-1
+export ENV=local
 export AWS_ACCESS_KEY_ID=local
 export AWS_SECRET_ACCESS_KEY=local
 
@@ -124,29 +129,35 @@ export DYNAMO_TABLE_ECONOMY_PERIOD=snake-mvp-economy_period
 ./snake_server serve
 ```
 
-### Seed on AWS via SSH
+### Admin CLI (`snakecli`)
 
-On the EC2 host:
+`snakecli` runs where the app runs (same runtime, same env, same credentials).
 
+Local access pattern (Docker runtime shell):
 ```bash
-sudo snake-admin reset-seed-reload
-sudo systemctl status snake --no-pager
+docker exec -it snake-local-run bash
+snakecli help
 ```
 
-Seed only (without reset):
-
+Prod access pattern (AWS EC2 shell):
 ```bash
-sudo snake-admin seed-reload
+ssh -i <your-key>.pem ec2-user@<ec2-ip>
+snakecli help
 ```
 
-Systemd alternatives:
-
+`snakecli` command cheat sheet (same in local/prod):
 ```bash
-sudo systemctl start snake-seed
-sudo systemctl start snake-reset
-sudo systemctl start snake-reset-seed
-sudo systemctl start snake-reload
-sudo systemctl start snake-seed-reload
+export ADMIN_TOKEN=your-secret-token
+
+snakecli economy status
+snakecli --token "$ADMIN_TOKEN" economy set cap_delta_m 6000
+snakecli --token "$ADMIN_TOKEN" economy recompute
+snakecli firms top --by balance --limit 10
+snakecli snakes list --onfield --limit 25
+
+# app-level admin actions
+snakecli --token "$ADMIN_TOKEN" app seed
+snakecli --token "$ADMIN_TOKEN" app reset-seed-reload
 ```
 
 ## Modes
@@ -155,7 +166,7 @@ sudo systemctl start snake-seed-reload
 - `./snake_server seed`
 - `./snake_server reset`
 
-Admin commands are shared between local and AWS via `tools/snake-admin.sh`.
+`snakecli` is installed to `/usr/local/bin/snakecli` in runtime environments.
 
 Default seeded users:
 - `user1 / pass1`

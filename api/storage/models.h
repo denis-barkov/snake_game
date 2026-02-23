@@ -22,6 +22,8 @@ struct Snake {
   std::string snake_id;
   std::string owner_user_id;
   bool alive = true;
+  // Explicit "on field" flag for economy aggregation (defaults to alive if missing in DB).
+  bool is_on_field = true;
   int head_x = 0;
   int head_y = 0;
   int direction = 0;

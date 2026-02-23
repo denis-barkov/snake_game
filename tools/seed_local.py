@@ -8,6 +8,10 @@ def env(name: str, default: str) -> str:
     return os.environ.get(name, default)
 
 
+def env_table(suffix: str, default: str) -> str:
+    return os.environ.get(f"TABLE_{suffix}") or os.environ.get(f"DYNAMO_TABLE_{suffix}") or default
+
+
 def run(cmd):
     subprocess.run(cmd, check=True, text=True)
 
@@ -45,6 +49,7 @@ def put_snake(table: str, snake_id: str, owner_user_id: str, x: int, y: int):
             f"\"snake_id\":{{\"S\":\"{snake_id}\"}},"
             f"\"owner_user_id\":{{\"S\":\"{owner_user_id}\"}},"
             "\"alive\":{\"BOOL\":true},"
+            "\"is_on_field\":{\"BOOL\":true},"
             f"\"head_x\":{{\"N\":\"{x}\"}},"
             f"\"head_y\":{{\"N\":\"{y}\"}},"
             "\"direction\":{\"N\":\"0\"},"
@@ -79,9 +84,9 @@ def put_world_chunk(table: str):
 
 
 def main():
-    users = env("DYNAMO_TABLE_USERS", "snake-local-users")
-    snakes = env("DYNAMO_TABLE_SNAKES", "snake-local-snakes")
-    world_chunks = env("DYNAMO_TABLE_WORLD_CHUNKS", "snake-local-world_chunks")
+    users = env_table("USERS", "snake-local-users")
+    snakes = env_table("SNAKES", "snake-local-snakes")
+    world_chunks = env_table("WORLD_CHUNKS", "snake-local-world_chunks")
 
     put_user(users, "1", "user1", "pass1")
     put_user(users, "2", "user2", "pass2")

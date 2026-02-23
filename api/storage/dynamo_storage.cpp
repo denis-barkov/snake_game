@@ -2,8 +2,11 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
+#include <ctime>
 #include <iostream>
 #include <sstream>
+#include <thread>
 
 #include <aws/core/client/ClientConfiguration.h>
 #include <aws/dynamodb/model/AttributeValue.h>
@@ -82,6 +85,21 @@ AttributeValue B(bool v) {
   AttributeValue a;
   a.SetBool(v);
   return a;
+}
+
+EconomyParams LoadEconomyParamsFromItem(const Map<String, AttributeValue>& item) {
+  EconomyParams p;
+  p.version = static_cast<int>(GetInt64(item, "version", 1));
+  p.k_land = static_cast<int>(GetInt64(item, "k_land", 24));
+  p.a_productivity = GetDouble(item, "a_productivity", 1.0);
+  p.v_velocity = GetDouble(item, "v_velocity", 2.0);
+  p.m_gov_reserve = GetInt64(item, "m_gov_reserve", 400);
+  p.cap_delta_m = GetInt64(item, "cap_delta_m", 5000);
+  p.delta_m_issue = GetInt64(item, "delta_m_issue", 0);
+  p.delta_k_obs = GetInt64(item, "delta_k_obs", 0);
+  p.updated_at = GetInt64(item, "updated_at", 0);
+  p.updated_by = GetString(item, "updated_by");
+  return p;
 }
 
 std::string EncodeBody(const std::vector<std::pair<int, int>>& body) {
@@ -251,6 +269,20 @@ bool DynamoStorage::UpdateUserBalance(const std::string& user_id, int64_t new_ba
   return client_->UpdateItem(req).IsSuccess();
 }
 
+bool DynamoStorage::IncrementUserBalance(const std::string& user_id, int64_t delta_balance) {
+  for (int attempt = 0; attempt < 3; ++attempt) {
+    Aws::DynamoDB::Model::UpdateItemRequest req;
+    req.SetTableName(cfg_.users_table.c_str());
+    req.AddKey("user_id", S(user_id));
+    req.SetUpdateExpression("ADD balance_mi :delta");
+    req.AddExpressionAttributeValues(":delta", N(delta_balance));
+    auto res = client_->UpdateItem(req);
+    if (res.IsSuccess()) return true;
+    std::this_thread::sleep_for(std::chrono::milliseconds(50 * (attempt + 1)));
+  }
+  return false;
+}
+
 std::vector<Snake> DynamoStorage::ListSnakes() {
   std::vector<Snake> out;
   Aws::DynamoDB::Model::ScanRequest req;
@@ -264,6 +296,7 @@ std::vector<Snake> DynamoStorage::ListSnakes() {
       s.snake_id = GetString(item, "snake_id");
       s.owner_user_id = GetString(item, "owner_user_id");
       s.alive = GetBool(item, "alive", true);
+      s.is_on_field = GetBool(item, "is_on_field", s.alive);
       s.head_x = static_cast<int>(GetInt64(item, "head_x", 0));
       s.head_y = static_cast<int>(GetInt64(item, "head_y", 0));
       s.direction = static_cast<int>(GetInt64(item, "direction", 0));
@@ -299,6 +332,7 @@ std::optional<Snake> DynamoStorage::GetSnakeById(const std::string& snake_id) {
   s.snake_id = GetString(item, "snake_id");
   s.owner_user_id = GetString(item, "owner_user_id");
   s.alive = GetBool(item, "alive", true);
+  s.is_on_field = GetBool(item, "is_on_field", s.alive);
   s.head_x = static_cast<int>(GetInt64(item, "head_x", 0));
   s.head_y = static_cast<int>(GetInt64(item, "head_y", 0));
   s.direction = static_cast<int>(GetInt64(item, "direction", 0));
@@ -318,6 +352,7 @@ bool DynamoStorage::PutSnake(const Snake& s) {
   req.AddItem("snake_id", S(s.snake_id));
   req.AddItem("owner_user_id", S(s.owner_user_id));
   req.AddItem("alive", B(s.alive));
+  req.AddItem("is_on_field", B(s.is_on_field));
   req.AddItem("head_x", N(s.head_x));
   req.AddItem("head_y", N(s.head_y));
   req.AddItem("direction", N(s.direction));
@@ -423,34 +458,47 @@ bool DynamoStorage::PutSettings(const Settings& settings) {
 }
 
 std::optional<EconomyParams> DynamoStorage::GetEconomyParams() {
-  Aws::DynamoDB::Model::GetItemRequest req;
-  req.SetTableName(cfg_.economy_params_table.c_str());
-  req.AddKey("params_id", S("global"));
+  return GetEconomyParamsActive();
+}
 
-  auto out = client_->GetItem(req);
+std::optional<EconomyParams> DynamoStorage::GetEconomyParamsActive() {
+  Aws::DynamoDB::Model::GetItemRequest req_active;
+  req_active.SetTableName(cfg_.economy_params_table.c_str());
+  req_active.AddKey("params_id", S("active"));
+
+  auto out = client_->GetItem(req_active);
   if (!out.IsSuccess()) return std::nullopt;
-  const auto& item = out.GetResult().GetItem();
-  if (item.empty()) return std::nullopt;
+  auto item = out.GetResult().GetItem();
+  if (!item.empty()) return LoadEconomyParamsFromItem(item);
 
-  EconomyParams p;
-  p.version = static_cast<int>(GetInt64(item, "version", 1));
-  p.k_land = static_cast<int>(GetInt64(item, "k_land", 24));
-  p.a_productivity = GetDouble(item, "a_productivity", 1.0);
-  p.v_velocity = GetDouble(item, "v_velocity", 2.0);
-  p.m_gov_reserve = GetInt64(item, "m_gov_reserve", 400);
-  p.cap_delta_m = GetInt64(item, "cap_delta_m", 5000);
-  p.delta_m_issue = GetInt64(item, "delta_m_issue", 0);
-  p.delta_k_obs = GetInt64(item, "delta_k_obs", 0);
-  p.updated_at = GetInt64(item, "updated_at", 0);
-  p.updated_by = GetString(item, "updated_by");
-  return p;
+  // Backward compatibility for older rows keyed as "global".
+  Aws::DynamoDB::Model::GetItemRequest req_global;
+  req_global.SetTableName(cfg_.economy_params_table.c_str());
+  req_global.AddKey("params_id", S("global"));
+  out = client_->GetItem(req_global);
+  if (!out.IsSuccess()) return std::nullopt;
+  item = out.GetResult().GetItem();
+  if (item.empty()) return std::nullopt;
+  return LoadEconomyParamsFromItem(item);
 }
 
 bool DynamoStorage::PutEconomyParams(const EconomyParams& p) {
+  return PutEconomyParamsActiveAndVersioned(p, p.updated_by.empty() ? "system" : p.updated_by);
+}
+
+bool DynamoStorage::PutEconomyParamsActiveAndVersioned(const EconomyParams& p, const std::string& updated_by) {
+  int next_version = std::max(1, p.version);
+  const auto active = GetEconomyParamsActive();
+  if (active.has_value() && next_version <= active->version) {
+    next_version = active->version + 1;
+  }
+  const int64_t updated_at = p.updated_at > 0 ? p.updated_at : static_cast<int64_t>(time(nullptr));
+
+  // History row first.
   Aws::DynamoDB::Model::PutItemRequest req;
   req.SetTableName(cfg_.economy_params_table.c_str());
-  req.AddItem("params_id", S("global"));
-  req.AddItem("version", N(p.version));
+  req.AddItem("params_id", S("ver#" + std::to_string(next_version)));
+  req.AddItem("version", N(next_version));
   req.AddItem("k_land", N(p.k_land));
   req.AddItem("a_productivity", D(p.a_productivity));
   req.AddItem("v_velocity", D(p.v_velocity));
@@ -458,8 +506,24 @@ bool DynamoStorage::PutEconomyParams(const EconomyParams& p) {
   req.AddItem("cap_delta_m", N(p.cap_delta_m));
   req.AddItem("delta_m_issue", N(p.delta_m_issue));
   req.AddItem("delta_k_obs", N(p.delta_k_obs));
-  req.AddItem("updated_at", N(p.updated_at));
-  req.AddItem("updated_by", S(p.updated_by));
+  req.AddItem("updated_at", N(updated_at));
+  req.AddItem("updated_by", S(updated_by));
+  if (!client_->PutItem(req).IsSuccess()) return false;
+
+  // Active row points to latest values.
+  req = Aws::DynamoDB::Model::PutItemRequest();
+  req.SetTableName(cfg_.economy_params_table.c_str());
+  req.AddItem("params_id", S("active"));
+  req.AddItem("version", N(next_version));
+  req.AddItem("k_land", N(p.k_land));
+  req.AddItem("a_productivity", D(p.a_productivity));
+  req.AddItem("v_velocity", D(p.v_velocity));
+  req.AddItem("m_gov_reserve", N(p.m_gov_reserve));
+  req.AddItem("cap_delta_m", N(p.cap_delta_m));
+  req.AddItem("delta_m_issue", N(p.delta_m_issue));
+  req.AddItem("delta_k_obs", N(p.delta_k_obs));
+  req.AddItem("updated_at", N(updated_at));
+  req.AddItem("updated_by", S(updated_by));
   return client_->PutItem(req).IsSuccess();
 }
 
@@ -501,6 +565,20 @@ bool DynamoStorage::PutEconomyPeriod(const EconomyPeriod& p) {
   req.AddItem("computed_white", N(p.computed_white));
   req.AddItem("computed_at", N(p.computed_at));
   return client_->PutItem(req).IsSuccess();
+}
+
+bool DynamoStorage::IncrementEconomyPeriodDeltaMBuy(const std::string& period_key, int64_t delta_m_buy) {
+  for (int attempt = 0; attempt < 3; ++attempt) {
+    Aws::DynamoDB::Model::UpdateItemRequest req;
+    req.SetTableName(cfg_.economy_period_table.c_str());
+    req.AddKey("period_key", S(period_key));
+    req.SetUpdateExpression("ADD delta_m_buy :delta");
+    req.AddExpressionAttributeValues(":delta", N(delta_m_buy));
+    auto res = client_->UpdateItem(req);
+    if (res.IsSuccess()) return true;
+    std::this_thread::sleep_for(std::chrono::milliseconds(50 * (attempt + 1)));
+  }
+  return false;
 }
 
 bool DynamoStorage::HealthCheck() {

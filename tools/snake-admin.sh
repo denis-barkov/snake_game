@@ -2,90 +2,21 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-BIN_PATH=""
-WORK_DIR=""
+SNAKECLI_BIN=""
 
-load_env_if_present() {
-  if [ -f /etc/snake.env ]; then
-    set -a
-    # shellcheck disable=SC1091
-    source /etc/snake.env
-    set +a
-  fi
-}
-
-resolve_binary() {
-  if [ -x /opt/snake/snake_server ]; then
-    BIN_PATH="/opt/snake/snake_server"
-    WORK_DIR="/opt/snake"
-    return 0
-  fi
-
-  if [ -x "${ROOT_DIR}/snake_server" ]; then
-    BIN_PATH="${ROOT_DIR}/snake_server"
-    WORK_DIR="${ROOT_DIR}"
-    return 0
-  fi
-
-  if [ -x ./snake_server ]; then
-    BIN_PATH="./snake_server"
-    WORK_DIR="$(pwd)"
-    return 0
-  fi
-
-  echo "snake_server binary not found. Expected /opt/snake/snake_server or ./snake_server"
-  return 1
-}
-
-run_server_cmd() {
-  local mode="$1"
-  (cd "${WORK_DIR}" && "${BIN_PATH}" "${mode}")
-}
-
-reload_server() {
-  if command -v systemctl >/dev/null 2>&1 && systemctl kill -s USR1 snake >/dev/null 2>&1; then
-    return 0
-  fi
-
-  if pgrep -f "/snake_server serve" >/dev/null 2>&1; then
-    pkill -USR1 -f "/snake_server serve"
-    return 0
-  fi
-
-  if pgrep -x "snake_server" >/dev/null 2>&1; then
-    pkill -USR1 -x "snake_server"
-    return 0
-  fi
-
-  echo "No running snake_server process found for reload."
-  return 1
-}
-
-load_env_if_present
-resolve_binary
+if [ -x /usr/local/bin/snakecli ]; then
+  SNAKECLI_BIN="/usr/local/bin/snakecli"
+elif [ -x "${ROOT_DIR}/tools/snakecli.py" ]; then
+  SNAKECLI_BIN="python3 ${ROOT_DIR}/tools/snakecli.py"
+else
+  echo "snakecli not found"
+  exit 1
+fi
 
 case "${1:-}" in
-  seed)
-    run_server_cmd seed
-    ;;
-  reset)
-    run_server_cmd reset
-    ;;
-  reload)
-    reload_server
-    ;;
-  seed-reload)
-    run_server_cmd seed
-    reload_server
-    ;;
-  reset-seed)
-    run_server_cmd reset
-    run_server_cmd seed
-    ;;
-  reset-seed-reload)
-    run_server_cmd reset
-    run_server_cmd seed
-    reload_server
+  seed|reset|reload|seed-reload|reset-seed|reset-seed-reload)
+    # shellcheck disable=SC2086
+    exec ${SNAKECLI_BIN} app "$1"
     ;;
   *)
     echo "Usage: snake-admin {seed|reset|reload|seed-reload|reset-seed|reset-seed-reload}"

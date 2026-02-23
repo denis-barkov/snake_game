@@ -10,6 +10,8 @@ RUN dnf -y update && \
       libcurl-devel \
       openssl-devel \
       zlib-devel \
+      python3 \
+      awscli \
       make && \
     dnf clean all
 
@@ -25,3 +27,6 @@ RUN git clone --depth 1 --branch 1.11.676 --recurse-submodules https://github.co
     ldconfig || true
 
 WORKDIR /work
+
+COPY tools/snakecli.py /usr/local/bin/snakecli
+RUN chmod +x /usr/local/bin/snakecli

@@ -12,7 +12,7 @@ LE_EMAIL="${letsencrypt_email}"
 dnf -y update
 
 # Build/runtime deps + AWS tools (avoid curl/curl-minimal conflicts on AL2023)
-dnf -y install git clang boost-devel cmake gcc-c++ libcurl-devel openssl-devel zlib-devel \
+dnf -y install git clang boost-devel cmake gcc-c++ libcurl-devel openssl-devel zlib-devel python3 \
   amazon-cloudwatch-agent amazon-ssm-agent awscli
 
 # Some AL2023 repos do not provide aws-sdk-cpp packages; build once from source.
@@ -79,6 +79,7 @@ clang++ -std=c++17 -O2 -pthread \
   api/protocol/encode_json.cpp \
   api/storage/dynamo_storage.cpp \
   api/storage/storage_factory.cpp \
+  api/economy/economy_v1.cpp \
   config/runtime_config.cpp \
   api/world/world.cpp \
   api/world/entities/snake.cpp \
@@ -115,6 +116,13 @@ StandardError=append:/var/log/snake_server.log
 WantedBy=multi-user.target
 EOF
 
+if [ -f /opt/snake/repo/tools/snakecli.py ]; then
+  install -m 0755 /opt/snake/repo/tools/snakecli.py /usr/local/bin/snakecli
+else
+  echo "Missing /opt/snake/repo/tools/snakecli.py"
+  exit 1
+fi
+
 if [ -f /opt/snake/repo/tools/snake-admin.sh ]; then
   install -m 0755 /opt/snake/repo/tools/snake-admin.sh /usr/local/bin/snake-admin
 else
@@ -130,7 +138,7 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/bin/snake-admin seed
+ExecStart=/usr/local/bin/snakecli app seed
 EOF
 
 cat >/etc/systemd/system/snake-reset.service <<EOF
@@ -141,7 +149,7 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/bin/snake-admin reset
+ExecStart=/usr/local/bin/snakecli app reset
 EOF
 
 cat >/etc/systemd/system/snake-reset-seed.service <<EOF
@@ -152,7 +160,7 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/bin/snake-admin reset-seed
+ExecStart=/usr/local/bin/snakecli app reset-seed
 EOF
 
 cat >/etc/systemd/system/snake-reload.service <<EOF
@@ -163,7 +171,7 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/bin/snake-admin reload
+ExecStart=/usr/local/bin/snakecli app reload
 EOF
 
 cat >/etc/systemd/system/snake-seed-reload.service <<EOF
@@ -174,7 +182,7 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/local/bin/snake-admin seed-reload
+ExecStart=/usr/local/bin/snakecli app seed-reload
 EOF
 
 touch /var/log/snake_server.log

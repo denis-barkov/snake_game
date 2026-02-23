@@ -18,6 +18,7 @@ class IStorage {
   virtual std::optional<User> GetUserById(const std::string& user_id) = 0;
   virtual bool PutUser(const User& u) = 0;
   virtual bool UpdateUserBalance(const std::string& user_id, int64_t new_balance) = 0;
+  virtual bool IncrementUserBalance(const std::string& user_id, int64_t delta_balance) = 0;
 
   virtual std::vector<Snake> ListSnakes() = 0;
   virtual std::optional<Snake> GetSnakeById(const std::string& snake_id) = 0;
@@ -33,9 +34,12 @@ class IStorage {
   virtual bool PutSettings(const Settings& settings) = 0;
 
   virtual std::optional<EconomyParams> GetEconomyParams() = 0;
+  virtual std::optional<EconomyParams> GetEconomyParamsActive() = 0;
   virtual bool PutEconomyParams(const EconomyParams& p) = 0;
+  virtual bool PutEconomyParamsActiveAndVersioned(const EconomyParams& p, const std::string& updated_by) = 0;
   virtual std::optional<EconomyPeriod> GetEconomyPeriod(const std::string& period_key) = 0;
   virtual bool PutEconomyPeriod(const EconomyPeriod& p) = 0;
+  virtual bool IncrementEconomyPeriodDeltaMBuy(const std::string& period_key, int64_t delta_m_buy) = 0;
 
   virtual bool HealthCheck() = 0;
   virtual bool ResetForDev() = 0;

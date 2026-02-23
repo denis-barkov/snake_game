@@ -32,6 +32,7 @@ class DynamoStorage : public IStorage {
   std::optional<User> GetUserById(const std::string& user_id) override;
   bool PutUser(const User& u) override;
   bool UpdateUserBalance(const std::string& user_id, int64_t new_balance) override;
+  bool IncrementUserBalance(const std::string& user_id, int64_t delta_balance) override;
 
   std::vector<Snake> ListSnakes() override;
   std::optional<Snake> GetSnakeById(const std::string& snake_id) override;
@@ -47,9 +48,12 @@ class DynamoStorage : public IStorage {
   bool PutSettings(const Settings& settings) override;
 
   std::optional<EconomyParams> GetEconomyParams() override;
+  std::optional<EconomyParams> GetEconomyParamsActive() override;
   bool PutEconomyParams(const EconomyParams& p) override;
+  bool PutEconomyParamsActiveAndVersioned(const EconomyParams& p, const std::string& updated_by) override;
   std::optional<EconomyPeriod> GetEconomyPeriod(const std::string& period_key) override;
   bool PutEconomyPeriod(const EconomyPeriod& p) override;
+  bool IncrementEconomyPeriodDeltaMBuy(const std::string& period_key, int64_t delta_m_buy) override;
 
   bool HealthCheck() override;
   bool ResetForDev() override;

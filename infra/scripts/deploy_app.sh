@@ -13,6 +13,7 @@ TICK_HZ="${TICK_HZ:-10}"
 SPECTATOR_HZ="${SPECTATOR_HZ:-10}"
 ENABLE_BROADCAST="${ENABLE_BROADCAST:-true}"
 DEBUG_TPS="${DEBUG_TPS:-false}"
+ADMIN_TOKEN="${ADMIN_TOKEN:-change-me}"
 POLL_ATTEMPTS="${POLL_ATTEMPTS:-20}"
 POLL_SLEEP_SECONDS="${POLL_SLEEP_SECONDS:-15}"
 SSM_POLL_ATTEMPTS="${SSM_POLL_ATTEMPTS:-20}"
@@ -101,7 +102,7 @@ COMMAND_ID="$(
     --comment "snake deploy from ${APP_REF}" \
     --parameters "commands=[
 \"set -euo pipefail\",
-\"dnf -y install git clang boost-devel cmake gcc-c++ libcurl-devel openssl-devel zlib-devel >/dev/null\",
+\"dnf -y install git clang boost-devel cmake gcc-c++ libcurl-devel openssl-devel zlib-devel python3 >/dev/null\",
 \"if [ ! -f /usr/local/lib64/libaws-cpp-sdk-dynamodb.so ] && [ ! -f /usr/local/lib/libaws-cpp-sdk-dynamodb.so ]; then if [ ! -d /opt/aws-sdk-cpp ]; then git clone --depth 1 --branch 1.11.676 --recurse-submodules https://github.com/aws/aws-sdk-cpp.git /opt/aws-sdk-cpp; else cd /opt/aws-sdk-cpp; git fetch --tags --force; git checkout 1.11.676; git submodule sync --recursive; git submodule update --init --recursive; fi; cmake -S /opt/aws-sdk-cpp -B /opt/aws-sdk-cpp/build -DBUILD_ONLY='dynamodb' -DCMAKE_BUILD_TYPE=Release -DENABLE_TESTING=OFF >/dev/null; cmake --build /opt/aws-sdk-cpp/build -j2 >/dev/null; cmake --install /opt/aws-sdk-cpp/build >/dev/null; echo -e '/usr/local/lib64\\n/usr/local/lib' >/etc/ld.so.conf.d/aws-sdk-cpp.conf; ldconfig || true; fi\",
 \"mkdir -p /opt/snake\",
 \"if [ ! -d /opt/snake/repo ]; then echo Missing /opt/snake/repo; exit 1; fi\",
@@ -121,12 +122,19 @@ COMMAND_ID="$(
 \"AWS_REGION=${REGION}\",
 \"DYNAMO_REGION=${REGION}\",
 \"DYNAMO_TABLE_USERS=${PROJECT_TAG}-${ENVIRONMENT_TAG}-users\",
+\"TABLE_USERS=${PROJECT_TAG}-${ENVIRONMENT_TAG}-users\",
 \"DYNAMO_TABLE_SNAKES=${PROJECT_TAG}-${ENVIRONMENT_TAG}-snakes\",
+\"TABLE_SNAKES=${PROJECT_TAG}-${ENVIRONMENT_TAG}-snakes\",
 \"DYNAMO_TABLE_WORLD_CHUNKS=${PROJECT_TAG}-${ENVIRONMENT_TAG}-world_chunks\",
+\"TABLE_WORLD_CHUNKS=${PROJECT_TAG}-${ENVIRONMENT_TAG}-world_chunks\",
 \"DYNAMO_TABLE_SNAKE_EVENTS=${PROJECT_TAG}-${ENVIRONMENT_TAG}-snake_events\",
+\"TABLE_SNAKE_EVENTS=${PROJECT_TAG}-${ENVIRONMENT_TAG}-snake_events\",
 \"DYNAMO_TABLE_SETTINGS=${PROJECT_TAG}-${ENVIRONMENT_TAG}-settings\",
+\"TABLE_SETTINGS=${PROJECT_TAG}-${ENVIRONMENT_TAG}-settings\",
 \"DYNAMO_TABLE_ECONOMY_PARAMS=${PROJECT_TAG}-${ENVIRONMENT_TAG}-economy_params\",
+\"TABLE_ECONOMY_PARAMS=${PROJECT_TAG}-${ENVIRONMENT_TAG}-economy_params\",
 \"DYNAMO_TABLE_ECONOMY_PERIOD=${PROJECT_TAG}-${ENVIRONMENT_TAG}-economy_period\",
+\"TABLE_ECONOMY_PERIOD=${PROJECT_TAG}-${ENVIRONMENT_TAG}-economy_period\",
 \"SNAKE_W=40\",
 \"SNAKE_H=20\",
 \"SNAKE_MAX_PER_USER=3\",
@@ -134,8 +142,10 @@ COMMAND_ID="$(
 \"SPECTATOR_HZ=${SPECTATOR_HZ}\",
 \"ENABLE_BROADCAST=${ENABLE_BROADCAST}\",
 \"DEBUG_TPS=${DEBUG_TPS}\",
+\"ADMIN_TOKEN=${ADMIN_TOKEN}\",
 \"EOF_ENV\",
 \"chmod 0644 /etc/snake.env\",
+\"if [ -f /opt/snake/repo/tools/snakecli.py ]; then install -m 0755 /opt/snake/repo/tools/snakecli.py /usr/local/bin/snakecli; else echo Missing /opt/snake/repo/tools/snakecli.py; exit 1; fi\",
 \"if [ -f /opt/snake/repo/tools/snake-admin.sh ]; then install -m 0755 /opt/snake/repo/tools/snake-admin.sh /usr/local/bin/snake-admin; else echo Missing /opt/snake/repo/tools/snake-admin.sh; exit 1; fi\",
 \"cat > /etc/systemd/system/snake-seed.service <<'EOF_SNAKE_SEED'\",
 \"[Unit]\",
@@ -144,7 +154,7 @@ COMMAND_ID="$(
 \"Wants=network-online.target\",
 \"[Service]\",
 \"Type=oneshot\",
-\"ExecStart=/usr/local/bin/snake-admin seed\",
+\"ExecStart=/usr/local/bin/snakecli app seed\",
 \"EOF_SNAKE_SEED\",
 \"cat > /etc/systemd/system/snake-reset.service <<'EOF_SNAKE_RESET'\",
 \"[Unit]\",
@@ -153,7 +163,7 @@ COMMAND_ID="$(
 \"Wants=network-online.target\",
 \"[Service]\",
 \"Type=oneshot\",
-\"ExecStart=/usr/local/bin/snake-admin reset\",
+\"ExecStart=/usr/local/bin/snakecli app reset\",
 \"EOF_SNAKE_RESET\",
 \"cat > /etc/systemd/system/snake-reset-seed.service <<'EOF_SNAKE_RESET_SEED'\",
 \"[Unit]\",
@@ -162,7 +172,7 @@ COMMAND_ID="$(
 \"Wants=network-online.target\",
 \"[Service]\",
 \"Type=oneshot\",
-\"ExecStart=/usr/local/bin/snake-admin reset-seed\",
+\"ExecStart=/usr/local/bin/snakecli app reset-seed\",
 \"EOF_SNAKE_RESET_SEED\",
 \"cat > /etc/systemd/system/snake-reload.service <<'EOF_SNAKE_RELOAD'\",
 \"[Unit]\",
@@ -171,7 +181,7 @@ COMMAND_ID="$(
 \"Wants=network-online.target\",
 \"[Service]\",
 \"Type=oneshot\",
-\"ExecStart=/usr/local/bin/snake-admin reload\",
+\"ExecStart=/usr/local/bin/snakecli app reload\",
 \"EOF_SNAKE_RELOAD\",
 \"cat > /etc/systemd/system/snake-seed-reload.service <<'EOF_SNAKE_SEED_RELOAD'\",
 \"[Unit]\",
@@ -180,7 +190,7 @@ COMMAND_ID="$(
 \"Wants=network-online.target\",
 \"[Service]\",
 \"Type=oneshot\",
-\"ExecStart=/usr/local/bin/snake-admin seed-reload\",
+\"ExecStart=/usr/local/bin/snakecli app seed-reload\",
 \"EOF_SNAKE_SEED_RELOAD\",
 \"mkdir -p /etc/systemd/system/snake.service.d\",
 \"cat > /etc/systemd/system/snake.service.d/limits.conf <<'EOF_SNAKE_LIMITS'\",

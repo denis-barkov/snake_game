@@ -8,6 +8,10 @@ def env(name: str, default: str) -> str:
     return os.environ.get(name, default)
 
 
+def env_table(suffix: str, default: str) -> str:
+    return os.environ.get(f"TABLE_{suffix}") or os.environ.get(f"DYNAMO_TABLE_{suffix}") or default
+
+
 def run(cmd):
     return subprocess.run(cmd, check=False, text=True, capture_output=True)
 
@@ -107,13 +111,13 @@ def create_economy_period(name: str):
 
 
 def main():
-    users = env("DYNAMO_TABLE_USERS", "snake-local-users")
-    snakes = env("DYNAMO_TABLE_SNAKES", "snake-local-snakes")
-    world_chunks = env("DYNAMO_TABLE_WORLD_CHUNKS", "snake-local-world_chunks")
-    snake_events = env("DYNAMO_TABLE_SNAKE_EVENTS", "snake-local-snake_events")
-    settings = env("DYNAMO_TABLE_SETTINGS", "snake-local-settings")
-    economy_params = env("DYNAMO_TABLE_ECONOMY_PARAMS", "snake-local-economy_params")
-    economy_period = env("DYNAMO_TABLE_ECONOMY_PERIOD", "snake-local-economy_period")
+    users = env_table("USERS", "snake-local-users")
+    snakes = env_table("SNAKES", "snake-local-snakes")
+    world_chunks = env_table("WORLD_CHUNKS", "snake-local-world_chunks")
+    snake_events = env_table("SNAKE_EVENTS", "snake-local-snake_events")
+    settings = env_table("SETTINGS", "snake-local-settings")
+    economy_params = env_table("ECONOMY_PARAMS", "snake-local-economy_params")
+    economy_period = env_table("ECONOMY_PERIOD", "snake-local-economy_period")
 
     creators = [
         (users, create_users),
