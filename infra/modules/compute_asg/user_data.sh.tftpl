@@ -266,7 +266,8 @@ EOF
   systemctl daemon-reload || true
   systemctl stop nginx >/dev/null 2>&1 || true
   systemctl disable nginx >/dev/null 2>&1 || true
-  systemctl enable --now caddy || true
+  systemctl enable caddy >/dev/null 2>&1 || true
+  systemctl restart caddy >/dev/null 2>&1 || systemctl start caddy >/dev/null 2>&1 || true
   if ! systemctl is-active --quiet caddy; then
     dnf -y install nginx
     rm -f /etc/nginx/conf.d/*.conf /etc/nginx/default.d/*.conf
@@ -300,8 +301,8 @@ server {
 }
 EOF
     nginx -t
-    systemctl enable nginx
-    systemctl restart nginx
+    systemctl enable nginx >/dev/null 2>&1 || true
+    systemctl restart nginx >/dev/null 2>&1 || systemctl start nginx >/dev/null 2>&1 || true
   fi
 else
   dnf -y install nginx
@@ -336,6 +337,6 @@ server {
 }
 EOF
   nginx -t
-  systemctl enable nginx
-  systemctl restart nginx
+  systemctl enable nginx >/dev/null 2>&1 || true
+  systemctl restart nginx >/dev/null 2>&1 || systemctl start nginx >/dev/null 2>&1 || true
 fi

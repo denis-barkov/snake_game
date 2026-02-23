@@ -269,10 +269,12 @@ COMMAND_ID="$(
 \"  location / { try_files \\\$uri \\\$uri/ /index.html; }\",
 \"}\",
 \"EOF_NGINX\",
+\"nginx -t || true\",
+\"systemctl restart nginx >/dev/null 2>&1 || true\",
 \"systemctl daemon-reload || true\",
 \"systemctl restart snake\",
 \"systemctl is-active snake\",
-\"if command -v caddy >/dev/null 2>&1; then systemctl daemon-reload || true; systemctl stop nginx >/dev/null 2>&1 || true; systemctl disable nginx >/dev/null 2>&1 || true; systemctl enable --now caddy || true; fi\",
+\"if command -v caddy >/dev/null 2>&1; then systemctl daemon-reload || true; systemctl enable caddy >/dev/null 2>&1 || true; systemctl restart caddy >/dev/null 2>&1 || systemctl start caddy >/dev/null 2>&1 || true; systemctl stop nginx >/dev/null 2>&1 || true; systemctl disable nginx >/dev/null 2>&1 || true; fi\",
 \"if command -v caddy >/dev/null 2>&1 && systemctl is-active --quiet caddy; then systemctl is-active caddy; else nginx -t; systemctl enable --now nginx; systemctl is-active nginx; fi\"
 ]" \
     --query 'Command.CommandId' \
