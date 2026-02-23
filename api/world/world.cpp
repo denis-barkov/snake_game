@@ -5,6 +5,7 @@
 #include <sstream>
 #include <unordered_set>
 
+#include "systems/replication_system.h"
 #include "systems/spawn_system.h"
 
 namespace world {
@@ -14,7 +15,8 @@ World::World(int width, int height, int food_count, int max_snakes_per_user)
       height_(height),
       food_count_(food_count),
       max_snakes_per_user_(max_snakes_per_user),
-      rng_(static_cast<uint32_t>(std::random_device{}())) {}
+      rng_(static_cast<uint32_t>(std::random_device{}())),
+      chunk_manager_(64, true) {}
 
 void World::LoadFromStorage(const std::vector<storage::Snake>& stored_snakes,
                             const std::optional<storage::WorldChunk>& world_chunk) {
@@ -61,6 +63,7 @@ void World::LoadFromStorage(const std::vector<storage::Snake>& stored_snakes,
 
   SpawnSystem::Run(snakes_, foods_, food_count_, width_, height_, rng_);
   ResolveOverlapsOnStartLocked();
+  chunk_manager_.Rebuild(snakes_, foods_, obstacles_, tick_);
 
   if (!world_chunk.has_value()) {
     // First boot with empty DB needs an initial world row.
@@ -112,6 +115,7 @@ void World::Tick() {
   }
 
   ++tick_;
+  chunk_manager_.Rebuild(snakes_, foods_, obstacles_, tick_);
 }
 
 uint64_t World::TickId() const {
@@ -153,6 +157,29 @@ WorldSnapshot World::Snapshot() const {
   snap.snakes = snakes_;
   snap.foods = foods_;
   return snap;
+}
+
+WorldSnapshot World::SnapshotForCamera(int camera_x, int camera_y, bool aoi_enabled, int aoi_radius) const {
+  std::lock_guard<std::mutex> lock(mu_);
+  WorldSnapshot snap;
+  snap.tick = tick_;
+  snap.w = width_;
+  snap.h = height_;
+  snap.snakes = snakes_;
+  snap.foods = foods_;
+
+  ReplicationRequest req;
+  req.camera_x = camera_x;
+  req.camera_y = camera_y;
+  req.aoi_enabled = aoi_enabled;
+  req.aoi_radius = aoi_radius;
+  return ReplicationSystem::BuildSnapshot(snap, chunk_manager_, req);
+}
+
+void World::ConfigureChunking(int chunk_size, bool single_chunk_mode) {
+  std::lock_guard<std::mutex> lock(mu_);
+  chunk_manager_.SetConfig(chunk_size, single_chunk_mode);
+  chunk_manager_.Rebuild(snakes_, foods_, obstacles_, tick_);
 }
 
 bool World::QueueDirectionInput(int user_id, int snake_id, Dir d) {
@@ -206,6 +233,7 @@ std::optional<int> World::CreateSnakeForUser(int user_id, const std::string& col
   const Vec2 p = SpawnSystem::RandFreeCell(snakes_, foods_, width_, height_, rng_);
   s.body = {p};
   snakes_.push_back(s);
+  chunk_manager_.Rebuild(snakes_, foods_, obstacles_, tick_);
 
   const int64_t now = static_cast<int64_t>(tick_);
   snake_created_at_ms_[s.id] = now;

@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "../storage/models.h"
+#include "chunk_manager.h"
 #include "entities/food.h"
 #include "entities/obstacle.h"
 #include "entities/snake.h"
@@ -55,6 +56,8 @@ class World {
   std::vector<Food> Foods() const;
   Obstacles ObstaclesList() const;
   WorldSnapshot Snapshot() const;
+  WorldSnapshot SnapshotForCamera(int camera_x, int camera_y, bool aoi_enabled, int aoi_radius) const;
+  void ConfigureChunking(int chunk_size, bool single_chunk_mode);
 
   // Network layer writes user intents; systems consume them on Tick().
   bool QueueDirectionInput(int user_id, int snake_id, Dir d);
@@ -102,6 +105,7 @@ class World {
   bool world_chunk_dirty_ = false;
 
   std::mt19937 rng_;
+  ChunkManager chunk_manager_;
 };
 
 }  // namespace world

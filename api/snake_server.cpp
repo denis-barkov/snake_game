@@ -139,11 +139,24 @@ class AuthState {
   unordered_map<string, int> token_to_uid_;
 };
 
+struct ClientSession {
+  string session_id;
+  int camera_x = DEFAULT_W / 2;
+  int camera_y = DEFAULT_H / 2;
+  optional<int> watched_snake_id;
+  bool is_watcher = true;
+  uint64_t updated_at_ms = 0;
+};
+
 class GameService {
  public:
   GameService(storage::IStorage& storage, int width, int height, int food_count, int max_snakes_per_user)
       : storage_(storage),
         world_(width, height, food_count, max_snakes_per_user) {}
+
+  void configure_chunking(int chunk_size, bool single_chunk_mode) {
+    world_.ConfigureChunking(chunk_size, single_chunk_mode);
+  }
 
   void load_from_storage_or_seed_positions() {
     world_.LoadFromStorage(storage_.ListSnakes(), storage_.GetWorldChunk("main"));
@@ -155,6 +168,10 @@ class GameService {
 
   world::WorldSnapshot snapshot() {
     return world_.Snapshot();
+  }
+
+  world::WorldSnapshot snapshot_for_camera(int camera_x, int camera_y, bool aoi_enabled, int aoi_radius) {
+    return world_.SnapshotForCamera(camera_x, camera_y, aoi_enabled, aoi_radius);
   }
 
   bool set_snake_dir(int user_id, int snake_id, world::Dir d) {
@@ -440,6 +457,10 @@ int main(int argc, char** argv) {
        << ", PLAYER_HZ=" << runtime_cfg.player_hz
        << ", ENABLE_BROADCAST=" << (runtime_cfg.enable_broadcast ? "true" : "false")
        << ", DEBUG_TPS=" << (runtime_cfg.debug_tps ? "true" : "false")
+       << ", CHUNK_SIZE=" << runtime_cfg.chunk_size
+       << ", AOI_RADIUS=" << runtime_cfg.aoi_radius
+       << ", SINGLE_CHUNK_MODE=" << (runtime_cfg.single_chunk_mode ? "true" : "false")
+       << ", AOI_ENABLED=" << (runtime_cfg.aoi_enabled ? "true" : "false")
        << "\n";
 
   unique_ptr<storage::IStorage> storage;
@@ -471,6 +492,7 @@ int main(int argc, char** argv) {
   }
 
   GameService game(*storage, grid_w, grid_h, FOOD_COUNT, max_snakes_per_user);
+  game.configure_chunking(runtime_cfg.chunk_size, runtime_cfg.single_chunk_mode);
   EconomyService economy(*storage);
   game.load_from_storage_or_seed_positions();
   game.flush_persistence_delta();
@@ -498,7 +520,6 @@ int main(int argc, char** argv) {
 
   atomic<bool> running{true};
   mutex snapshot_mu;
-  string latest_snapshot = state_to_json(game.snapshot());
   uint64_t snapshot_seq = 1;
 
   signal(SIGUSR1, on_reload_signal);
@@ -523,10 +544,8 @@ int main(int argc, char** argv) {
       if (g_reload_requested) {
         g_reload_requested = 0;
         game.load_from_storage_or_seed_positions();
-        string snap = state_to_json(game.snapshot());
         {
           lock_guard<mutex> lock(snapshot_mu);
-          latest_snapshot = std::move(snap);
           ++snapshot_seq;
         }
       }
@@ -548,10 +567,8 @@ int main(int argc, char** argv) {
       }
 
       while (runtime_cfg.enable_broadcast && now >= next_broadcast) {
-        string snap = state_to_json(game.snapshot());
         {
           lock_guard<mutex> lock(snapshot_mu);
-          latest_snapshot = std::move(snap);
           ++snapshot_seq;
         }
         ++broadcasts_since_log;
@@ -578,6 +595,22 @@ int main(int argc, char** argv) {
 
   AuthState auth;
   httplib::Server srv;
+  mutex sessions_mu;
+  unordered_map<string, ClientSession> sessions;
+
+  auto get_or_create_session = [&](const string& sid) {
+    lock_guard<mutex> lock(sessions_mu);
+    auto it = sessions.find(sid);
+    if (it == sessions.end()) {
+      ClientSession s;
+      s.session_id = sid;
+      s.camera_x = grid_w / 2;
+      s.camera_y = grid_h / 2;
+      s.updated_at_ms = now_ms();
+      it = sessions.emplace(sid, s).first;
+    }
+    return it->second;
+  };
 
   srv.Options(R"(.*)", [&](const httplib::Request&, httplib::Response& res) {
     add_cors(res);
@@ -596,7 +629,11 @@ int main(int argc, char** argv) {
       << "\"tick_hz\":" << runtime_cfg.tick_hz << ","
       << "\"spectator_hz\":" << runtime_cfg.spectator_hz << ","
       << "\"player_hz\":" << runtime_cfg.player_hz << ","
-      << "\"enable_broadcast\":" << (runtime_cfg.enable_broadcast ? "true" : "false")
+      << "\"enable_broadcast\":" << (runtime_cfg.enable_broadcast ? "true" : "false") << ","
+      << "\"chunk_size\":" << runtime_cfg.chunk_size << ","
+      << "\"aoi_radius\":" << runtime_cfg.aoi_radius << ","
+      << "\"single_chunk_mode\":" << (runtime_cfg.single_chunk_mode ? "true" : "false") << ","
+      << "\"aoi_enabled\":" << (runtime_cfg.aoi_enabled ? "true" : "false")
       << "}";
     res.set_content(o.str(), "application/json");
   });
@@ -628,6 +665,36 @@ int main(int argc, char** argv) {
       << "}"
       << "}";
     res.set_content(o.str(), "application/json");
+  });
+
+  srv.Post("/game/camera", [&](const httplib::Request& req, httplib::Response& res) {
+    add_cors(res);
+    auto sid = get_json_string_field(req.body, "sid");
+    auto x = get_json_int_field(req.body, "x");
+    auto y = get_json_int_field(req.body, "y");
+    if (!sid || sid->empty() || !x || !y) {
+      res.status = 400;
+      res.set_content("{\"error\":\"bad_camera_payload\"}", "application/json");
+      return;
+    }
+
+    ClientSession session = get_or_create_session(*sid);
+    session.camera_x = max(0, min(grid_w - 1, *x));
+    session.camera_y = max(0, min(grid_h - 1, *y));
+    session.updated_at_ms = now_ms();
+
+    auto watch_snake = get_json_int_field(req.body, "watch_snake_id");
+    if (watch_snake && *watch_snake > 0) {
+      session.watched_snake_id = *watch_snake;
+    } else {
+      session.watched_snake_id.reset();
+    }
+
+    {
+      lock_guard<mutex> lock(sessions_mu);
+      sessions[*sid] = session;
+    }
+    res.set_content("{\"status\":\"OK\"}", "application/json");
   });
 
   srv.Post("/economy/purchase", [&](const httplib::Request& req, httplib::Response& res) {
@@ -676,11 +743,16 @@ int main(int argc, char** argv) {
     res.set_content(o.str(), "application/json");
   });
 
-  srv.Get("/game/stream", [&](const httplib::Request&, httplib::Response& res) {
+  srv.Get("/game/stream", [&](const httplib::Request& req, httplib::Response& res) {
     add_cors(res);
     res.set_header("Cache-Control", "no-cache");
     res.set_header("Connection", "keep-alive");
     res.set_header("Content-Type", "text/event-stream");
+
+    const string sid = (req.has_param("sid") && !req.get_param_value("sid").empty())
+                           ? req.get_param_value("sid")
+                           : rand_token(16);
+    get_or_create_session(sid);
 
     res.set_chunked_content_provider(
         "text/event-stream",
@@ -690,13 +762,19 @@ int main(int argc, char** argv) {
           const auto heartbeat_every = chrono::seconds(10);
           while (true) {
             string payload;
+            uint64_t current_seq = 0;
             {
               lock_guard<mutex> lock(snapshot_mu);
-              if (snapshot_seq != last_seq) {
-                last_seq = snapshot_seq;
-                payload = "event: frame\n";
-                payload += "data: " + latest_snapshot + "\n\n";
-              }
+              current_seq = snapshot_seq;
+            }
+            if (current_seq != last_seq) {
+              last_seq = current_seq;
+              ClientSession session = get_or_create_session(sid);
+              const auto filtered = game.snapshot_for_camera(
+                  session.camera_x, session.camera_y, runtime_cfg.aoi_enabled, runtime_cfg.aoi_radius);
+              const string encoded = state_to_json(filtered);
+              payload = "event: frame\n";
+              payload += "data: " + encoded + "\n\n";
             }
             if (payload.empty()) {
               const auto now = chrono::steady_clock::now();

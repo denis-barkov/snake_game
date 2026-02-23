@@ -82,11 +82,13 @@ clang++ -std=c++17 -O2 -pthread \
   api/economy/economy_v1.cpp \
   config/runtime_config.cpp \
   api/world/world.cpp \
+  api/world/chunk_manager.cpp \
   api/world/entities/snake.cpp \
   api/world/entities/food.cpp \
   api/world/systems/movement_system.cpp \
   api/world/systems/collision_system.cpp \
   api/world/systems/spawn_system.cpp \
+  api/world/systems/replication_system.cpp \
   -o /opt/snake/snake_server \
   -lboost_system -laws-cpp-sdk-dynamodb -laws-cpp-sdk-core \
   -L/usr/local/lib64 -L/usr/local/lib

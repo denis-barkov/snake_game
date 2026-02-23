@@ -56,6 +56,10 @@ RuntimeConfig RuntimeConfig::FromEnv() {
   cfg.player_hz = clamp_int(getenv_int("PLAYER_HZ", cfg.player_hz), 1, 60);
   cfg.enable_broadcast = getenv_bool("ENABLE_BROADCAST", cfg.enable_broadcast);
   cfg.debug_tps = getenv_bool("DEBUG_TPS", cfg.debug_tps);
+  cfg.chunk_size = clamp_int(getenv_int("CHUNK_SIZE", cfg.chunk_size), 8, 1024);
+  cfg.aoi_radius = clamp_int(getenv_int("AOI_RADIUS", cfg.aoi_radius), 0, 16);
+  cfg.single_chunk_mode = getenv_bool("SINGLE_CHUNK_MODE", cfg.single_chunk_mode);
+  cfg.aoi_enabled = getenv_bool("AOI_ENABLED", cfg.aoi_enabled);
   if (!has_env("DEBUG_TPS")) {
     // Backward compatibility for older deployments that used LOG_HZ.
     cfg.debug_tps = getenv_bool("LOG_HZ", cfg.debug_tps);

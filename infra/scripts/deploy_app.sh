@@ -13,6 +13,10 @@ TICK_HZ="${TICK_HZ:-10}"
 SPECTATOR_HZ="${SPECTATOR_HZ:-10}"
 ENABLE_BROADCAST="${ENABLE_BROADCAST:-true}"
 DEBUG_TPS="${DEBUG_TPS:-false}"
+CHUNK_SIZE="${CHUNK_SIZE:-64}"
+AOI_RADIUS="${AOI_RADIUS:-1}"
+SINGLE_CHUNK_MODE="${SINGLE_CHUNK_MODE:-true}"
+AOI_ENABLED="${AOI_ENABLED:-false}"
 ADMIN_TOKEN="${ADMIN_TOKEN:-change-me}"
 POLL_ATTEMPTS="${POLL_ATTEMPTS:-20}"
 POLL_SLEEP_SECONDS="${POLL_SLEEP_SECONDS:-15}"
@@ -117,7 +121,7 @@ COMMAND_ID="$(
 \"chmod 755 /var/www/snake || true\",
 \"chmod 644 /var/www/snake/index.html || true\",
 \"if [ -d /var/www/snake/src ]; then find /var/www/snake/src -type d -exec chmod 755 {} \\;; find /var/www/snake/src -type f -exec chmod 644 {} \\;; fi\",
-\"clang++ -std=c++17 -O2 -pthread ${BUILD_TARGET} api/protocol/encode_json.cpp api/storage/dynamo_storage.cpp api/storage/storage_factory.cpp api/economy/economy_v1.cpp config/runtime_config.cpp api/world/world.cpp api/world/entities/snake.cpp api/world/entities/food.cpp api/world/systems/movement_system.cpp api/world/systems/collision_system.cpp api/world/systems/spawn_system.cpp -o /opt/snake/snake_server -lboost_system -laws-cpp-sdk-dynamodb -laws-cpp-sdk-core -L/usr/local/lib64 -L/usr/local/lib\",
+\"clang++ -std=c++17 -O2 -pthread ${BUILD_TARGET} api/protocol/encode_json.cpp api/storage/dynamo_storage.cpp api/storage/storage_factory.cpp api/economy/economy_v1.cpp config/runtime_config.cpp api/world/world.cpp api/world/chunk_manager.cpp api/world/entities/snake.cpp api/world/entities/food.cpp api/world/systems/movement_system.cpp api/world/systems/collision_system.cpp api/world/systems/spawn_system.cpp api/world/systems/replication_system.cpp -o /opt/snake/snake_server -lboost_system -laws-cpp-sdk-dynamodb -laws-cpp-sdk-core -L/usr/local/lib64 -L/usr/local/lib\",
 \"cat > /etc/snake.env <<'EOF_ENV'\",
 \"AWS_REGION=${REGION}\",
 \"DYNAMO_REGION=${REGION}\",
@@ -142,6 +146,10 @@ COMMAND_ID="$(
 \"SPECTATOR_HZ=${SPECTATOR_HZ}\",
 \"ENABLE_BROADCAST=${ENABLE_BROADCAST}\",
 \"DEBUG_TPS=${DEBUG_TPS}\",
+\"CHUNK_SIZE=${CHUNK_SIZE}\",
+\"AOI_RADIUS=${AOI_RADIUS}\",
+\"SINGLE_CHUNK_MODE=${SINGLE_CHUNK_MODE}\",
+\"AOI_ENABLED=${AOI_ENABLED}\",
 \"ADMIN_TOKEN=${ADMIN_TOKEN}\",
 \"EOF_ENV\",
 \"chmod 0644 /etc/snake.env\",

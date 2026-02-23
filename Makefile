@@ -13,6 +13,10 @@ GAME_TICK_HZ?=10
 GAME_SPECTATOR_HZ?=10
 GAME_ENABLE_BROADCAST?=true
 GAME_DEBUG_TPS?=false
+GAME_CHUNK_SIZE?=64
+GAME_AOI_RADIUS?=1
+GAME_SINGLE_CHUNK_MODE?=true
+GAME_AOI_ENABLED?=false
 
 LOCAL_DYNAMO_ENDPOINT?=http://127.0.0.1:8000
 LOCAL_DYNAMO_ENDPOINT_DOCKER?=http://host.docker.internal:8000
@@ -24,7 +28,7 @@ LOCAL_DYNAMO_SETTINGS?=snake-local-settings
 LOCAL_DYNAMO_ECONOMY_PARAMS?=snake-local-economy_params
 LOCAL_DYNAMO_ECONOMY_PERIOD?=snake-local-economy_period
 DOCKER_LOCAL_IMAGE?=snake-local-run:dev
-LOCAL_COMPILE_CMD=clang++ -std=c++17 -O2 -pthread api/snake_server.cpp api/protocol/encode_json.cpp api/storage/dynamo_storage.cpp api/storage/storage_factory.cpp api/economy/economy_v1.cpp config/runtime_config.cpp api/world/world.cpp api/world/entities/snake.cpp api/world/entities/food.cpp api/world/systems/movement_system.cpp api/world/systems/collision_system.cpp api/world/systems/spawn_system.cpp -lboost_system -laws-cpp-sdk-dynamodb -laws-cpp-sdk-core -L/usr/local/lib64 -L/usr/local/lib -o snake_server
+LOCAL_COMPILE_CMD=clang++ -std=c++17 -O2 -pthread api/snake_server.cpp api/protocol/encode_json.cpp api/storage/dynamo_storage.cpp api/storage/storage_factory.cpp api/economy/economy_v1.cpp config/runtime_config.cpp api/world/world.cpp api/world/chunk_manager.cpp api/world/entities/snake.cpp api/world/entities/food.cpp api/world/systems/movement_system.cpp api/world/systems/collision_system.cpp api/world/systems/spawn_system.cpp api/world/systems/replication_system.cpp -lboost_system -laws-cpp-sdk-dynamodb -laws-cpp-sdk-core -L/usr/local/lib64 -L/usr/local/lib -o snake_server
 
 # Accept both upper/lower-case CLI vars for convenience.
 ifneq ($(strip $(branch)),)
@@ -102,6 +106,10 @@ local-run-docker: local-dynamo-up local-dynamo-create local-docker-build
 	  -e SPECTATOR_HZ=$(GAME_SPECTATOR_HZ) \
 	  -e ENABLE_BROADCAST=$(GAME_ENABLE_BROADCAST) \
 	  -e DEBUG_TPS=$(GAME_DEBUG_TPS) \
+	  -e CHUNK_SIZE=$(GAME_CHUNK_SIZE) \
+	  -e AOI_RADIUS=$(GAME_AOI_RADIUS) \
+	  -e SINGLE_CHUNK_MODE=$(GAME_SINGLE_CHUNK_MODE) \
+	  -e AOI_ENABLED=$(GAME_AOI_ENABLED) \
 	  -e SERVER_BIND_HOST=0.0.0.0 \
 	  -e SERVER_BIND_PORT=8080 \
 	  $(DOCKER_LOCAL_IMAGE) \
@@ -164,7 +172,7 @@ aws-code-deploy:
 	  echo "Pass BRANCH=<git_branch> (or branch=<git_branch>). Example: make aws-code-deploy BRANCH=main"; \
 	  exit 1; \
 	fi
-	DEPLOY_TIMEOUT_SEC=$(DEPLOY_TIMEOUT_SEC) TICK_HZ=$(GAME_TICK_HZ) SPECTATOR_HZ=$(GAME_SPECTATOR_HZ) ENABLE_BROADCAST=$(GAME_ENABLE_BROADCAST) DEBUG_TPS=$(GAME_DEBUG_TPS) AWS_PROFILE=$(PROFILE) AWS_REGION=$(AWS_REGION) PROJECT_TAG=$(PROJECT_TAG) ENVIRONMENT_TAG=$(ENVIRONMENT_TAG) ASG_NAME=$(ASG_NAME) APP_REF=$(DEPLOY_BRANCH) BUILD_TARGET=$(BUILD_TARGET) DOMAIN_NAME=$(DOMAIN_NAME) APP_PORT=$(APP_PORT) bash infra/scripts/deploy_app.sh
+	DEPLOY_TIMEOUT_SEC=$(DEPLOY_TIMEOUT_SEC) TICK_HZ=$(GAME_TICK_HZ) SPECTATOR_HZ=$(GAME_SPECTATOR_HZ) ENABLE_BROADCAST=$(GAME_ENABLE_BROADCAST) DEBUG_TPS=$(GAME_DEBUG_TPS) CHUNK_SIZE=$(GAME_CHUNK_SIZE) AOI_RADIUS=$(GAME_AOI_RADIUS) SINGLE_CHUNK_MODE=$(GAME_SINGLE_CHUNK_MODE) AOI_ENABLED=$(GAME_AOI_ENABLED) AWS_PROFILE=$(PROFILE) AWS_REGION=$(AWS_REGION) PROJECT_TAG=$(PROJECT_TAG) ENVIRONMENT_TAG=$(ENVIRONMENT_TAG) ASG_NAME=$(ASG_NAME) APP_REF=$(DEPLOY_BRANCH) BUILD_TARGET=$(BUILD_TARGET) DOMAIN_NAME=$(DOMAIN_NAME) APP_PORT=$(APP_PORT) bash infra/scripts/deploy_app.sh
 
 aws-apply:
 	AWS_PROFILE=$(PROFILE) terraform -chdir=$(TF_DIR) apply

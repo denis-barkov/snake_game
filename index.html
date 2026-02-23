@@ -183,6 +183,12 @@
   let token = null;
   let myUserId = null;
   let selectedSnakeId = null;
+  let watchedSnakeId = null;
+  let latestServerState = null;
+  const stateBuffer = [];
+  const streamSessionId = (window.crypto && crypto.randomUUID)
+    ? crypto.randomUUID()
+    : ("sid_" + Math.random().toString(36).slice(2));
 
   let gridW = 40, gridH = 20;
   let cells = [];
@@ -206,6 +212,7 @@
   const FALLBACK_EXPECTED_TICK_HZ = 10;
   let runtimeSpeedPollTimer = null;
   let economyPollTimer = null;
+  let cameraPollTimer = null;
 
   function buildBoard(w, h) {
     gridW = w; gridH = h;
@@ -230,6 +237,7 @@
   }
 
   function drawFrame(state) {
+    latestServerState = state;
     tickEl.textContent = state.tick;
     updateActualTickHz(state.tick);
 
@@ -255,6 +263,17 @@
         cells[i].style.background = s.color;
       }
     }
+  }
+
+  function pushStateBuffer(state) {
+    stateBuffer.push({ state, t: performance.now() });
+    if (stateBuffer.length > 2) stateBuffer.shift();
+  }
+
+  function buildWorldView() {
+    // v1 view layer: keep ring buffer ready for interpolation, render latest snapshot for now.
+    if (stateBuffer.length === 0) return null;
+    return stateBuffer[stateBuffer.length - 1].state;
   }
 
   function updateActualTickHz(currentTick) {
@@ -366,20 +385,44 @@
 
     mySnakesEl.innerHTML = "";
     for (const s of data.snakes) {
+      const isSelected = s.id === selectedSnakeId;
+      const isWatched = s.id === watchedSnakeId;
       const div = document.createElement("div");
-      div.className = "snake-item" + (s.id === selectedSnakeId ? " active" : "");
+      div.className = "snake-item" + (isSelected ? " active" : "");
       div.onclick = () => {
         selectedSnakeId = s.id;
+        if (watchedSnakeId && watchedSnakeId !== selectedSnakeId) watchedSnakeId = null;
         loadMySnakes();
       };
       div.innerHTML = `
-        <span><span class="badge" style="background:${s.color}"></span>Snake #${s.id}</span>
+        <span>
+          <span><span class="badge" style="background:${s.color}"></span>Snake #${s.id}</span><br />
+          <small>
+            <label>
+              <input class="watch-toggle" type="checkbox" data-sid="${s.id}" ${isWatched ? "checked" : ""} ${isSelected ? "" : "disabled"} />
+              watch
+            </label>
+          </small>
+        </span>
         <small>${s.paused ? "paused" : "moving"} · len ${s.len}</small>
       `;
       mySnakesEl.appendChild(div);
     }
 
     if (!selectedSnakeId && data.snakes.length > 0) selectedSnakeId = data.snakes[0].id;
+    if (watchedSnakeId && watchedSnakeId !== selectedSnakeId) watchedSnakeId = null;
+
+    mySnakesEl.querySelectorAll(".watch-toggle").forEach((el) => {
+      el.addEventListener("click", async (ev) => {
+        ev.stopPropagation();
+        const sid = Number(ev.target.getAttribute("data-sid"));
+        if (!Number.isFinite(sid)) return;
+        if (sid !== selectedSnakeId) return;
+        watchedSnakeId = ev.target.checked ? sid : null;
+        await postCamera();
+        loadMySnakes();
+      });
+    });
   }
 
   async function createSnake() {
@@ -438,10 +481,12 @@
 
   // SSE stream (watchers scale well)
   function startStream() {
-    const es = new EventSource(API + "/game/stream");
+    const es = new EventSource(API + "/game/stream?sid=" + encodeURIComponent(streamSessionId));
     es.addEventListener("frame", (ev) => {
       const state = JSON.parse(ev.data);
-      drawFrame(state);
+      pushStateBuffer(state);
+      const view = buildWorldView();
+      if (view) drawFrame(view);
     });
     es.onerror = () => {
       // auto reconnect
@@ -450,11 +495,39 @@
     };
   }
 
+  function getCameraTarget() {
+    const center = { x: Math.floor(gridW / 2), y: Math.floor(gridH / 2) };
+    if (!watchedSnakeId || !latestServerState || !Array.isArray(latestServerState.snakes)) return center;
+    const target = latestServerState.snakes.find((s) => s.id === watchedSnakeId);
+    if (!target || !Array.isArray(target.body) || target.body.length === 0) return center;
+    return { x: target.body[0].x, y: target.body[0].y };
+  }
+
+  async function postCamera() {
+    try {
+      const target = getCameraTarget();
+      await fetch(API + "/game/camera", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sid: streamSessionId,
+          x: target.x,
+          y: target.y,
+          watch_snake_id: watchedSnakeId || null
+        })
+      });
+    } catch (_) {
+      // Optional session camera update. Stream falls back to defaults if this fails.
+    }
+  }
+
   startStream();
   loadRuntimeSpeed();
   loadEconomyState();
   runtimeSpeedPollTimer = setInterval(loadRuntimeSpeed, 10000);
   economyPollTimer = setInterval(loadEconomyState, 2000);
+  cameraPollTimer = setInterval(postCamera, 400);
+  postCamera();
 </script>
 </body>
 </html>

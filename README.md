@@ -26,11 +26,23 @@ Simulation internals are structured in `api/world`:
 - `PLAYER_HZ` (placeholder, currently unused)
 - `ENABLE_BROADCAST` (`true`/`false`, default `true`)
 - `DEBUG_TPS` (`true`/`false`, default `false`)
+- `CHUNK_SIZE` (default `64`)
+- `AOI_RADIUS` (default `1`)
+- `SINGLE_CHUNK_MODE` (`true`/`false`, default `true`)
+- `AOI_ENABLED` (`true`/`false`, default `false`)
 - `ECONOMY_CACHE_MS` (default `2000`, min `500`, max `10000`) for `/economy/state` read cache
 
 Default run values in Make:
 - `TICK_HZ=10`
 - `SPECTATOR_HZ=10`
+- `CHUNK_SIZE=64`
+- `AOI_RADIUS=1`
+- `SINGLE_CHUNK_MODE=true`
+- `AOI_ENABLED=false`
+
+Notes:
+- With default rollout flags (`SINGLE_CHUNK_MODE=true`, `AOI_ENABLED=false`) behavior stays equivalent to previous full-world snapshots.
+- AOI can be enabled later without changing frontend payload schema.
 
 ### Economy v1 (read-only)
 
@@ -159,6 +171,16 @@ snakecli snakes list --onfield --limit 25
 snakecli --token "$ADMIN_TOKEN" app seed
 snakecli --token "$ADMIN_TOKEN" app reset-seed-reload
 ```
+
+## Watch camera / AOI-ready behavior
+
+- Frontend stream now uses a stable session id (`sid`) via `/game/stream?sid=...`.
+- Frontend optionally posts camera center to `POST /game/camera` (low rate) so backend can apply AOI filtering when enabled.
+- In **My Snakes**, a `watch` checkbox appears under each snake:
+  - only the selected snake can be watched
+  - only one snake can be watched at a time
+  - selecting another snake clears previous watch selection
+- Old clients remain compatible: if no camera updates are sent, server defaults to center-camera behavior.
 
 ## Modes
 
