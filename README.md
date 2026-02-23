@@ -50,6 +50,8 @@ Notes:
 - Frontend HUD polls this endpoint every 2 seconds.
 - Economy is computed outside the tick loop and cached in-process to avoid DynamoDB hammering.
 - No gameplay rules are changed by economy values in this step (display-only).
+- User HUD does not show `period_key`; period remains available in `snakecli economy status`.
+- Public health/debug endpoint: `GET /health` returns `{"ok":true}`.
 
 ### Economy v1 write paths (Step 5)
 
@@ -171,6 +173,19 @@ snakecli snakes list --onfield --limit 25
 snakecli --token "$ADMIN_TOKEN" app seed
 snakecli --token "$ADMIN_TOKEN" app reset-seed-reload
 ```
+
+### Prod parity smoke checks
+
+After deploy, verify public routing:
+
+```bash
+curl -sS https://terrariumsnake.com/health
+curl -sS https://terrariumsnake.com/economy/state
+```
+
+Expected:
+- `/health` -> `{"ok":true}`
+- `/economy/state` -> JSON with numeric `M`, `P`, `pi`, `A_world`, `M_white`
 
 ## Watch camera / AOI-ready behavior
 

@@ -638,9 +638,32 @@ int main(int argc, char** argv) {
     res.set_content(o.str(), "application/json");
   });
 
+  srv.Get("/health", [&](const httplib::Request&, httplib::Response& res) {
+    add_cors(res);
+    res.set_content("{\"ok\":true}", "application/json");
+  });
+
   srv.Get("/economy/state", [&](const httplib::Request&, httplib::Response& res) {
     add_cors(res);
-    const auto s = economy.GetState();
+    EconomyService::Snapshot s;
+    try {
+      s = economy.GetState();
+    } catch (...) {
+      // Endpoint must remain stable even when backing reads fail.
+      s.params = storage::EconomyParams{};
+      s.delta_m_buy = 0;
+      s.k_snakes = 0;
+      economy::EconomyInputs in;
+      in.params = s.params;
+      in.sum_mi = 0;
+      in.m_g = s.params.m_gov_reserve;
+      in.delta_m_buy = 0;
+      in.delta_m_issue = s.params.delta_m_issue;
+      in.cap_delta_m = s.params.cap_delta_m;
+      in.k_snakes = 0;
+      in.delta_k_obs = s.params.delta_k_obs;
+      s.state = economy::ComputeEconomyV1(in, utc_period_key_yyyymmddhh());
+    }
     ostringstream o;
     o << "{"
       << "\"period_key\":\"" << json_escape(s.state.period_key) << "\","

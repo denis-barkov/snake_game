@@ -170,7 +170,7 @@
           <div>Tick: <span id="tick">0</span></div>
           <div>Expected speed: <span id="expectedTickHz">-</span> tick/s</div>
           <div>Actual speed: <span id="actualTickHz">-</span> tick/s</div>
-          <div><small>Period: <span id="ecoPeriod">—</span></small></div>
+          <div><small id="ecoStatus">Economy: loading...</small></div>
         </div>
       </div>
     </div>
@@ -178,7 +178,8 @@
   </div>
 
 <script>
-  const API = window.location.protocol === "file:" ? "http://127.0.0.1:8080" : window.location.origin;
+  const API_BASE = window.location.protocol === "file:" ? "http://127.0.0.1:8080" : "";
+  const apiPath = (path) => `${API_BASE}${path}`;
 
   let token = null;
   let myUserId = null;
@@ -202,7 +203,7 @@
   const ecoPiEl = document.getElementById("ecoPi");
   const ecoAWorldEl = document.getElementById("ecoAWorld");
   const ecoMWhiteEl = document.getElementById("ecoMWhite");
-  const ecoPeriodEl = document.getElementById("ecoPeriod");
+  const ecoStatusEl = document.getElementById("ecoStatus");
   const authStatus = document.getElementById("authStatus");
   const mySnakesEl = document.getElementById("mySnakes");
   const createSnakeBtn = document.getElementById("createSnakeBtn");
@@ -294,7 +295,7 @@
 
   async function loadRuntimeSpeed() {
     try {
-      const res = await fetch(API + "/game/runtime");
+      const res = await fetch(apiPath("/game/runtime"));
       if (!res.ok) throw new Error("runtime endpoint unavailable");
       const data = await res.json();
       if (typeof data.tick_hz === "number" && data.tick_hz > 0) {
@@ -321,7 +322,7 @@
     ecoPiEl.textContent = "—";
     ecoAWorldEl.textContent = "—";
     ecoMWhiteEl.textContent = "—";
-    ecoPeriodEl.textContent = "—";
+    ecoStatusEl.textContent = "Economy unavailable";
   }
 
   function fmtInt(v) {
@@ -331,7 +332,7 @@
 
   async function loadEconomyState() {
     try {
-      const res = await fetch(API + "/economy/state");
+      const res = await fetch(apiPath("/economy/state"));
       if (!res.ok) throw new Error("economy endpoint unavailable");
       const s = await res.json();
       ecoMEl.textContent = fmtInt(Number(s.M));
@@ -339,7 +340,7 @@
       ecoPiEl.textContent = Number.isFinite(Number(s.pi)) ? Number(s.pi).toFixed(4) : "—";
       ecoAWorldEl.textContent = fmtInt(Number(s.A_world));
       ecoMWhiteEl.textContent = fmtInt(Number(s.M_white));
-      ecoPeriodEl.textContent = typeof s.period_key === "string" ? s.period_key : "—";
+      ecoStatusEl.textContent = "Economy: live";
     } catch (_) {
       setEconomyFallback();
     }
@@ -349,7 +350,7 @@
     const headers = opts.headers || {};
     headers["Content-Type"] = "application/json";
     if (token) headers["Authorization"] = "Bearer " + token;
-    const res = await fetch(API + path, { ...opts, headers });
+    const res = await fetch(apiPath(path), { ...opts, headers });
     return res;
   }
 
@@ -357,7 +358,7 @@
     const username = document.getElementById("username").value.trim();
     const password = document.getElementById("password").value.trim();
 
-    const res = await fetch(API + "/auth/login", {
+    const res = await fetch(apiPath("/auth/login"), {
       method: "POST",
       headers: {"Content-Type":"application/json"},
       body: JSON.stringify({username, password})
@@ -481,7 +482,7 @@
 
   // SSE stream (watchers scale well)
   function startStream() {
-    const es = new EventSource(API + "/game/stream?sid=" + encodeURIComponent(streamSessionId));
+    const es = new EventSource(apiPath("/game/stream?sid=" + encodeURIComponent(streamSessionId)));
     es.addEventListener("frame", (ev) => {
       const state = JSON.parse(ev.data);
       pushStateBuffer(state);
@@ -506,7 +507,7 @@
   async function postCamera() {
     try {
       const target = getCameraTarget();
-      await fetch(API + "/game/camera", {
+      await fetch(apiPath("/game/camera"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
