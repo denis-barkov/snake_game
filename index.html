@@ -53,6 +53,16 @@
       font-size: 12px;
       margin-left: 4px;
     }
+    #public-view-hint {
+      display: none;
+      color: #5a3e1b;
+      background: #fff5e5;
+      border: 1px solid #f0d6a7;
+      border-radius: 6px;
+      padding: 4px 8px;
+      font-size: 12px;
+      margin-left: 6px;
+    }
     #debug-overlay {
       display: none;
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -65,9 +75,13 @@
       padding: 8px;
     }
     #game-board-wrap {
-      overflow: auto;
+      overflow: hidden;
       max-width: 100%;
+      height: min(70vh, 560px);
       padding-bottom: 4px;
+      border: 1px solid #d7dfd5;
+      border-radius: 8px;
+      background: #fbfdf9;
     }
 
     #game-board {
@@ -197,6 +211,7 @@
         <button id="zoomOutBtn" type="button">- Zoom Out</button>
         <button id="zoomResetBtn" type="button">Reset</button>
         <small id="view-help">Zoom: +/- buttons. Reset returns to default view.</small>
+        <small id="public-view-hint">Login to control camera &amp; zoom.</small>
       </div>
       <div id="debug-overlay"></div>
       <div id="game-board-wrap">
@@ -259,6 +274,7 @@
   let cells = [];
 
   const board = document.getElementById("game-board");
+  const boardWrap = document.getElementById("game-board-wrap");
   const tickEl = document.getElementById("tick");
   const expectedTickHzEl = document.getElementById("expectedTickHz");
   const actualTickHzEl = document.getElementById("actualTickHz");
@@ -275,6 +291,8 @@
   const zoomOutBtn = document.getElementById("zoomOutBtn");
   const zoomResetBtn = document.getElementById("zoomResetBtn");
   const debugOverlayEl = document.getElementById("debug-overlay");
+  const viewControlsEl = document.getElementById("view-controls");
+  const publicViewHintEl = document.getElementById("public-view-hint");
 
   let lastTickSample = null;
   let expectedTickHz = null;
@@ -282,8 +300,12 @@
   let runtimeSpeedPollTimer = null;
   let economyPollTimer = null;
   let cameraPollTimer = null;
+  let viewPollTimer = null;
   let latestSnapshotBytes = 0;
   let serverAoiChunks = 0;
+  let debugModeLabel = "PUBLIC";
+  let debugPublicChunk = { cx: 0, cy: 0 };
+  let streamHandle = null;
 
   function buildBoard(w, h) {
     gridW = w; gridH = h;
@@ -347,6 +369,7 @@
         cells[i].style.background = s.color;
       }
     }
+    centerViewportOnCamera();
   }
 
   function pushStateBuffer(state) {
@@ -364,8 +387,10 @@
     if (!DEBUG_MODE) return;
     debugOverlayEl.style.display = "block";
     debugOverlayEl.textContent =
+      `mode: ${debugModeLabel}\n` +
       `camera: x=${camera.x.toFixed(2)} y=${camera.y.toFixed(2)}\n` +
       `zoom: ${camera.zoom.toFixed(2)}\n` +
+      `public_chunk: cx=${debugPublicChunk.cx} cy=${debugPublicChunk.cy}\n` +
       `aoi_chunks: ${serverAoiChunks}\n` +
       `last_snapshot_bytes: ${latestSnapshotBytes}`;
   }
@@ -469,8 +494,41 @@
 
     authStatus.textContent = `Logged in as user_id=${myUserId}`;
     createSnakeBtn.disabled = false;
+    applyViewControlAuthState();
+    restartStream();
 
     await loadMySnakes();
+  }
+
+  function applyViewControlAuthState() {
+    const isAuth = !!token;
+    zoomInBtn.disabled = !isAuth;
+    zoomOutBtn.disabled = !isAuth;
+    zoomResetBtn.disabled = !isAuth;
+    publicViewHintEl.style.display = isAuth ? "none" : "inline";
+    viewControlsEl.style.opacity = isAuth ? "1" : "0.82";
+  }
+
+  async function refreshViewState() {
+    try {
+      const query = new URLSearchParams({ sid: streamSessionId });
+      if (token) query.set("token", token);
+      const res = await fetch(apiPath("/game/view?" + query.toString()));
+      if (!res.ok) return;
+      const data = await res.json();
+      if (typeof data.mode === "string") debugModeLabel = data.mode;
+      if (typeof data.camera_x === "number" && typeof data.camera_y === "number") {
+        camera.setCenter(data.camera_x, data.camera_y);
+      }
+      if (typeof data.zoom === "number") camera.setZoom(data.zoom);
+      if (typeof data.aoi_chunks === "number") serverAoiChunks = data.aoi_chunks;
+      if (data.public_camera_chunk && typeof data.public_camera_chunk.cx === "number" && typeof data.public_camera_chunk.cy === "number") {
+        debugPublicChunk = { cx: data.public_camera_chunk.cx, cy: data.public_camera_chunk.cy };
+      }
+      updateDebugOverlay();
+    } catch (_) {
+      // Best effort debug/state endpoint.
+    }
   }
 
   async function loadMySnakes() {
@@ -577,7 +635,10 @@
 
   // SSE stream (watchers scale well)
   function startStream() {
-    const es = new EventSource(apiPath("/game/stream?sid=" + encodeURIComponent(streamSessionId)));
+    const params = new URLSearchParams({ sid: streamSessionId });
+    if (token) params.set("token", token);
+    const es = new EventSource(apiPath("/game/stream?" + params.toString()));
+    streamHandle = es;
     es.addEventListener("frame", (ev) => {
       latestSnapshotBytes = new TextEncoder().encode(ev.data).length;
       const state = JSON.parse(ev.data);
@@ -593,6 +654,14 @@
     };
   }
 
+  function restartStream() {
+    if (streamHandle) {
+      streamHandle.close();
+      streamHandle = null;
+    }
+    startStream();
+  }
+
   function getCameraTarget() {
     const center = { x: Math.floor(gridW / 2), y: Math.floor(gridH / 2) };
     if (!latestServerState || !Array.isArray(latestServerState.snakes)) return center;
@@ -605,12 +674,12 @@
   }
 
   async function postCamera() {
+    if (!token) return;
     try {
       const target = getCameraTarget();
       camera.setCenter(target.x, target.y);
-      const res = await fetch(apiPath("/game/camera"), {
+      const res = await api("/game/camera", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           sid: streamSessionId,
           x: Math.round(camera.x),
@@ -632,12 +701,14 @@
   function zoomIn() {
     camera.setZoom(camera.zoom * 1.1);
     applyZoomToBoard();
+    centerViewportOnCamera();
     postCamera();
   }
 
   function zoomOut() {
     camera.setZoom(camera.zoom / 1.1);
     applyZoomToBoard();
+    centerViewportOnCamera();
     postCamera();
   }
 
@@ -646,7 +717,16 @@
     const target = getCameraTarget();
     camera.setCenter(target.x, target.y);
     applyZoomToBoard();
+    centerViewportOnCamera();
     postCamera();
+  }
+
+  function centerViewportOnCamera() {
+    const side = Math.max(4, Math.round(BASE_CELL_SIZE * camera.zoom));
+    const px = camera.x * side + side / 2;
+    const py = camera.y * side + side / 2;
+    boardWrap.scrollLeft = Math.max(0, px - boardWrap.clientWidth / 2);
+    boardWrap.scrollTop = Math.max(0, py - boardWrap.clientHeight / 2);
   }
 
   function onBoardWheel(ev) {
@@ -668,13 +748,18 @@
   zoomResetBtn.addEventListener("click", resetView);
   board.addEventListener("wheel", onBoardWheel, { passive: false });
 
+  applyViewControlAuthState();
   startStream();
   loadRuntimeSpeed();
   loadEconomyState();
+  refreshViewState();
   runtimeSpeedPollTimer = setInterval(loadRuntimeSpeed, 10000);
   economyPollTimer = setInterval(loadEconomyState, 2000);
-  cameraPollTimer = setInterval(postCamera, 400);
-  postCamera();
+  viewPollTimer = setInterval(refreshViewState, 1000);
+  cameraPollTimer = setInterval(() => {
+    if (token) postCamera();
+  }, 400);
+  if (token) postCamera();
   updateDebugOverlay();
 </script>
 </body>

@@ -108,6 +108,13 @@ module "compute" {
     TABLE_ECONOMY_PARAMS       = "${var.project}-${var.environment}-economy_params"
     DYNAMO_TABLE_ECONOMY_PERIOD = "${var.project}-${var.environment}-economy_period"
     TABLE_ECONOMY_PERIOD       = "${var.project}-${var.environment}-economy_period"
+    PUBLIC_VIEW_ENABLED        = "true"
+    PUBLIC_SPECTATOR_HZ        = "10"
+    AUTH_SPECTATOR_HZ          = "10"
+    PUBLIC_CAMERA_SWITCH_TICKS = "600"
+    PUBLIC_AOI_RADIUS          = "1"
+    AUTH_AOI_RADIUS            = "2"
+    CAMERA_MSG_MAX_HZ          = "5"
     ADMIN_TOKEN                = "change-me"
   })
   domain_name       = var.domain_name

@@ -60,6 +60,14 @@ RuntimeConfig RuntimeConfig::FromEnv() {
   cfg.aoi_radius = clamp_int(getenv_int("AOI_RADIUS", cfg.aoi_radius), 0, 16);
   cfg.single_chunk_mode = getenv_bool("SINGLE_CHUNK_MODE", cfg.single_chunk_mode);
   cfg.aoi_enabled = getenv_bool("AOI_ENABLED", cfg.aoi_enabled);
+  cfg.public_view_enabled = getenv_bool("PUBLIC_VIEW_ENABLED", cfg.public_view_enabled);
+  cfg.public_spectator_hz = clamp_int(getenv_int("PUBLIC_SPECTATOR_HZ", cfg.public_spectator_hz), 1, 60);
+  cfg.auth_spectator_hz = clamp_int(getenv_int("AUTH_SPECTATOR_HZ", cfg.auth_spectator_hz), 1, 60);
+  cfg.public_camera_switch_ticks =
+      clamp_int(getenv_int("PUBLIC_CAMERA_SWITCH_TICKS", cfg.public_camera_switch_ticks), 30, 1000000);
+  cfg.public_aoi_radius = clamp_int(getenv_int("PUBLIC_AOI_RADIUS", cfg.public_aoi_radius), 0, 16);
+  cfg.auth_aoi_radius = clamp_int(getenv_int("AUTH_AOI_RADIUS", cfg.auth_aoi_radius), 0, 16);
+  cfg.camera_msg_max_hz = clamp_int(getenv_int("CAMERA_MSG_MAX_HZ", cfg.camera_msg_max_hz), 1, 120);
   if (!has_env("DEBUG_TPS")) {
     // Backward compatibility for older deployments that used LOG_HZ.
     cfg.debug_tps = getenv_bool("LOG_HZ", cfg.debug_tps);

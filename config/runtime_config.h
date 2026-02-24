@@ -12,6 +12,13 @@ struct RuntimeConfig {
   int aoi_radius = 1;
   bool single_chunk_mode = true;
   bool aoi_enabled = false;
+  bool public_view_enabled = true;
+  int public_spectator_hz = 10;
+  int auth_spectator_hz = 10;
+  int public_camera_switch_ticks = 600;
+  int public_aoi_radius = 1;
+  int auth_aoi_radius = 2;
+  int camera_msg_max_hz = 5;
 
   static RuntimeConfig FromEnv();
   int TickIntervalMs() const;

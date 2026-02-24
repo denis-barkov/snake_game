@@ -30,6 +30,13 @@ Simulation internals are structured in `api/world`:
 - `AOI_RADIUS` (default `1`)
 - `SINGLE_CHUNK_MODE` (`true`/`false`, default `true`)
 - `AOI_ENABLED` (`true`/`false`, default `false`)
+- `PUBLIC_VIEW_ENABLED` (`true`/`false`, default `true`)
+- `PUBLIC_SPECTATOR_HZ` (default `10`)
+- `AUTH_SPECTATOR_HZ` (default `10`)
+- `PUBLIC_CAMERA_SWITCH_TICKS` (default `600`)
+- `PUBLIC_AOI_RADIUS` (default `1`)
+- `AUTH_AOI_RADIUS` (default `2`)
+- `CAMERA_MSG_MAX_HZ` (default `5`)
 - `ECONOMY_CACHE_MS` (default `2000`, min `500`, max `10000`) for `/economy/state` read cache
 
 Default run values in Make:
@@ -39,6 +46,13 @@ Default run values in Make:
 - `AOI_RADIUS=1`
 - `SINGLE_CHUNK_MODE=true`
 - `AOI_ENABLED=false`
+- `PUBLIC_VIEW_ENABLED=true`
+- `PUBLIC_SPECTATOR_HZ=10`
+- `AUTH_SPECTATOR_HZ=10`
+- `PUBLIC_CAMERA_SWITCH_TICKS=600`
+- `PUBLIC_AOI_RADIUS=1`
+- `AUTH_AOI_RADIUS=2`
+- `CAMERA_MSG_MAX_HZ=5`
 
 Notes:
 - With default rollout flags (`SINGLE_CHUNK_MODE=true`, `AOI_ENABLED=false`) behavior stays equivalent to previous full-world snapshots.
@@ -207,7 +221,17 @@ Expected:
 - Zoom bounds: `0.25 .. 4.0`
 - Optional debug overlay:
   - add `?debug=1` to URL
-  - shows camera center, zoom, AOI chunk count, and last snapshot payload size
+  - shows mode (`PUBLIC`/`AUTH`), camera center, zoom, public camera chunk, AOI chunk count, and last snapshot payload size
+
+### Auth-gated camera/zoom (Step 9.1)
+
+- Camera/zoom updates are accepted only for authenticated sessions.
+- Unauthenticated visitors receive a server-driven public activity view.
+- Public view switches focus periodically using in-memory chunk activity scores (no DB writes).
+- `POST /game/camera` is auth-gated and rate-limited by `CAMERA_MSG_MAX_HZ`.
+- `GET /game/view` provides debug-safe mode/camera/AOI info for overlays.
+- Watch stream broadcast rate is restored to `SPECTATOR_HZ` (default `10 Hz`) for everyone.
+- Snapshot streaming is full-world again by default so zoom/camera never changes world visibility.
 
 ## Modes
 

@@ -19,6 +19,7 @@
 #include <string>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -145,9 +146,19 @@ struct ClientSession {
   int camera_y = DEFAULT_H / 2;
   double camera_zoom = 1.0;
   int subscribed_chunks_count = 1;
+  optional<int> auth_user_id;
   optional<int> watched_snake_id;
   bool is_watcher = true;
+  uint64_t last_camera_update_ms = 0;
   uint64_t updated_at_ms = 0;
+};
+
+struct PublicViewState {
+  int camera_x = DEFAULT_W / 2;
+  int camera_y = DEFAULT_H / 2;
+  int chunk_cx = 0;
+  int chunk_cy = 0;
+  uint64_t last_switch_tick = 0;
 };
 
 class GameService {
@@ -495,6 +506,13 @@ int main(int argc, char** argv) {
        << ", AOI_RADIUS=" << runtime_cfg.aoi_radius
        << ", SINGLE_CHUNK_MODE=" << (runtime_cfg.single_chunk_mode ? "true" : "false")
        << ", AOI_ENABLED=" << (runtime_cfg.aoi_enabled ? "true" : "false")
+       << ", PUBLIC_VIEW_ENABLED=" << (runtime_cfg.public_view_enabled ? "true" : "false")
+       << ", PUBLIC_SPECTATOR_HZ=" << runtime_cfg.public_spectator_hz
+       << ", AUTH_SPECTATOR_HZ=" << runtime_cfg.auth_spectator_hz
+       << ", PUBLIC_CAMERA_SWITCH_TICKS=" << runtime_cfg.public_camera_switch_ticks
+       << ", PUBLIC_AOI_RADIUS=" << runtime_cfg.public_aoi_radius
+       << ", AUTH_AOI_RADIUS=" << runtime_cfg.auth_aoi_radius
+       << ", CAMERA_MSG_MAX_HZ=" << runtime_cfg.camera_msg_max_hz
        << "\n";
 
   unique_ptr<storage::IStorage> storage;
@@ -555,6 +573,37 @@ int main(int argc, char** argv) {
   atomic<bool> running{true};
   mutex snapshot_mu;
   uint64_t snapshot_seq = 1;
+  mutex sessions_mu;
+  unordered_map<string, ClientSession> sessions;
+  mutex public_view_mu;
+  PublicViewState public_view;
+  unordered_map<long long, int> public_activity_scores;
+  auto pack_chunk_key = [](int cx, int cy) -> long long {
+    return (static_cast<long long>(cx) << 32) ^ static_cast<unsigned long long>(static_cast<uint32_t>(cy));
+  };
+  auto unpack_chunk_key = [](long long key) -> pair<int, int> {
+    int cx = static_cast<int>(key >> 32);
+    int cy = static_cast<int>(key & 0xffffffff);
+    return {cx, cy};
+  };
+  auto coord_to_chunk = [&](int x, int y) -> pair<int, int> {
+    if (runtime_cfg.single_chunk_mode) return {0, 0};
+    const int cs = max(1, runtime_cfg.chunk_size);
+    int cx = x / cs;
+    int cy = y / cs;
+    if (x < 0 && x % cs) --cx;
+    if (y < 0 && y % cs) --cy;
+    return {cx, cy};
+  };
+  auto chunk_center_to_world = [&](int cx, int cy) -> pair<int, int> {
+    if (runtime_cfg.single_chunk_mode) return {grid_w / 2, grid_h / 2};
+    const int cs = max(1, runtime_cfg.chunk_size);
+    int x = cx * cs + cs / 2;
+    int y = cy * cs + cs / 2;
+    x = max(0, min(grid_w - 1, x));
+    y = max(0, min(grid_h - 1, y));
+    return {x, y};
+  };
 
   signal(SIGUSR1, on_reload_signal);
   signal(SIGHUP, on_reload_signal);
@@ -564,7 +613,8 @@ int main(int argc, char** argv) {
     using ms = chrono::milliseconds;
 
     const ms tick_dt(runtime_cfg.TickIntervalMs());
-    const ms spectator_dt(runtime_cfg.SpectatorIntervalMs());
+    const int max_spectator_hz = max(runtime_cfg.spectator_hz, max(runtime_cfg.auth_spectator_hz, runtime_cfg.public_spectator_hz));
+    const ms spectator_dt(max(1, static_cast<int>(std::lround(1000.0 / static_cast<double>(max_spectator_hz)))));
     auto next_tick = clock::now() + tick_dt;
     auto next_broadcast = clock::now() + spectator_dt;
     const int max_catch_up_ticks = 3;
@@ -592,6 +642,37 @@ int main(int argc, char** argv) {
         game.flush_persistence_delta();
         ++ticks_since_log;
         ++catch_up_ticks;
+        if (runtime_cfg.public_view_enabled) {
+          const auto snap = game.snapshot();
+          {
+            lock_guard<mutex> lock(public_view_mu);
+            for (const auto& s : snap.snakes) {
+              if (s.body.empty()) continue;
+              const auto [cx, cy] = coord_to_chunk(s.body.front().x, s.body.front().y);
+              public_activity_scores[pack_chunk_key(cx, cy)] += 1;
+            }
+            if (runtime_cfg.public_camera_switch_ticks > 0 &&
+                (snap.tick - public_view.last_switch_tick) >= static_cast<uint64_t>(runtime_cfg.public_camera_switch_ticks) &&
+                !public_activity_scores.empty()) {
+              long long best_key = public_activity_scores.begin()->first;
+              int best_score = public_activity_scores.begin()->second;
+              for (const auto& kv : public_activity_scores) {
+                if (kv.second > best_score) {
+                  best_score = kv.second;
+                  best_key = kv.first;
+                }
+              }
+              const auto [best_cx, best_cy] = unpack_chunk_key(best_key);
+              const auto [px, py] = chunk_center_to_world(best_cx, best_cy);
+              public_view.chunk_cx = best_cx;
+              public_view.chunk_cy = best_cy;
+              public_view.camera_x = px;
+              public_view.camera_y = py;
+              public_view.last_switch_tick = snap.tick;
+              public_activity_scores.clear();
+            }
+          }
+        }
         next_tick += tick_dt;
         now = clock::now();
       }
@@ -629,12 +710,10 @@ int main(int argc, char** argv) {
 
   AuthState auth;
   httplib::Server srv;
-  mutex sessions_mu;
-  unordered_map<string, ClientSession> sessions;
   auto compute_subscribed_chunks_count = [&](const ClientSession&) -> int {
     if (!runtime_cfg.aoi_enabled) return -1;  // all-entities mode
     if (runtime_cfg.single_chunk_mode) return 1;
-    const int span = runtime_cfg.aoi_radius * 2 + 1;
+    const int span = runtime_cfg.auth_aoi_radius * 2 + 1;
     return span * span;
   };
 
@@ -734,6 +813,12 @@ int main(int argc, char** argv) {
 
   srv.Post("/game/camera", [&](const httplib::Request& req, httplib::Response& res) {
     add_cors(res);
+    auto uid = require_auth_user(auth, req);
+    if (!uid) {
+      res.status = 401;
+      res.set_content("{\"error\":\"unauthorized_camera\"}", "application/json");
+      return;
+    }
     auto sid = get_json_string_field(req.body, "sid");
     auto x = get_json_int_field(req.body, "x");
     auto y = get_json_int_field(req.body, "y");
@@ -744,13 +829,21 @@ int main(int argc, char** argv) {
     }
 
     ClientSession session = get_or_create_session(*sid);
+    const uint64_t now_millis = now_ms();
+    const uint64_t min_gap = static_cast<uint64_t>(max(1, static_cast<int>(std::lround(1000.0 / static_cast<double>(runtime_cfg.camera_msg_max_hz)))));
+    if (session.last_camera_update_ms != 0 && now_millis - session.last_camera_update_ms < min_gap) {
+      res.set_content("{\"status\":\"THROTTLED\"}", "application/json");
+      return;
+    }
     session.camera_x = max(0, min(grid_w - 1, *x));
     session.camera_y = max(0, min(grid_h - 1, *y));
     auto zoom = get_json_double_field(req.body, "zoom");
     if (zoom.has_value()) {
       session.camera_zoom = max(0.25, min(4.0, *zoom));
     }
+    session.auth_user_id = *uid;
     session.subscribed_chunks_count = compute_subscribed_chunks_count(session);
+    session.last_camera_update_ms = now_millis;
     session.updated_at_ms = now_ms();
 
     auto watch_snake = get_json_int_field(req.body, "watch_snake_id");
@@ -771,6 +864,7 @@ int main(int argc, char** argv) {
         << "\"camera_y\":" << session.camera_y << ","
         << "\"camera_zoom\":" << json_number(session.camera_zoom) << ","
         << "\"aoi_chunks\":" << session.subscribed_chunks_count << ","
+        << "\"mode\":\"AUTH\","
         << "\"aoi_enabled\":" << (runtime_cfg.aoi_enabled ? "true" : "false")
         << "}";
     res.set_content(out.str(), "application/json");
@@ -822,6 +916,57 @@ int main(int argc, char** argv) {
     res.set_content(o.str(), "application/json");
   });
 
+  srv.Get("/game/view", [&](const httplib::Request& req, httplib::Response& res) {
+    add_cors(res);
+    const string sid = (req.has_param("sid") && !req.get_param_value("sid").empty())
+                           ? req.get_param_value("sid")
+                           : rand_token(16);
+    auto session = get_or_create_session(sid);
+
+    optional<int> uid;
+    if (req.has_param("token")) {
+      const auto token = req.get_param_value("token");
+      if (!token.empty()) uid = auth.token_to_user(token);
+    }
+    if (!uid) uid = require_auth_user(auth, req);
+
+    if (uid) {
+      session.auth_user_id = *uid;
+      {
+        lock_guard<mutex> lock(sessions_mu);
+        sessions[sid] = session;
+      }
+      ostringstream o;
+      o << "{"
+        << "\"mode\":\"AUTH\","
+        << "\"camera_x\":" << session.camera_x << ","
+        << "\"camera_y\":" << session.camera_y << ","
+        << "\"zoom\":" << json_number(session.camera_zoom) << ","
+        << "\"aoi_radius\":" << runtime_cfg.auth_aoi_radius << ","
+        << "\"aoi_chunks\":" << session.subscribed_chunks_count
+        << "}";
+      res.set_content(o.str(), "application/json");
+      return;
+    }
+
+    PublicViewState pv;
+    {
+      lock_guard<mutex> lock(public_view_mu);
+      pv = public_view;
+    }
+    ostringstream o;
+    o << "{"
+      << "\"mode\":\"PUBLIC\","
+      << "\"camera_x\":" << pv.camera_x << ","
+      << "\"camera_y\":" << pv.camera_y << ","
+      << "\"zoom\":1.0,"
+      << "\"aoi_radius\":" << runtime_cfg.public_aoi_radius << ","
+      << "\"aoi_chunks\":" << (runtime_cfg.single_chunk_mode ? 1 : (runtime_cfg.public_aoi_radius * 2 + 1) * (runtime_cfg.public_aoi_radius * 2 + 1)) << ","
+      << "\"public_camera_chunk\":{\"cx\":" << pv.chunk_cx << ",\"cy\":" << pv.chunk_cy << "}"
+      << "}";
+    res.set_content(o.str(), "application/json");
+  });
+
   srv.Get("/game/stream", [&](const httplib::Request& req, httplib::Response& res) {
     add_cors(res);
     res.set_header("Cache-Control", "no-cache");
@@ -831,7 +976,19 @@ int main(int argc, char** argv) {
     const string sid = (req.has_param("sid") && !req.get_param_value("sid").empty())
                            ? req.get_param_value("sid")
                            : rand_token(16);
-    get_or_create_session(sid);
+    ClientSession initial_session = get_or_create_session(sid);
+    optional<int> stream_uid;
+    if (req.has_param("token")) {
+      const auto token = req.get_param_value("token");
+      if (!token.empty()) stream_uid = auth.token_to_user(token);
+    }
+    if (!stream_uid) stream_uid = require_auth_user(auth, req);
+    if (stream_uid) {
+      initial_session.auth_user_id = *stream_uid;
+      initial_session.updated_at_ms = now_ms();
+      lock_guard<mutex> lock(sessions_mu);
+      sessions[sid] = initial_session;
+    }
 
     res.set_chunked_content_provider(
         "text/event-stream",
@@ -839,6 +996,7 @@ int main(int argc, char** argv) {
           uint64_t last_seq = 0;
           auto last_heartbeat = chrono::steady_clock::now();
           const auto heartbeat_every = chrono::seconds(10);
+          auto next_send_at = chrono::steady_clock::now();
           while (true) {
             string payload;
             uint64_t current_seq = 0;
@@ -847,13 +1005,24 @@ int main(int argc, char** argv) {
               current_seq = snapshot_seq;
             }
             if (current_seq != last_seq) {
-              last_seq = current_seq;
               ClientSession session = get_or_create_session(sid);
-              const auto filtered = game.snapshot_for_camera(
-                  session.camera_x, session.camera_y, runtime_cfg.aoi_enabled, runtime_cfg.aoi_radius);
-              const string encoded = state_to_json(filtered);
-              payload = "event: frame\n";
-              payload += "data: " + encoded + "\n\n";
+              const int rate_hz = runtime_cfg.spectator_hz;
+              const auto send_dt = chrono::milliseconds(
+                  max(1, static_cast<int>(std::lround(1000.0 / static_cast<double>(rate_hz)))));
+              const auto now = chrono::steady_clock::now();
+              if (now >= next_send_at) {
+                last_seq = current_seq;
+                next_send_at = now + send_dt;
+                session.subscribed_chunks_count = -1;
+                {
+                  lock_guard<mutex> lock(sessions_mu);
+                  sessions[sid] = session;
+                }
+
+                const string encoded = state_to_json(game.snapshot());
+                payload = "event: frame\n";
+                payload += "data: " + encoded + "\n\n";
+              }
             }
             if (payload.empty()) {
               const auto now = chrono::steady_clock::now();
