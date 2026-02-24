@@ -114,7 +114,7 @@ module "compute" {
     PUBLIC_CAMERA_SWITCH_TICKS = "600"
     PUBLIC_AOI_RADIUS          = "1"
     AUTH_AOI_RADIUS            = "2"
-    CAMERA_MSG_MAX_HZ          = "5"
+    CAMERA_MSG_MAX_HZ          = "10"
     ADMIN_TOKEN                = "change-me"
   })
   domain_name       = var.domain_name

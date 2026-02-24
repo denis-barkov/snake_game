@@ -180,10 +180,12 @@ class GameService {
   }
 
   world::WorldSnapshot snapshot() {
+    ensure_loaded_from_storage_if_empty();
     return world_.Snapshot();
   }
 
   world::WorldSnapshot snapshot_for_camera(int camera_x, int camera_y, bool aoi_enabled, int aoi_radius) {
+    ensure_loaded_from_storage_if_empty();
     return world_.SnapshotForCamera(camera_x, camera_y, aoi_enabled, aoi_radius);
   }
 
@@ -196,6 +198,7 @@ class GameService {
   }
 
   vector<world::Snake> list_user_snakes(int user_id) {
+    ensure_loaded_from_storage_if_empty();
     return world_.ListUserSnakes(user_id);
   }
 
@@ -214,8 +217,22 @@ class GameService {
   }
 
  private:
+  void ensure_loaded_from_storage_if_empty() {
+    const auto snap = world_.Snapshot();
+    if (!snap.snakes.empty()) return;
+
+    const auto now = chrono::steady_clock::now();
+    if (now - last_empty_reload_attempt_ < chrono::seconds(2)) return;
+    last_empty_reload_attempt_ = now;
+
+    // Smartseed writes directly to DynamoDB; this keeps runtime world in sync
+    // without requiring a process restart.
+    load_from_storage_or_seed_positions();
+  }
+
   storage::IStorage& storage_;
   world::World world_;
+  chrono::steady_clock::time_point last_empty_reload_attempt_{};
 };
 
 class EconomyService {

@@ -18,7 +18,7 @@ struct RuntimeConfig {
   int public_camera_switch_ticks = 600;
   int public_aoi_radius = 1;
   int auth_aoi_radius = 2;
-  int camera_msg_max_hz = 5;
+  int camera_msg_max_hz = 10;
 
   static RuntimeConfig FromEnv();
   int TickIntervalMs() const;

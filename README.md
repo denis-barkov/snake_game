@@ -36,7 +36,7 @@ Simulation internals are structured in `api/world`:
 - `PUBLIC_CAMERA_SWITCH_TICKS` (default `600`)
 - `PUBLIC_AOI_RADIUS` (default `1`)
 - `AUTH_AOI_RADIUS` (default `2`)
-- `CAMERA_MSG_MAX_HZ` (default `5`)
+- `CAMERA_MSG_MAX_HZ` (default `10`)
 - `ECONOMY_CACHE_MS` (default `2000`, min `500`, max `10000`) for `/economy/state` read cache
 
 Default run values in Make:
@@ -52,7 +52,7 @@ Default run values in Make:
 - `PUBLIC_CAMERA_SWITCH_TICKS=600`
 - `PUBLIC_AOI_RADIUS=1`
 - `AUTH_AOI_RADIUS=2`
-- `CAMERA_MSG_MAX_HZ=5`
+- `CAMERA_MSG_MAX_HZ=10`
 
 Notes:
 - With default rollout flags (`SINGLE_CHUNK_MODE=true`, `AOI_ENABLED=false`) behavior stays equivalent to previous full-world snapshots.
@@ -186,7 +186,31 @@ snakecli snakes list --onfield --limit 25
 # app-level admin actions
 snakecli --token "$ADMIN_TOKEN" app seed
 snakecli --token "$ADMIN_TOKEN" app reset-seed-reload
+
+# smart progressed-world seed (Step 9.2)
+snakecli --token "$ADMIN_TOKEN" smartseed --worldsize 200000 --seed 123 --wipe --force
 ```
+
+### Smartseed (Step 9.2)
+
+Command:
+```bash
+snakecli --token "$ADMIN_TOKEN" smartseed --worldsize <A_world> [--usersnum N] [--snakesnum M] [--seed S] [--wipe] [--force]
+```
+
+Rules:
+- `--worldsize` is required (area in tiles).
+- `ADMIN_TOKEN` is required (write command).
+- `--wipe` deletes game-content tables (`users`, `snakes`, `snake_events`, `world_chunks`, `economy_params`, `economy_period`).
+- `--wipe` requires confirmation unless `--force` is present.
+- Existing `app seed` command is unchanged.
+- Smartseed users are login-ready immediately (`seeduser...` / `passN` shown in output).
+- Smartseed now requests a live server reload after write so new snakes/world appear without manual restart.
+
+Output summary includes:
+- target world/economy metrics (`M_target`, `ΣM_i`, `M_G`, `M`, `K`, `A_world`, `M_white`, `P`, `pi`)
+- created user/snake counts + snake length min/avg/max
+- bounded event count
 
 ### Prod parity smoke checks
 

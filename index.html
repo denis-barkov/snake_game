@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1.0" />
   <title>Online Snake (SSE)</title>
   <style>
+    * { box-sizing: border-box; }
     body { font-family: Arial, sans-serif; margin: 16px; background: #f8fbf7; color: #1a1a1a; }
     .hero {
       display: flex;
@@ -26,18 +27,21 @@
     }
     .hero h1 { margin: 0 0 6px 0; font-size: 26px; }
     .hero p { margin: 0; color: #2f4730; }
-    .layout { display: flex; gap: 16px; align-items: flex-start; }
-    #left { width: 260px; flex: 0 0 260px; }
-    #game { flex: 1; }
+    .layout { display: flex; gap: 16px; align-items: flex-start; width: 100%; min-width: 0; }
+    #left { width: 260px; max-width: 260px; flex: 0 0 260px; }
+    #game { flex: 1 1 auto; width: 100%; min-width: 0; }
     #game-main {
       display: flex;
       flex-direction: column;
       gap: 10px;
+      width: 100%;
+      min-width: 0;
     }
     #view-controls {
       display: flex;
       align-items: center;
       justify-content: flex-end;
+      flex-wrap: wrap;
       gap: 8px;
       padding: 6px 8px;
       border: 1px solid #d7dfd5;
@@ -52,6 +56,7 @@
       color: #4b5b49;
       font-size: 12px;
       margin-left: 4px;
+      white-space: normal;
     }
     #public-view-hint {
       display: none;
@@ -75,8 +80,10 @@
       padding: 8px;
     }
     #game-board-wrap {
-      overflow: hidden;
+      overflow: auto;
+      width: 100%;
       max-width: 100%;
+      min-width: 0;
       height: min(70vh, 560px);
       padding-bottom: 4px;
       border: 1px solid #d7dfd5;
@@ -135,6 +142,14 @@
       justify-content: space-between;
     }
     .snake-item.active { outline: 2px solid #333; }
+    .snake-item label {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .snake-item input.watch-toggle {
+      max-width: 100%;
+    }
     .badge { width: 16px; height: 16px; border-radius: 4px; display: inline-block; margin-right: 8px; }
     small { color: #666; }
 
@@ -144,6 +159,7 @@
       }
       #left {
         width: 100%;
+        max-width: none;
         flex: 1 1 auto;
       }
       #game {
@@ -259,10 +275,18 @@
     }
   }
 
-  let token = null;
-  let myUserId = null;
-  let selectedSnakeId = null;
-  let watchedSnakeId = null;
+  const TOKEN_STORAGE_KEY = "snake_auth_token";
+  const USER_ID_STORAGE_KEY = "snake_auth_user_id";
+  const SELECTED_SNAKE_STORAGE_KEY = "snake_selected_snake_id";
+  const WATCHED_SNAKE_STORAGE_KEY = "snake_watched_snake_id";
+
+  let token = localStorage.getItem(TOKEN_STORAGE_KEY);
+  let myUserId = Number(localStorage.getItem(USER_ID_STORAGE_KEY));
+  if (!Number.isFinite(myUserId) || myUserId <= 0) myUserId = null;
+  let selectedSnakeId = Number(localStorage.getItem(SELECTED_SNAKE_STORAGE_KEY));
+  if (!Number.isFinite(selectedSnakeId) || selectedSnakeId <= 0) selectedSnakeId = null;
+  let watchedSnakeId = Number(localStorage.getItem(WATCHED_SNAKE_STORAGE_KEY));
+  if (!Number.isFinite(watchedSnakeId) || watchedSnakeId <= 0) watchedSnakeId = null;
   let latestServerState = null;
   const stateBuffer = [];
   const streamSessionId = (window.crypto && crypto.randomUUID)
@@ -306,6 +330,7 @@
   let debugModeLabel = "PUBLIC";
   let debugPublicChunk = { cx: 0, cy: 0 };
   let streamHandle = null;
+  let suppressScrollSync = false;
 
   function buildBoard(w, h) {
     gridW = w; gridH = h;
@@ -369,7 +394,14 @@
         cells[i].style.background = s.color;
       }
     }
-    centerViewportOnCamera();
+    // Continuous follow is only active when watch checkbox is enabled.
+    if (token && watchedSnakeId) {
+      const followTarget = findSnakeHeadById(watchedSnakeId);
+      if (followTarget) {
+        camera.setCenter(followTarget.x, followTarget.y);
+        centerViewportOnCamera();
+      }
+    }
   }
 
   function pushStateBuffer(state) {
@@ -471,6 +503,19 @@
     headers["Content-Type"] = "application/json";
     if (token) headers["Authorization"] = "Bearer " + token;
     const res = await fetch(apiPath(path), { ...opts, headers });
+    if (res.status === 401 && token) {
+      token = null;
+      myUserId = null;
+      selectedSnakeId = null;
+      watchedSnakeId = null;
+      localStorage.removeItem(TOKEN_STORAGE_KEY);
+      localStorage.removeItem(USER_ID_STORAGE_KEY);
+      localStorage.removeItem(SELECTED_SNAKE_STORAGE_KEY);
+      localStorage.removeItem(WATCHED_SNAKE_STORAGE_KEY);
+      authStatus.textContent = "Session expired. Please log in again.";
+      createSnakeBtn.disabled = true;
+      applyViewControlAuthState();
+    }
     return res;
   }
 
@@ -491,6 +536,8 @@
     const data = await res.json();
     token = data.token;
     myUserId = data.user_id;
+    localStorage.setItem(TOKEN_STORAGE_KEY, token);
+    localStorage.setItem(USER_ID_STORAGE_KEY, String(myUserId));
 
     authStatus.textContent = `Logged in as user_id=${myUserId}`;
     createSnakeBtn.disabled = false;
@@ -517,10 +564,12 @@
       if (!res.ok) return;
       const data = await res.json();
       if (typeof data.mode === "string") debugModeLabel = data.mode;
-      if (typeof data.camera_x === "number" && typeof data.camera_y === "number") {
+      // In AUTH mode, local camera is source of truth unless follow is active.
+      const shouldApplyServerCamera = (data.mode !== "AUTH") || !!watchedSnakeId;
+      if (shouldApplyServerCamera && typeof data.camera_x === "number" && typeof data.camera_y === "number") {
         camera.setCenter(data.camera_x, data.camera_y);
       }
-      if (typeof data.zoom === "number") camera.setZoom(data.zoom);
+      if (shouldApplyServerCamera && typeof data.zoom === "number") camera.setZoom(data.zoom);
       if (typeof data.aoi_chunks === "number") serverAoiChunks = data.aoi_chunks;
       if (data.public_camera_chunk && typeof data.public_camera_chunk.cx === "number" && typeof data.public_camera_chunk.cy === "number") {
         debugPublicChunk = { cx: data.public_camera_chunk.cx, cy: data.public_camera_chunk.cy };
@@ -545,7 +594,14 @@
       div.className = "snake-item" + (isSelected ? " active" : "");
       div.onclick = () => {
         selectedSnakeId = s.id;
-        if (watchedSnakeId && watchedSnakeId !== selectedSnakeId) watchedSnakeId = null;
+        localStorage.setItem(SELECTED_SNAKE_STORAGE_KEY, String(selectedSnakeId));
+        // Selection performs a one-time jump only; it must not start follow.
+        const jumpTarget = findSnakeHeadById(selectedSnakeId);
+        if (jumpTarget) {
+          camera.setCenter(jumpTarget.x, jumpTarget.y);
+          centerViewportOnCamera();
+          postCamera({ autoFollow: false });
+        }
         loadMySnakes();
       };
       div.innerHTML = `
@@ -573,9 +629,17 @@
         if (!Number.isFinite(sid)) return;
         if (sid !== selectedSnakeId) return;
         watchedSnakeId = ev.target.checked ? sid : null;
-        await postCamera();
+        if (watchedSnakeId) {
+          localStorage.setItem(WATCHED_SNAKE_STORAGE_KEY, String(watchedSnakeId));
+        } else {
+          localStorage.removeItem(WATCHED_SNAKE_STORAGE_KEY);
+        }
+        await postCamera({ autoFollow: true });
         loadMySnakes();
       });
+    });
+    mySnakesEl.querySelectorAll("label").forEach((el) => {
+      el.addEventListener("click", (ev) => ev.stopPropagation());
     });
   }
 
@@ -662,22 +726,27 @@
     startStream();
   }
 
-  function getCameraTarget() {
-    const center = { x: Math.floor(gridW / 2), y: Math.floor(gridH / 2) };
-    if (!latestServerState || !Array.isArray(latestServerState.snakes)) return center;
-    // Players can follow selected snake; watchers can follow explicitly watched snake.
-    const targetSnakeId = (token && selectedSnakeId) ? selectedSnakeId : watchedSnakeId;
-    if (!targetSnakeId) return center;
-    const target = latestServerState.snakes.find((s) => s.id === targetSnakeId);
-    if (!target || !Array.isArray(target.body) || target.body.length === 0) return center;
+  function findSnakeHeadById(snakeId) {
+    if (!latestServerState || !Array.isArray(latestServerState.snakes)) return null;
+    if (!snakeId) return null;
+    const target = latestServerState.snakes.find((s) => s.id === snakeId);
+    if (!target || !Array.isArray(target.body) || target.body.length === 0) return null;
     return { x: target.body[0].x, y: target.body[0].y };
   }
 
-  async function postCamera() {
+  function getCameraTargetForFollow() {
+    const center = { x: Math.floor(gridW / 2), y: Math.floor(gridH / 2) };
+    if (!token || !watchedSnakeId) return center;
+    return findSnakeHeadById(watchedSnakeId) || center;
+  }
+
+  async function postCamera({ autoFollow = true } = {}) {
     if (!token) return;
     try {
-      const target = getCameraTarget();
-      camera.setCenter(target.x, target.y);
+      if (autoFollow && watchedSnakeId) {
+        const target = getCameraTargetForFollow();
+        camera.setCenter(target.x, target.y);
+      }
       const res = await api("/game/camera", {
         method: "POST",
         body: JSON.stringify({
@@ -714,8 +783,10 @@
 
   function resetView() {
     camera.resetToDefault(gridW, gridH);
-    const target = getCameraTarget();
-    camera.setCenter(target.x, target.y);
+    if (token && watchedSnakeId) {
+      const target = getCameraTargetForFollow();
+      camera.setCenter(target.x, target.y);
+    }
     applyZoomToBoard();
     centerViewportOnCamera();
     postCamera();
@@ -725,8 +796,20 @@
     const side = Math.max(4, Math.round(BASE_CELL_SIZE * camera.zoom));
     const px = camera.x * side + side / 2;
     const py = camera.y * side + side / 2;
+    suppressScrollSync = true;
     boardWrap.scrollLeft = Math.max(0, px - boardWrap.clientWidth / 2);
     boardWrap.scrollTop = Math.max(0, py - boardWrap.clientHeight / 2);
+    requestAnimationFrame(() => {
+      suppressScrollSync = false;
+    });
+  }
+
+  function syncCameraFromViewport() {
+    const side = Math.max(4, Math.round(BASE_CELL_SIZE * camera.zoom));
+    if (side <= 0) return;
+    const cx = (boardWrap.scrollLeft + boardWrap.clientWidth / 2) / side;
+    const cy = (boardWrap.scrollTop + boardWrap.clientHeight / 2) / side;
+    camera.setCenter(cx, cy);
   }
 
   function onBoardWheel(ev) {
@@ -747,8 +830,18 @@
   zoomOutBtn.addEventListener("click", zoomOut);
   zoomResetBtn.addEventListener("click", resetView);
   board.addEventListener("wheel", onBoardWheel, { passive: false });
+  boardWrap.addEventListener("scroll", () => {
+    if (suppressScrollSync) return;
+    if (token && watchedSnakeId) return; // follow mode controls camera, not manual scroll
+    syncCameraFromViewport();
+  });
 
   applyViewControlAuthState();
+  if (token && myUserId) {
+    authStatus.textContent = `Logged in as user_id=${myUserId}`;
+    createSnakeBtn.disabled = false;
+    loadMySnakes();
+  }
   startStream();
   loadRuntimeSpeed();
   loadEconomyState();
@@ -758,7 +851,7 @@
   viewPollTimer = setInterval(refreshViewState, 1000);
   cameraPollTimer = setInterval(() => {
     if (token) postCamera();
-  }, 400);
+  }, 100);
   if (token) postCamera();
   updateDebugOverlay();
 </script>

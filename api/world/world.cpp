@@ -56,6 +56,10 @@ void World::LoadFromStorage(const std::vector<storage::Snake>& stored_snakes,
 
   if (world_chunk.has_value()) {
     foods_ = DecodeFoods(world_chunk->food_state);
+    if (static_cast<int>(foods_.size()) > food_count_) {
+      // Keep runtime behavior deterministic: world runs with configured food_count_.
+      foods_.resize(static_cast<size_t>(food_count_));
+    }
     world_version_ = world_chunk->version;
     if (world_chunk->width > 0) width_ = world_chunk->width;
     if (world_chunk->height > 0) height_ = world_chunk->height;
