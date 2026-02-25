@@ -904,10 +904,14 @@ def cmd_app_reset(_args) -> int:
 
 
 def send_reload_signal() -> int:
-    if subprocess.call(["systemctl", "kill", "-s", "USR1", "snake"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) == 0:
-        return 0
-    for proc_name in ["snake_server"]:
-        if subprocess.call(["pkill", "-USR1", "-x", proc_name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) == 0:
+    attempts = [
+        ["sudo", "-n", "systemctl", "kill", "-s", "USR1", "snake"],
+        ["systemctl", "kill", "-s", "USR1", "snake"],
+        ["sudo", "-n", "pkill", "-USR1", "-x", "snake_server"],
+        ["pkill", "-USR1", "-x", "snake_server"],
+    ]
+    for cmd in attempts:
+        if subprocess.call(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) == 0:
             return 0
     raise RuntimeError("No running snake_server process found for reload")
 
