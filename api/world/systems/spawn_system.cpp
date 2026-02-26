@@ -12,7 +12,12 @@ long long CellKey(const Vec2& v) {
 
 }  // namespace
 
-Vec2 SpawnSystem::RandFreeCell(const std::vector<Snake>& snakes, const std::vector<Food>& foods, int width, int height, std::mt19937& rng) {
+Vec2 SpawnSystem::RandFreeCell(const std::vector<Snake>& snakes,
+                               const std::vector<Food>& foods,
+                               int width,
+                               int height,
+                               std::mt19937& rng,
+                               const std::function<bool(const Vec2&)>& is_playable) {
   std::uniform_int_distribution<int> dx(0, width - 1);
   std::uniform_int_distribution<int> dy(0, height - 1);
 
@@ -29,14 +34,30 @@ Vec2 SpawnSystem::RandFreeCell(const std::vector<Snake>& snakes, const std::vect
 
   for (int tries = 0; tries < 2000; ++tries) {
     Vec2 candidate{dx(rng), dy(rng)};
+    if (is_playable && !is_playable(candidate)) continue;
     if (!occupied.count(CellKey(candidate))) return candidate;
+  }
+  if (is_playable) {
+    for (int y = 0; y < height; ++y) {
+      for (int x = 0; x < width; ++x) {
+        Vec2 candidate{x, y};
+        if (!is_playable(candidate)) continue;
+        if (!occupied.count(CellKey(candidate))) return candidate;
+      }
+    }
   }
   return {0, 0};
 }
 
-void SpawnSystem::Run(std::vector<Snake>& snakes, std::vector<Food>& foods, int food_count, int width, int height, std::mt19937& rng) {
+void SpawnSystem::Run(std::vector<Snake>& snakes,
+                      std::vector<Food>& foods,
+                      int food_count,
+                      int width,
+                      int height,
+                      std::mt19937& rng,
+                      const std::function<bool(const Vec2&)>& is_playable) {
   while (static_cast<int>(foods.size()) < food_count) {
-    Vec2 pos = RandFreeCell(snakes, foods, width, height, rng);
+    Vec2 pos = RandFreeCell(snakes, foods, width, height, rng, is_playable);
     foods.push_back(Food{pos.x, pos.y});
   }
 }

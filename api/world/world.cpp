@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdint>
 #include <sstream>
 #include <unordered_set>
 
@@ -16,7 +17,80 @@ World::World(int width, int height, int food_count, int max_snakes_per_user)
       food_count_(food_count),
       max_snakes_per_user_(max_snakes_per_user),
       rng_(static_cast<uint32_t>(std::random_device{}())),
-      chunk_manager_(64, true) {}
+      chunk_manager_(64, true) {
+  playable_cells_target_ = static_cast<int64_t>(std::max(1, width_)) * static_cast<int64_t>(std::max(1, height_));
+  RebuildPlayableMaskLocked();
+}
+
+bool World::HashJitterLess(int x, int y, uint32_t threshold) const {
+  uint32_t h = static_cast<uint32_t>(x) * 73856093u ^
+               static_cast<uint32_t>(y) * 19349663u ^
+               static_cast<uint32_t>(mask_seed_ * 83492791u);
+  h ^= (h >> 13);
+  h *= 1274126177u;
+  h ^= (h >> 16);
+  return (h % 1000u) < threshold;
+}
+
+void World::RebuildPlayableMaskLocked() {
+  const int64_t area = static_cast<int64_t>(width_) * static_cast<int64_t>(height_);
+  if (area <= 0) {
+    playable_mask_.clear();
+    playable_cells_count_ = 0;
+    return;
+  }
+  playable_mask_.assign(static_cast<size_t>(area), 1);
+
+  int64_t target = playable_cells_target_;
+  if (target <= 0 || target > area) target = area;
+  int64_t unplayable = area - target;
+  if (mask_mode_ != "torn" || unplayable <= 0) {
+    playable_cells_count_ = area;
+    return;
+  }
+
+  // Deterministic torn edge: remove cells from edges inward with hashed jitter.
+  // This keeps exact playable count while producing irregular boundaries.
+  struct Candidate {
+    int idx = 0;
+    int edge_dist = 0;
+    uint32_t jitter = 0;
+  };
+  std::vector<Candidate> candidates;
+  candidates.reserve(static_cast<size_t>(area));
+  for (int y = 0; y < height_; ++y) {
+    for (int x = 0; x < width_; ++x) {
+      const int edge = std::min(std::min(x, width_ - 1 - x), std::min(y, height_ - 1 - y));
+      uint32_t h = static_cast<uint32_t>(x) * 73856093u ^
+                   static_cast<uint32_t>(y) * 19349663u ^
+                   static_cast<uint32_t>(mask_seed_ * 83492791u);
+      h ^= (h >> 13);
+      h *= 1274126177u;
+      h ^= (h >> 16);
+      candidates.push_back(Candidate{y * width_ + x, edge, h % 1000u});
+    }
+  }
+  std::nth_element(
+      candidates.begin(),
+      candidates.begin() + static_cast<ptrdiff_t>(unplayable),
+      candidates.end(),
+      [](const Candidate& a, const Candidate& b) {
+        if (a.edge_dist != b.edge_dist) return a.edge_dist < b.edge_dist;
+        return a.jitter < b.jitter;
+      });
+  for (int64_t i = 0; i < unplayable; ++i) {
+    playable_mask_[static_cast<size_t>(candidates[static_cast<size_t>(i)].idx)] = 0;
+  }
+  playable_cells_count_ = target;
+}
+
+bool World::IsPlayableLocked(const Vec2& p) const {
+  if (p.x < 0 || p.x >= width_ || p.y < 0 || p.y >= height_) return false;
+  if (playable_mask_.empty()) return true;
+  const size_t idx = static_cast<size_t>(p.y) * static_cast<size_t>(width_) + static_cast<size_t>(p.x);
+  if (idx >= playable_mask_.size()) return false;
+  return playable_mask_[idx] != 0;
+}
 
 void World::LoadFromStorage(const std::vector<storage::Snake>& stored_snakes,
                             const std::optional<storage::WorldChunk>& world_chunk) {
@@ -65,7 +139,13 @@ void World::LoadFromStorage(const std::vector<storage::Snake>& stored_snakes,
     if (world_chunk->height > 0) height_ = world_chunk->height;
   }
 
-  SpawnSystem::Run(snakes_, foods_, food_count_, width_, height_, rng_);
+  RebuildPlayableMaskLocked();
+  auto is_playable = [&](const Vec2& p) { return IsPlayableLocked(p); };
+  foods_.erase(std::remove_if(foods_.begin(), foods_.end(), [&](const Food& f) {
+                return !is_playable(Vec2{f.x, f.y});
+              }),
+              foods_.end());
+  SpawnSystem::Run(snakes_, foods_, food_count_, width_, height_, rng_, is_playable);
   ResolveOverlapsOnStartLocked();
   chunk_manager_.SetWorldBounds(width_, height_);
   chunk_manager_.Rebuild(snakes_, foods_, obstacles_, tick_);
@@ -82,18 +162,36 @@ void World::Tick() {
 
   std::unordered_map<int, std::pair<Dir, bool>> before_dir_pause;
   before_dir_pause.reserve(snakes_.size());
+  std::unordered_map<int, std::vector<Vec2>> before_bodies;
+  before_bodies.reserve(snakes_.size());
   for (const auto& s : snakes_) {
     before_dir_pause[s.id] = {s.dir, s.paused};
+    before_bodies[s.id] = s.body;
   }
 
   MovementSystem::Run(snakes_, input_buffer_, width_, height_);
 
+  // Non-rectangular world mask: if a snake enters unplayable space, stop and revert move.
+  for (auto& s : snakes_) {
+    if (!s.alive || s.body.empty()) continue;
+    if (IsPlayableLocked(s.body.front())) continue;
+    auto it = before_bodies.find(s.id);
+    if (it != before_bodies.end()) s.body = it->second;
+    s.paused = true;
+    s.dir = Dir::Stop;
+  }
+
   std::vector<CollisionEvent> events;
   events.reserve(8);
   bool food_changed = false;
-  CollisionSystem::Run(snakes_, foods_, width_, height_, rng_, events, food_changed);
+  auto is_playable = [&](const Vec2& p) { return IsPlayableLocked(p); };
+  CollisionSystem::Run(snakes_, foods_, width_, height_, rng_, events, food_changed, is_playable);
 
-  SpawnSystem::Run(snakes_, foods_, food_count_, width_, height_, rng_);
+  foods_.erase(std::remove_if(foods_.begin(), foods_.end(), [&](const Food& f) {
+                return !is_playable(Vec2{f.x, f.y});
+              }),
+              foods_.end());
+  SpawnSystem::Run(snakes_, foods_, food_count_, width_, height_, rng_, is_playable);
 
   const int64_t created_at = 0;
   for (const auto& e : events) {
@@ -161,10 +259,20 @@ WorldSnapshot World::Snapshot() const {
   snap.h = height_;
   snap.snakes = snakes_;
   snap.foods = foods_;
+  snap.mask_mode = mask_mode_;
+  snap.mask_style = mask_style_;
+  snap.mask_seed = mask_seed_;
+  snap.playable_cells = playable_cells_count_;
+  snap.unplayable_cells = static_cast<int64_t>(width_) * static_cast<int64_t>(height_) - playable_cells_count_;
   return snap;
 }
 
-WorldSnapshot World::SnapshotForCamera(int camera_x, int camera_y, bool aoi_enabled, int aoi_radius, int aoi_pad_chunks) const {
+WorldSnapshot World::SnapshotForCamera(int camera_x,
+                                       int camera_y,
+                                       bool aoi_enabled,
+                                       int aoi_radius,
+                                       int aoi_pad_chunks,
+                                       bool debug_validate_bounds) const {
   std::lock_guard<std::mutex> lock(mu_);
   WorldSnapshot snap;
   snap.tick = tick_;
@@ -172,6 +280,11 @@ WorldSnapshot World::SnapshotForCamera(int camera_x, int camera_y, bool aoi_enab
   snap.h = height_;
   snap.snakes = snakes_;
   snap.foods = foods_;
+  snap.mask_mode = mask_mode_;
+  snap.mask_style = mask_style_;
+  snap.mask_seed = mask_seed_;
+  snap.playable_cells = playable_cells_count_;
+  snap.unplayable_cells = static_cast<int64_t>(width_) * static_cast<int64_t>(height_) - playable_cells_count_;
 
   ReplicationRequest req;
   req.camera_x = camera_x;
@@ -179,6 +292,7 @@ WorldSnapshot World::SnapshotForCamera(int camera_x, int camera_y, bool aoi_enab
   req.aoi_enabled = aoi_enabled;
   req.aoi_radius = aoi_radius;
   req.aoi_pad_chunks = aoi_pad_chunks;
+  req.debug_validate_bounds = debug_validate_bounds;
   return ReplicationSystem::BuildSnapshot(snap, chunk_manager_, req);
 }
 
@@ -187,6 +301,20 @@ void World::ConfigureChunking(int chunk_size, bool single_chunk_mode) {
   chunk_manager_.SetConfig(chunk_size, single_chunk_mode);
   chunk_manager_.SetWorldBounds(width_, height_);
   chunk_manager_.Rebuild(snakes_, foods_, obstacles_, tick_);
+}
+
+void World::ConfigureMask(const std::string& mode, int seed, const std::string& style) {
+  std::lock_guard<std::mutex> lock(mu_);
+  mask_mode_ = (mode == "torn") ? "torn" : "none";
+  mask_seed_ = seed;
+  mask_style_ = style.empty() ? "jagged" : style;
+  RebuildPlayableMaskLocked();
+}
+
+void World::SetPlayableCellTarget(int64_t playable_cells_target) {
+  std::lock_guard<std::mutex> lock(mu_);
+  playable_cells_target_ = playable_cells_target;
+  RebuildPlayableMaskLocked();
 }
 
 ChunkId World::CoordToChunk(int x, int y) const {
@@ -247,7 +375,8 @@ std::optional<int> World::CreateSnakeForUser(int user_id, const std::string& col
   s.alive = true;
   s.grow = 0;
 
-  const Vec2 p = SpawnSystem::RandFreeCell(snakes_, foods_, width_, height_, rng_);
+  auto is_playable = [&](const Vec2& p) { return IsPlayableLocked(p); };
+  const Vec2 p = SpawnSystem::RandFreeCell(snakes_, foods_, width_, height_, rng_, is_playable);
   s.body = {p};
   snakes_.push_back(s);
   chunk_manager_.Rebuild(snakes_, foods_, obstacles_, tick_);
@@ -292,23 +421,45 @@ void World::ResizeWorld(int new_width, int new_height) {
 
   width_ = new_width;
   height_ = new_height;
+  if (playable_cells_target_ <= 0) {
+    playable_cells_target_ = static_cast<int64_t>(width_) * static_cast<int64_t>(height_);
+  }
+  RebuildPlayableMaskLocked();
   chunk_manager_.SetWorldBounds(width_, height_);
 
   auto clamp_point = [&](Vec2& p) {
     p.x = std::max(0, std::min(width_ - 1, p.x));
     p.y = std::max(0, std::min(height_ - 1, p.y));
   };
+  auto first_playable = [&]() -> Vec2 {
+    for (int y = 0; y < height_; ++y) {
+      for (int x = 0; x < width_; ++x) {
+        Vec2 p{x, y};
+        if (IsPlayableLocked(p)) return p;
+      }
+    }
+    return {0, 0};
+  };
+  const Vec2 fallback_playable = first_playable();
 
   for (auto& s : snakes_) {
-    for (auto& seg : s.body) clamp_point(seg);
+    for (auto& seg : s.body) {
+      clamp_point(seg);
+      if (!IsPlayableLocked(seg)) seg = fallback_playable;
+    }
+    if (!s.body.empty() && !IsPlayableLocked(s.body.front())) s.paused = true;
     if (s.body.empty()) {
-      s.body.push_back({0, 0});
+      s.body.push_back(fallback_playable);
     }
     MarkSnakeDirtyLocked(s.id);
   }
   for (auto& f : foods_) {
     f.x = std::max(0, std::min(width_ - 1, f.x));
     f.y = std::max(0, std::min(height_ - 1, f.y));
+    if (!IsPlayableLocked(Vec2{f.x, f.y})) {
+      f.x = fallback_playable.x;
+      f.y = fallback_playable.y;
+    }
   }
 
   world_chunk_dirty_ = true;

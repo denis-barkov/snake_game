@@ -25,6 +25,11 @@ struct WorldSnapshot {
   uint64_t tick = 0;
   int w = 0;
   int h = 0;
+  std::string mask_mode = "none";
+  std::string mask_style = "jagged";
+  int mask_seed = 0;
+  int64_t playable_cells = 0;
+  int64_t unplayable_cells = 0;
 };
 
 struct PersistenceDelta {
@@ -56,8 +61,15 @@ class World {
   std::vector<Food> Foods() const;
   Obstacles ObstaclesList() const;
   WorldSnapshot Snapshot() const;
-  WorldSnapshot SnapshotForCamera(int camera_x, int camera_y, bool aoi_enabled, int aoi_radius, int aoi_pad_chunks = 0) const;
+  WorldSnapshot SnapshotForCamera(int camera_x,
+                                  int camera_y,
+                                  bool aoi_enabled,
+                                  int aoi_radius,
+                                  int aoi_pad_chunks = 0,
+                                  bool debug_validate_bounds = false) const;
   void ConfigureChunking(int chunk_size, bool single_chunk_mode);
+  void ConfigureMask(const std::string& mode, int seed, const std::string& style);
+  void SetPlayableCellTarget(int64_t playable_cells_target);
   ChunkId CoordToChunk(int x, int y) const;
   Vec2 ChunkCenterToWorld(const ChunkId& id) const;
 
@@ -86,6 +98,9 @@ class World {
   void ResolveOverlapsOnStartLocked();
   void MarkSnakeDirtyLocked(int snake_id);
   void PushSnakeEventLocked(const CollisionEvent& e, int64_t created_at);
+  bool IsPlayableLocked(const Vec2& p) const;
+  void RebuildPlayableMaskLocked();
+  bool HashJitterLess(int x, int y, uint32_t threshold) const;
 
   mutable std::mutex mu_;
   int width_;
@@ -100,6 +115,12 @@ class World {
   std::vector<Snake> snakes_;
   std::vector<Food> foods_;
   Obstacles obstacles_;
+  std::vector<uint8_t> playable_mask_;
+  std::string mask_mode_ = "none";
+  std::string mask_style_ = "jagged";
+  int mask_seed_ = 0;
+  int64_t playable_cells_target_ = 0;
+  int64_t playable_cells_count_ = 0;
 
   std::unordered_map<int, InputIntent> input_buffer_;
   std::unordered_map<int, int64_t> snake_created_at_ms_;

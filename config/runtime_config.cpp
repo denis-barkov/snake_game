@@ -55,6 +55,12 @@ bool has_env(const char* name) {
   return v && *v;
 }
 
+std::string getenv_string(const char* name, const std::string& default_value) {
+  const char* v = std::getenv(name);
+  if (!v || !*v) return default_value;
+  return std::string(v);
+}
+
 }  // namespace
 
 RuntimeConfig RuntimeConfig::FromEnv() {
@@ -82,6 +88,9 @@ RuntimeConfig RuntimeConfig::FromEnv() {
   cfg.food_reward_cells = clamp_int(getenv_int("FOOD_REWARD_CELLS", cfg.food_reward_cells), 1, 1000);
   cfg.resize_threshold = std::max(0.0, std::min(1.0, getenv_double("RESIZE_THRESHOLD", cfg.resize_threshold)));
   cfg.world_aspect_ratio = std::max(0.2, std::min(5.0, getenv_double("WORLD_ASPECT_RATIO", cfg.world_aspect_ratio)));
+  cfg.world_mask_mode = getenv_string("WORLD_MASK_MODE", cfg.world_mask_mode);
+  cfg.world_mask_seed = getenv_int("WORLD_MASK_SEED", cfg.world_mask_seed);
+  cfg.world_mask_style = getenv_string("WORLD_MASK_STYLE", cfg.world_mask_style);
   if (!has_env("DEBUG_TPS")) {
     // Backward compatibility for older deployments that used LOG_HZ.
     cfg.debug_tps = getenv_bool("LOG_HZ", cfg.debug_tps);

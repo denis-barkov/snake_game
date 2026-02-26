@@ -182,6 +182,14 @@ class GameService {
     world_.ConfigureChunking(chunk_size, single_chunk_mode);
   }
 
+  void configure_mask(const string& mode, int seed, const string& style) {
+    world_.ConfigureMask(mode, seed, style);
+  }
+
+  void set_playable_cell_target(int64_t playable_cells_target) {
+    world_.SetPlayableCellTarget(playable_cells_target);
+  }
+
   void load_from_storage_or_seed_positions() {
     world_.LoadFromStorage(storage_.ListSnakes(), storage_.GetWorldChunk("main"));
   }
@@ -195,9 +203,13 @@ class GameService {
     return world_.Snapshot();
   }
 
-  world::WorldSnapshot snapshot_for_camera(int camera_x, int camera_y, bool aoi_enabled, int aoi_radius) {
+  world::WorldSnapshot snapshot_for_camera(int camera_x,
+                                           int camera_y,
+                                           bool aoi_enabled,
+                                           int aoi_radius,
+                                           bool debug_validate_bounds = false) {
     ensure_loaded_from_storage_if_empty();
-    return world_.SnapshotForCamera(camera_x, camera_y, aoi_enabled, aoi_radius, aoi_pad_chunks_);
+    return world_.SnapshotForCamera(camera_x, camera_y, aoi_enabled, aoi_radius, aoi_pad_chunks_, debug_validate_bounds);
   }
 
   world::ChunkId coord_to_chunk(int x, int y) {
@@ -614,6 +626,9 @@ int main(int argc, char** argv) {
        << ", FOOD_REWARD_CELLS=" << runtime_cfg.food_reward_cells
        << ", RESIZE_THRESHOLD=" << runtime_cfg.resize_threshold
        << ", WORLD_ASPECT_RATIO=" << runtime_cfg.world_aspect_ratio
+       << ", WORLD_MASK_MODE=" << runtime_cfg.world_mask_mode
+       << ", WORLD_MASK_SEED=" << runtime_cfg.world_mask_seed
+       << ", WORLD_MASK_STYLE=" << runtime_cfg.world_mask_style
        << "\n";
 
   unique_ptr<storage::IStorage> storage;
@@ -647,19 +662,26 @@ int main(int argc, char** argv) {
   GameService game(*storage, grid_w, grid_h, FOOD_COUNT, max_snakes_per_user);
   game.configure_chunking(runtime_cfg.chunk_size, runtime_cfg.single_chunk_mode);
   game.set_aoi_pad_chunks(runtime_cfg.aoi_pad_chunks);
+  game.configure_mask(runtime_cfg.world_mask_mode, runtime_cfg.world_mask_seed, runtime_cfg.world_mask_style);
   EconomyService economy(*storage);
   game.load_from_storage_or_seed_positions();
+  {
+    const auto eco = economy.GetState();
+    game.set_playable_cell_target(std::max<int64_t>(100, eco.state.a_world));
+  }
   game.flush_persistence_delta();
 
   auto maybe_resize_world_from_economy = [&](const EconomyService::Snapshot& eco) {
     const auto current = game.snapshot();
     const int64_t current_area = static_cast<int64_t>(current.w) * static_cast<int64_t>(current.h);
     const int64_t target_area = max<int64_t>(100, eco.state.a_world);
+    game.set_playable_cell_target(target_area);
     if (current_area <= 0) return;
     const double rel_diff = std::abs(static_cast<double>(target_area - current_area) / static_cast<double>(current_area));
     if (rel_diff < runtime_cfg.resize_threshold) return;
     const auto [new_w, new_h] = dims_from_area(target_area, runtime_cfg.world_aspect_ratio);
     game.resize_world(new_w, new_h);
+    game.set_playable_cell_target(target_area);
     game.flush_persistence_delta();
   };
 
@@ -989,7 +1011,7 @@ int main(int argc, char** argv) {
           public_chunk_cy = pv.chunk_cy;
         }
 
-        snap = game.snapshot_for_camera(cam_x, cam_y, runtime_cfg.aoi_enabled, aoi_radius);
+        snap = game.snapshot_for_camera(cam_x, cam_y, runtime_cfg.aoi_enabled, aoi_radius, runtime_cfg.debug_tps);
         int aoi_min_x = 0;
         int aoi_max_x = 0;
         int aoi_min_y = 0;
@@ -1036,6 +1058,13 @@ int main(int argc, char** argv) {
             << "\"aoi_chunks\":" << aoi_chunks << ","
             << "\"public_camera_chunk\":{\"cx\":" << public_chunk_cx << ",\"cy\":" << public_chunk_cy << "},"
             << "\"chunk_size\":" << runtime_cfg.chunk_size << ","
+            << "\"mask\":{"
+            << "\"mode\":\"" << json_escape(snap.mask_mode) << "\","
+            << "\"style\":\"" << json_escape(snap.mask_style) << "\","
+            << "\"seed\":" << snap.mask_seed << ","
+            << "\"playable_cells\":" << snap.playable_cells << ","
+            << "\"unplayable_cells\":" << snap.unplayable_cells
+            << "},"
             << "\"snapshot\":" << snap_json
             << "}";
         if (!ws.send(out.str())) break;

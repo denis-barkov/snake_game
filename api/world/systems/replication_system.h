@@ -11,6 +11,7 @@ struct ReplicationRequest {
   bool aoi_enabled = false;
   int aoi_radius = 1;
   int aoi_pad_chunks = 0;
+  bool debug_validate_bounds = false;
 };
 
 class ReplicationSystem {

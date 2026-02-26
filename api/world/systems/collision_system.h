@@ -1,5 +1,6 @@
 #pragma once
 
+#include <functional>
 #include <random>
 #include <string>
 #include <vector>
@@ -27,7 +28,8 @@ class CollisionSystem {
                   int height,
                   std::mt19937& rng,
                   std::vector<CollisionEvent>& events,
-                  bool& food_changed);
+                  bool& food_changed,
+                  const std::function<bool(const Vec2&)>& is_playable = nullptr);
 };
 
 }  // namespace world

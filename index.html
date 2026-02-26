@@ -263,6 +263,10 @@
           <input id="boundsToggle" type="checkbox" checked />
           Bounds
         </label>
+        <label class="view-inline">
+          <input id="edgeToggle" type="checkbox" checked />
+          Edge
+        </label>
         <small id="view-help">Zoom: +/- buttons. Reset returns to default view.</small>
         <small id="public-view-hint">Login to control camera &amp; zoom.</small>
       </div>
@@ -328,6 +332,10 @@
       this.visibleCellsX = 0;
       this.visibleCellsY = 0;
       this.visibleCellCount = 0;
+      this.maskCacheKey = "";
+      this.maskCacheW = 0;
+      this.maskCacheH = 0;
+      this.maskPlayable = null;
       if (this.gl) this.init();
     }
 
@@ -496,10 +504,13 @@
 
       const gridMode = overlay.gridMode || "off";
       const showBounds = !!overlay.showBounds;
+      const showEdge = !!overlay.showEdge;
       const chunkSize = Math.max(1, Number(overlay.chunkSize || 64));
       const aoi = overlay.aoi || null;
+      const mask = overlay.mask || null;
       const showCellGrid = gridMode !== "off" && this.visibleCellCount <= 30000;
       const showChunkGrid = gridMode === "cells_chunks" || (gridMode === "cells" && !showCellGrid);
+      this.ensureMaskCache(state, mask);
 
       if (showCellGrid) {
         const xStart = Math.floor(minX);
@@ -515,13 +526,19 @@
         const cxEnd = Math.ceil(maxX / chunkSize) + 1;
         const cyStart = Math.floor(minY / chunkSize) - 1;
         const cyEnd = Math.ceil(maxY / chunkSize) + 1;
+        const gy0 = Math.max(0, minY);
+        const gy1 = Math.min(state.h, maxY);
+        const gx0 = Math.max(0, minX);
+        const gx1 = Math.min(state.w, maxX);
         for (let cx = cxStart; cx <= cxEnd; ++cx) {
           const x = cx * chunkSize;
-          addLine(x, minY, x, maxY, 0.12, 0.12, 0.12, 0.16);
+          if (x < 0 || x > state.w) continue;
+          addLine(x, gy0, x, gy1, 0.12, 0.12, 0.12, 0.16);
         }
         for (let cy = cyStart; cy <= cyEnd; ++cy) {
           const y = cy * chunkSize;
-          addLine(minX, y, maxX, y, 0.12, 0.12, 0.12, 0.16);
+          if (y < 0 || y > state.h) continue;
+          addLine(gx0, y, gx1, y, 0.12, 0.12, 0.12, 0.16);
         }
       }
 
@@ -545,7 +562,86 @@
         addLine(ax0, ay1, ax0, ay0, 0.05, 0.28, 0.88, 0.34);
       }
 
+      if (showEdge && mask && mask.mode === "torn" && this.maskPlayable) {
+        const overlayVertices = [];
+        const overlayColors = [];
+        const addOverlayQuad = (x, y, r, g, b, a) => {
+          const x0 = x;
+          const y0 = y;
+          const x1 = x + 1;
+          const y1 = y + 1;
+          overlayVertices.push(x0, y0, x1, y0, x0, y1, x0, y1, x1, y0, x1, y1);
+          for (let i = 0; i < 6; ++i) overlayColors.push(r, g, b, a);
+        };
+        const x0 = Math.max(0, Math.floor(minX));
+        const y0 = Math.max(0, Math.floor(minY));
+        const x1 = Math.min(state.w, Math.ceil(maxX));
+        const y1 = Math.min(state.h, Math.ceil(maxY));
+        for (let y = y0; y < y1; ++y) {
+          for (let x = x0; x < x1; ++x) {
+            const idx = y * state.w + x;
+            if (idx < 0 || idx >= this.maskPlayable.length) continue;
+            if (this.maskPlayable[idx]) continue;
+            addOverlayQuad(x, y, 0.05, 0.05, 0.05, 0.22);
+          }
+        }
+        this.drawBatched(gl.TRIANGLES, overlayVertices, overlayColors);
+
+        // Draw playable boundary from local neighbor diffs in visible range.
+        for (let y = y0; y < y1; ++y) {
+          for (let x = x0; x < x1; ++x) {
+            const idx = y * state.w + x;
+            if (idx < 0 || idx >= this.maskPlayable.length || !this.maskPlayable[idx]) continue;
+            const leftBlocked = (x === 0) || !this.maskPlayable[y * state.w + (x - 1)];
+            const rightBlocked = (x === state.w - 1) || !this.maskPlayable[y * state.w + (x + 1)];
+            const topBlocked = (y === 0) || !this.maskPlayable[(y - 1) * state.w + x];
+            const bottomBlocked = (y === state.h - 1) || !this.maskPlayable[(y + 1) * state.w + x];
+            if (leftBlocked) addLine(x, y, x, y + 1, 0.16, 0.26, 0.76, 0.52);
+            if (rightBlocked) addLine(x + 1, y, x + 1, y + 1, 0.16, 0.26, 0.76, 0.52);
+            if (topBlocked) addLine(x, y, x + 1, y, 0.16, 0.26, 0.76, 0.52);
+            if (bottomBlocked) addLine(x, y + 1, x + 1, y + 1, 0.16, 0.26, 0.76, 0.52);
+          }
+        }
+      }
+
       this.drawBatched(gl.LINES, lineVertices, lineColors);
+    }
+
+    ensureMaskCache(state, mask) {
+      if (!mask || mask.mode !== "torn") {
+        this.maskCacheKey = "";
+        this.maskPlayable = null;
+        return;
+      }
+      const key = `${state.w}:${state.h}:${mask.mode}:${mask.style}:${mask.seed}:${mask.unplayable_cells}`;
+      if (key === this.maskCacheKey && this.maskPlayable) return;
+      const area = state.w * state.h;
+      const playable = new Uint8Array(area);
+      playable.fill(1);
+      const unplayable = Math.max(0, Math.min(area, Number(mask.unplayable_cells || 0)));
+      if (unplayable > 0) {
+        const scored = [];
+        scored.length = area;
+        let i = 0;
+        for (let y = 0; y < state.h; ++y) {
+          for (let x = 0; x < state.w; ++x) {
+            const edge = Math.min(Math.min(x, state.w - 1 - x), Math.min(y, state.h - 1 - y));
+            let h = ((x >>> 0) * 73856093) ^ ((y >>> 0) * 19349663) ^ (((Number(mask.seed) | 0) >>> 0) * 83492791);
+            h = (h ^ (h >>> 13)) >>> 0;
+            h = Math.imul(h, 1274126177) >>> 0;
+            h = (h ^ (h >>> 16)) >>> 0;
+            const jitter = h % 1000;
+            scored[i] = { idx: i, score: edge * 1000 + jitter };
+            i++;
+          }
+        }
+        scored.sort((a, b) => a.score - b.score);
+        for (let k = 0; k < unplayable; ++k) playable[scored[k].idx] = 0;
+      }
+      this.maskPlayable = playable;
+      this.maskCacheW = state.w;
+      this.maskCacheH = state.h;
+      this.maskCacheKey = key;
     }
   }
 
@@ -555,6 +651,7 @@
   const WATCHED_SNAKE_STORAGE_KEY = "snake_watched_snake_id";
   const GRID_MODE_STORAGE_KEY = "snake_grid_mode";
   const BOUNDS_TOGGLE_STORAGE_KEY = "snake_bounds_toggle";
+  const EDGE_TOGGLE_STORAGE_KEY = "snake_edge_toggle";
 
   let token = localStorage.getItem(TOKEN_STORAGE_KEY);
   let myUserId = Number(localStorage.getItem(USER_ID_STORAGE_KEY));
@@ -598,6 +695,7 @@
   const zoomResetBtn = document.getElementById("zoomResetBtn");
   const gridModeSelect = document.getElementById("gridModeSelect");
   const boundsToggle = document.getElementById("boundsToggle");
+  const edgeToggle = document.getElementById("edgeToggle");
   const debugOverlayEl = document.getElementById("debug-overlay");
   const viewControlsEl = document.getElementById("view-controls");
   const publicViewHintEl = document.getElementById("public-view-hint");
@@ -611,6 +709,7 @@
   let serverChunkSize = 64;
   let serverAoiChunks = 0;
   let serverAoiRange = null;
+  let serverMask = { mode: "none", style: "jagged", seed: 0, playable_cells: 0, unplayable_cells: 0 };
   let debugModeLabel = "PUBLIC";
   let debugPublicChunk = { cx: 0, cy: 0 };
   let wsHandle = null;
@@ -626,14 +725,17 @@
   let gridMode = localStorage.getItem(GRID_MODE_STORAGE_KEY) || "cells_chunks";
   if (!["off", "cells", "cells_chunks"].includes(gridMode)) gridMode = "cells_chunks";
   let showBounds = localStorage.getItem(BOUNDS_TOGGLE_STORAGE_KEY) !== "0";
+  let showEdge = localStorage.getItem(EDGE_TOGGLE_STORAGE_KEY) !== "0";
 
   function renderCurrentState() {
     if (!latestServerState) return;
     renderer.render(latestServerState, camera, {
       gridMode,
       showBounds,
+      showEdge,
       chunkSize: serverChunkSize,
-      aoi: serverAoiRange
+      aoi: serverAoiRange,
+      mask: serverMask
     });
   }
 
@@ -675,6 +777,8 @@
       `zoom: ${camera.zoom.toFixed(2)}\n` +
       `public_chunk: cx=${debugPublicChunk.cx} cy=${debugPublicChunk.cy}\n` +
       `chunk_size: ${serverChunkSize}\n` +
+      `mask: ${serverMask.mode}/${serverMask.style} seed=${serverMask.seed}\n` +
+      `playable: ${serverMask.playable_cells} unplayable: ${serverMask.unplayable_cells}\n` +
       `camera_chunk: ${serverAoiRange ? `(${serverAoiRange.camera_chunk_x},${serverAoiRange.camera_chunk_y})` : "-" }\n` +
       `aoi_range: ${serverAoiRange ? `[${serverAoiRange.min_chunk_x}..${serverAoiRange.max_chunk_x}] [${serverAoiRange.min_chunk_y}..${serverAoiRange.max_chunk_y}]` : "-" }\n` +
       `aoi_chunks: ${serverAoiChunks}\n` +
@@ -1093,6 +1197,15 @@
       if (typeof msg.chunk_size === "number" && msg.chunk_size > 0) {
         serverChunkSize = Math.floor(msg.chunk_size);
       }
+      if (msg.mask && typeof msg.mask === "object") {
+        serverMask = {
+          mode: typeof msg.mask.mode === "string" ? msg.mask.mode : "none",
+          style: typeof msg.mask.style === "string" ? msg.mask.style : "jagged",
+          seed: Number.isFinite(Number(msg.mask.seed)) ? Number(msg.mask.seed) : 0,
+          playable_cells: Number.isFinite(Number(msg.mask.playable_cells)) ? Number(msg.mask.playable_cells) : 0,
+          unplayable_cells: Number.isFinite(Number(msg.mask.unplayable_cells)) ? Number(msg.mask.unplayable_cells) : 0
+        };
+      }
       if (msg.aoi &&
           Number.isFinite(msg.aoi.min_chunk_x) &&
           Number.isFinite(msg.aoi.max_chunk_x) &&
@@ -1316,6 +1429,7 @@
   }
   gridModeSelect.value = gridMode;
   boundsToggle.checked = showBounds;
+  edgeToggle.checked = showEdge;
 
   zoomInBtn.addEventListener("click", zoomIn);
   zoomOutBtn.addEventListener("click", zoomOut);
@@ -1332,6 +1446,12 @@
   boundsToggle.addEventListener("change", () => {
     showBounds = !!boundsToggle.checked;
     localStorage.setItem(BOUNDS_TOGGLE_STORAGE_KEY, showBounds ? "1" : "0");
+    renderCurrentState();
+    updateDebugOverlay();
+  });
+  edgeToggle.addEventListener("change", () => {
+    showEdge = !!edgeToggle.checked;
+    localStorage.setItem(EDGE_TOGGLE_STORAGE_KEY, showEdge ? "1" : "0");
     renderCurrentState();
     updateDebugOverlay();
   });

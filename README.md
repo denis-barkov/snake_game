@@ -281,6 +281,11 @@ Expected:
 - Watch stream broadcast rate is restored to `SPECTATOR_HZ` (default `10 Hz`) for everyone.
 - AOI filtering is active with chunk-based replication; zoom/camera only changes viewport, not world simulation.
 - AOI edge stability uses `AOI_PAD_CHUNKS` (default `1`) to avoid chunk-boundary flicker.
+- Optional torn playable-world mask:
+  - `WORLD_MASK_MODE=none|torn`
+  - `WORLD_MASK_SEED=<int>`
+  - `WORLD_MASK_STYLE=jagged`
+  - playable cells stay tied to economy target area (`A_world`), with non-playable cells pushed to deterministic torn edges.
 
 ## Modes
 

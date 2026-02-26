@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 
 struct RuntimeConfig {
   int tick_hz = 10;
@@ -24,6 +25,9 @@ struct RuntimeConfig {
   int food_reward_cells = 1;
   double resize_threshold = 0.05;
   double world_aspect_ratio = 16.0 / 9.0;
+  std::string world_mask_mode = "none";
+  int world_mask_seed = 1337;
+  std::string world_mask_style = "jagged";
 
   static RuntimeConfig FromEnv();
   int TickIntervalMs() const;

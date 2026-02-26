@@ -28,7 +28,8 @@ void CollisionSystem::Run(std::vector<Snake>& snakes,
                           int height,
                           std::mt19937& rng,
                           std::vector<CollisionEvent>& events,
-                          bool& food_changed) {
+                          bool& food_changed,
+                          const std::function<bool(const Vec2&)>& is_playable) {
   (void)width;
   (void)height;
   food_changed = false;
@@ -104,7 +105,7 @@ void CollisionSystem::Run(std::vector<Snake>& snakes,
     for (auto& f : foods) {
       if (f.x == head.x && f.y == head.y) {
         events.push_back(CollisionEvent{"FOOD_EATEN", s.id, 0, head.x, head.y, 1});
-        Vec2 replacement = SpawnSystem::RandFreeCell(snakes, foods, width, height, rng);
+        Vec2 replacement = SpawnSystem::RandFreeCell(snakes, foods, width, height, rng, is_playable);
         f.x = replacement.x;
         f.y = replacement.y;
         food_changed = true;
