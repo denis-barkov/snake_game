@@ -245,14 +245,17 @@ Expected:
 
 ## Watch camera / AOI-ready behavior
 
-- Frontend stream now uses a stable session id (`sid`) via `/game/stream?sid=...`.
-- Frontend optionally posts camera center to `POST /game/camera` (low rate) so backend can apply AOI filtering when enabled.
-- Frontend also sends `zoom` with camera updates (schema-compatible, optional).
+- Runtime stream uses a single WebSocket endpoint: `GET /ws`.
+- Frontend sends runtime messages over WS (`auth`, `input`, `camera_set`) and receives `world_snapshot`, `economy_world`, `user_state`.
+- Frontend renderer is WebGL canvas-based (no DOM cell grid), with map-style zoom.
+- Runtime endpoints:
+  - local: `ws://127.0.0.1:8080/ws`
+  - prod: `wss://terrariumsnake.com/ws`
 - In **My Snakes**, a `watch` checkbox appears under each snake:
   - only the selected snake can be watched
   - only one snake can be watched at a time
   - selecting another snake clears previous watch selection
-- Old clients remain compatible: if no camera updates are sent, server defaults to center-camera behavior.
+- Old compatibility routes remain available on backend (`/game/stream`, `/game/view`, `/game/camera`) but the current frontend does not use them.
 
 ### Zoom + debug overlay (Step 9)
 
@@ -270,10 +273,10 @@ Expected:
 - Camera/zoom updates are accepted only for authenticated sessions.
 - Unauthenticated visitors receive a server-driven public activity view.
 - Public view switches focus periodically using in-memory chunk activity scores (no DB writes).
-- `POST /game/camera` is auth-gated and rate-limited by `CAMERA_MSG_MAX_HZ`.
-- `GET /game/view` provides debug-safe mode/camera/AOI info for overlays.
+- `camera_set` WS messages are auth-gated and rate-limited by `CAMERA_MSG_MAX_HZ`.
+- Debug overlay (`?debug=1`) reads mode/camera/AOI/public chunk from WS snapshot metadata.
 - Watch stream broadcast rate is restored to `SPECTATOR_HZ` (default `10 Hz`) for everyone.
-- Snapshot streaming is full-world again by default so zoom/camera never changes world visibility.
+- AOI filtering is active with chunk-based replication; zoom/camera only changes viewport, not world simulation.
 
 ## Modes
 

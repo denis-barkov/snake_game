@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1.0" />
-  <title>Online Snake (SSE)</title>
+  <title>Online Snake (WS)</title>
   <style>
     * { box-sizing: border-box; }
     body { font-family: Arial, sans-serif; margin: 16px; background: #f8fbf7; color: #1a1a1a; }
@@ -80,32 +80,27 @@
       padding: 8px;
     }
     #game-board-wrap {
-      overflow: auto;
+      position: relative;
       width: 100%;
       max-width: 100%;
       min-width: 0;
       height: min(70vh, 560px);
-      padding-bottom: 4px;
       border: 1px solid #d7dfd5;
       border-radius: 8px;
       background: #fbfdf9;
     }
-
-    #game-board {
-      display: grid;
-      gap: 1px;
-      background: #ccc;
-      width: max-content;
+    #game-canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+      touch-action: none;
       user-select: none;
+      cursor: grab;
+      background: #eef5eb;
     }
-    .cell {
-      width: 18px;
-      height: 18px;
-      background: #f3f3f3;
+    #game-canvas.dragging {
+      cursor: grabbing;
     }
-    .food { background: #ff4444 !important; }
-
-    .snake-cell { background: #00aa00; }
 
     .panel { border: 1px solid #ddd; padding: 12px; border-radius: 8px; margin-bottom: 12px; }
     .compact-panel {
@@ -248,7 +243,7 @@
       </div>
       <div id="debug-overlay"></div>
       <div id="game-board-wrap">
-        <div id="game-board"></div>
+        <canvas id="game-canvas"></canvas>
       </div>
       <div class="panel compact-panel">
         <h3>Live Game</h3>
@@ -266,8 +261,13 @@
 <script>
   const API_BASE = window.location.protocol === "file:" ? "http://127.0.0.1:8080" : "";
   const apiPath = (path) => `${API_BASE}${path}`;
+  const wsPath = (path) => {
+    if (window.location.protocol === "file:") return `ws://127.0.0.1:8080${path}`;
+    const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+    return `${proto}//${window.location.host}${path}`;
+  };
   const DEBUG_MODE = new URLSearchParams(window.location.search).get("debug") === "1";
-  const BASE_CELL_SIZE = 18;
+  const DEFAULT_VISIBLE_ROWS = 40;
 
   class Camera {
     constructor() {
@@ -287,8 +287,165 @@
       this.setCenter(Math.floor(worldW / 2), Math.floor(worldH / 2));
       this.setZoom(1.0);
     }
-    worldToScreen(wx, wy) {
-      return { sx: (wx - this.x) * this.zoom, sy: (wy - this.y) * this.zoom };
+  }
+
+  class WebGLRenderer {
+    constructor(canvas) {
+      this.canvas = canvas;
+      this.gl = canvas.getContext("webgl", { alpha: false, antialias: false, preserveDrawingBuffer: false });
+      this.program = null;
+      this.posBuffer = null;
+      this.colorBuffer = null;
+      this.aPos = -1;
+      this.aColor = -1;
+      this.uViewMin = null;
+      this.uViewSize = null;
+      this.vertexData = new Float32Array(0);
+      this.colorData = new Float32Array(0);
+      this.visibleCellsX = 0;
+      this.visibleCellsY = 0;
+      if (this.gl) this.init();
+    }
+
+    init() {
+      const gl = this.gl;
+      const vertSrc = `
+        attribute vec2 a_pos;
+        attribute vec3 a_color;
+        uniform vec2 u_view_min;
+        uniform vec2 u_view_size;
+        varying vec3 v_color;
+        void main() {
+          vec2 p = (a_pos - u_view_min) / u_view_size;
+          vec2 ndc = vec2(p.x * 2.0 - 1.0, 1.0 - p.y * 2.0);
+          gl_Position = vec4(ndc, 0.0, 1.0);
+          v_color = a_color;
+        }
+      `;
+      const fragSrc = `
+        precision mediump float;
+        varying vec3 v_color;
+        void main() {
+          gl_FragColor = vec4(v_color, 1.0);
+        }
+      `;
+      const vs = this.compile(gl.VERTEX_SHADER, vertSrc);
+      const fs = this.compile(gl.FRAGMENT_SHADER, fragSrc);
+      if (!vs || !fs) return;
+      const program = gl.createProgram();
+      if (!program) return;
+      gl.attachShader(program, vs);
+      gl.attachShader(program, fs);
+      gl.linkProgram(program);
+      if (!gl.getProgramParameter(program, gl.LINK_STATUS)) return;
+
+      this.program = program;
+      this.aPos = gl.getAttribLocation(program, "a_pos");
+      this.aColor = gl.getAttribLocation(program, "a_color");
+      this.uViewMin = gl.getUniformLocation(program, "u_view_min");
+      this.uViewSize = gl.getUniformLocation(program, "u_view_size");
+      this.posBuffer = gl.createBuffer();
+      this.colorBuffer = gl.createBuffer();
+      gl.useProgram(program);
+    }
+
+    compile(type, src) {
+      const gl = this.gl;
+      const shader = gl.createShader(type);
+      if (!shader) return null;
+      gl.shaderSource(shader, src);
+      gl.compileShader(shader);
+      if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) return null;
+      return shader;
+    }
+
+    resizeToDisplaySize() {
+      const dpr = Math.max(1, window.devicePixelRatio || 1);
+      const width = Math.max(1, Math.floor(this.canvas.clientWidth * dpr));
+      const height = Math.max(1, Math.floor(this.canvas.clientHeight * dpr));
+      if (this.canvas.width !== width || this.canvas.height !== height) {
+        this.canvas.width = width;
+        this.canvas.height = height;
+      }
+      if (this.gl) this.gl.viewport(0, 0, width, height);
+    }
+
+    getViewSize(worldW, worldH, zoom) {
+      const aspect = this.canvas.width > 0 && this.canvas.height > 0 ? this.canvas.width / this.canvas.height : 16 / 9;
+      const visibleRows = Math.max(8, Math.round(DEFAULT_VISIBLE_ROWS / Math.max(0.25, Math.min(4.0, zoom))));
+      const visibleY = Math.min(worldH, visibleRows);
+      const visibleX = Math.min(worldW, Math.max(8, Math.round(visibleY * aspect)));
+      return { visibleX, visibleY };
+    }
+
+    hexToRgb01(hex) {
+      const safe = typeof hex === "string" && /^#[0-9a-fA-F]{6}$/.test(hex) ? hex : "#00aa00";
+      const v = parseInt(safe.slice(1), 16);
+      return {
+        r: ((v >> 16) & 255) / 255,
+        g: ((v >> 8) & 255) / 255,
+        b: (v & 255) / 255
+      };
+    }
+
+    render(state, camera) {
+      if (!this.gl || !this.program || !state) return;
+      this.resizeToDisplaySize();
+      const gl = this.gl;
+
+      const view = this.getViewSize(state.w, state.h, camera.zoom);
+      this.visibleCellsX = view.visibleX;
+      this.visibleCellsY = view.visibleY;
+      const minX = camera.x - view.visibleX / 2;
+      const minY = camera.y - view.visibleY / 2;
+      const maxX = minX + view.visibleX;
+      const maxY = minY + view.visibleY;
+
+      const vertices = [];
+      const colors = [];
+      const pushQuad = (x, y, r, g, b) => {
+        const x0 = x;
+        const y0 = y;
+        const x1 = x + 1;
+        const y1 = y + 1;
+        vertices.push(x0, y0, x1, y0, x0, y1, x0, y1, x1, y0, x1, y1);
+        for (let i = 0; i < 6; ++i) colors.push(r, g, b);
+      };
+
+      for (const f of state.foods || []) {
+        if (f.x < minX || f.x >= maxX || f.y < minY || f.y >= maxY) continue;
+        pushQuad(f.x, f.y, 1.0, 0.25, 0.25);
+      }
+      for (const s of state.snakes || []) {
+        const rgb = this.hexToRgb01(s.color);
+        for (const seg of s.body || []) {
+          if (seg.x < minX || seg.x >= maxX || seg.y < minY || seg.y >= maxY) continue;
+          pushQuad(seg.x, seg.y, rgb.r, rgb.g, rgb.b);
+        }
+      }
+
+      this.vertexData = new Float32Array(vertices);
+      this.colorData = new Float32Array(colors);
+
+      gl.clearColor(0.92, 0.96, 0.91, 1.0);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+      if (this.vertexData.length === 0) return;
+
+      gl.useProgram(this.program);
+      gl.uniform2f(this.uViewMin, minX, minY);
+      gl.uniform2f(this.uViewSize, view.visibleX, view.visibleY);
+
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.posBuffer);
+      gl.bufferData(gl.ARRAY_BUFFER, this.vertexData, gl.DYNAMIC_DRAW);
+      gl.enableVertexAttribArray(this.aPos);
+      gl.vertexAttribPointer(this.aPos, 2, gl.FLOAT, false, 0, 0);
+
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.colorBuffer);
+      gl.bufferData(gl.ARRAY_BUFFER, this.colorData, gl.DYNAMIC_DRAW);
+      gl.enableVertexAttribArray(this.aColor);
+      gl.vertexAttribPointer(this.aColor, 3, gl.FLOAT, false, 0, 0);
+
+      gl.drawArrays(gl.TRIANGLES, 0, this.vertexData.length / 2);
     }
   }
 
@@ -306,16 +463,12 @@
   if (!Number.isFinite(watchedSnakeId) || watchedSnakeId <= 0) watchedSnakeId = null;
   let latestServerState = null;
   const stateBuffer = [];
-  const streamSessionId = (window.crypto && crypto.randomUUID)
-    ? crypto.randomUUID()
-    : ("sid_" + Math.random().toString(36).slice(2));
   const camera = new Camera();
+  const cameraSendSeq = { v: 0 };
 
   let gridW = 40, gridH = 20;
-  let cells = [];
-
-  const board = document.getElementById("game-board");
-  const boardWrap = document.getElementById("game-board-wrap");
+  const canvas = document.getElementById("game-canvas");
+  const renderer = new WebGLRenderer(canvas);
   const tickEl = document.getElementById("tick");
   const expectedTickHzEl = document.getElementById("expectedTickHz");
   const actualTickHzEl = document.getElementById("actualTickHz");
@@ -349,85 +502,36 @@
   let expectedTickHz = null;
   const FALLBACK_EXPECTED_TICK_HZ = 10;
   let runtimeSpeedPollTimer = null;
-  let economyPollTimer = null;
   let cameraPollTimer = null;
-  let viewPollTimer = null;
   let latestSnapshotBytes = 0;
   let serverAoiChunks = 0;
   let debugModeLabel = "PUBLIC";
   let debugPublicChunk = { cx: 0, cy: 0 };
-  let streamHandle = null;
-  let suppressScrollSync = false;
+  let wsHandle = null;
+  let wsBackoffMs = 1000;
+  let wsConnected = false;
+  let stateFallbackTimer = null;
+  let isDragging = false;
+  let dragLastX = 0;
+  let dragLastY = 0;
   let myBalance = 0;
-
-  function buildBoard(w, h) {
-    gridW = w; gridH = h;
-    board.style.gridTemplateColumns = `repeat(${w}, ${Math.max(4, Math.round(BASE_CELL_SIZE * camera.zoom))}px)`;
-    board.innerHTML = "";
-    cells = [];
-    for (let i = 0; i < w*h; i++) {
-      const c = document.createElement("div");
-      c.className = "cell";
-      const side = Math.max(4, Math.round(BASE_CELL_SIZE * camera.zoom));
-      c.style.width = `${side}px`;
-      c.style.height = `${side}px`;
-      board.appendChild(c);
-      cells.push(c);
-    }
-  }
-
-  function applyZoomToBoard() {
-    const side = Math.max(4, Math.round(BASE_CELL_SIZE * camera.zoom));
-    board.style.gridTemplateColumns = `repeat(${gridW}, ${side}px)`;
-    for (const c of cells) {
-      c.style.width = `${side}px`;
-      c.style.height = `${side}px`;
-    }
-  }
-
-  function idx(x,y){ return y*gridW + x; }
-
-  function clearBoard() {
-    for (const c of cells) {
-      c.className = "cell";
-      c.style.background = ""; // allow custom snake colors
-    }
-  }
+  let lastCameraSendAt = 0;
+  let lastCameraPayload = "";
 
   function drawFrame(state) {
     latestServerState = state;
-    camera.worldToScreen(0, 0); // Keeps camera transform API active for renderer evolution.
     tickEl.textContent = state.tick;
     updateActualTickHz(state.tick);
-
-    if (state.w !== gridW || state.h !== gridH || cells.length === 0) {
-      buildBoard(state.w, state.h);
-    }
-
-    clearBoard();
-
-    // foods
-    for (const f of state.foods) {
-      const i = idx(f.x, f.y);
-      if (cells[i]) cells[i].classList.add("food");
-    }
-
-    // snakes
-    for (const s of state.snakes) {
-      for (const seg of s.body) {
-        const i = idx(seg.x, seg.y);
-        if (!cells[i]) continue;
-        cells[i].classList.add("snake-cell");
-        // color each snake
-        cells[i].style.background = s.color;
-      }
-    }
+    gridW = state.w;
+    gridH = state.h;
+    clampCameraToWorld();
+    renderer.render(state, camera);
     // Continuous follow is only active when watch checkbox is enabled.
     if (token && watchedSnakeId) {
       const followTarget = findSnakeHeadById(watchedSnakeId);
       if (followTarget) {
         camera.setCenter(followTarget.x, followTarget.y);
-        centerViewportOnCamera();
+        renderer.render(state, camera);
       }
     }
   }
@@ -502,6 +606,34 @@
     ecoMWhiteEl.textContent = "—";
     ecoStatusEl.textContent = "Economy unavailable";
     updateDebugOverlay();
+  }
+
+  async function loadStateFallbackOnce() {
+    try {
+      const res = await fetch(apiPath("/game/state"));
+      if (!res.ok) return;
+      const state = await res.json();
+      if (!state || typeof state !== "object") return;
+      if (!Number.isFinite(Number(state.tick))) return;
+      pushStateBuffer(state);
+      const view = buildWorldView();
+      if (view) drawFrame(view);
+    } catch (_) {
+      // fallback best effort
+    }
+  }
+
+  function ensureStateFallbackRunning() {
+    if (stateFallbackTimer) return;
+    stateFallbackTimer = setInterval(() => {
+      if (!wsConnected) loadStateFallbackOnce();
+    }, 500);
+  }
+
+  function stopStateFallback() {
+    if (!stateFallbackTimer) return;
+    clearInterval(stateFallbackTimer);
+    stateFallbackTimer = null;
   }
 
   function fmtInt(v) {
@@ -609,30 +741,6 @@
     borrowBtn.disabled = !(isAuth && Number.isFinite(borrowAmount) && borrowAmount > 0);
   }
 
-  async function refreshViewState() {
-    try {
-      const query = new URLSearchParams({ sid: streamSessionId });
-      if (token) query.set("token", token);
-      const res = await fetch(apiPath("/game/view?" + query.toString()));
-      if (!res.ok) return;
-      const data = await res.json();
-      if (typeof data.mode === "string") debugModeLabel = data.mode;
-      // In AUTH mode, local camera is source of truth unless follow is active.
-      const shouldApplyServerCamera = (data.mode !== "AUTH") || !!watchedSnakeId;
-      if (shouldApplyServerCamera && typeof data.camera_x === "number" && typeof data.camera_y === "number") {
-        camera.setCenter(data.camera_x, data.camera_y);
-      }
-      if (shouldApplyServerCamera && typeof data.zoom === "number") camera.setZoom(data.zoom);
-      if (typeof data.aoi_chunks === "number") serverAoiChunks = data.aoi_chunks;
-      if (data.public_camera_chunk && typeof data.public_camera_chunk.cx === "number" && typeof data.public_camera_chunk.cy === "number") {
-        debugPublicChunk = { cx: data.public_camera_chunk.cx, cy: data.public_camera_chunk.cy };
-      }
-      updateDebugOverlay();
-    } catch (_) {
-      // Best effort debug/state endpoint.
-    }
-  }
-
   async function loadMySnakes() {
     if (!token) return;
     const res = await api("/me/snakes");
@@ -652,8 +760,8 @@
         const jumpTarget = findSnakeHeadById(selectedSnakeId);
         if (jumpTarget) {
           camera.setCenter(jumpTarget.x, jumpTarget.y);
-          centerViewportOnCamera();
           postCamera({ autoFollow: false });
+          if (latestServerState) renderer.render(latestServerState, camera);
         }
         loadMySnakes();
       };
@@ -779,11 +887,32 @@
 
   async function setDir(dir) {
     if (!token || !selectedSnakeId) return;
+    if (wsHandle && wsHandle.readyState === WebSocket.OPEN) {
+      const dirMap = { 1: "L", 2: "R", 3: "U", 4: "D" };
+      wsHandle.send(JSON.stringify({
+        type: "input",
+        channel: "private",
+        snake_id: selectedSnakeId,
+        dir: dirMap[dir] || "STOP",
+        seq: Date.now()
+      }));
+      return;
+    }
     await api(`/snakes/${selectedSnakeId}/dir`, { method:"POST", body: JSON.stringify({dir}) });
   }
 
   async function togglePause() {
     if (!token || !selectedSnakeId) return;
+    if (wsHandle && wsHandle.readyState === WebSocket.OPEN) {
+      wsHandle.send(JSON.stringify({
+        type: "input",
+        channel: "private",
+        snake_id: selectedSnakeId,
+        pause_toggle: true,
+        seq: Date.now()
+      }));
+      return;
+    }
     await api(`/snakes/${selectedSnakeId}/pause`, { method:"POST" });
     await loadMySnakes();
   }
@@ -825,31 +954,103 @@
   borrowAmountEl.addEventListener("input", updateActionButtons);
   attachAmountEl.addEventListener("input", updateActionButtons);
 
-  // SSE stream (watchers scale well)
-  function startStream() {
-    const params = new URLSearchParams({ sid: streamSessionId });
-    if (token) params.set("token", token);
-    const es = new EventSource(apiPath("/game/stream?" + params.toString()));
-    streamHandle = es;
-    es.addEventListener("frame", (ev) => {
-      latestSnapshotBytes = new TextEncoder().encode(ev.data).length;
-      const state = JSON.parse(ev.data);
+  function handleWsMessage(raw) {
+    let msg = null;
+    try {
+      msg = JSON.parse(raw);
+    } catch (_) {
+      return;
+    }
+    if (!msg || typeof msg !== "object") return;
+
+    if (msg.type === "world_snapshot" && msg.snapshot) {
+      const state = msg.snapshot;
+      latestSnapshotBytes = new TextEncoder().encode(raw).length;
+      if (typeof msg.mode === "string") debugModeLabel = msg.mode;
+      if (typeof msg.aoi_chunks === "number") serverAoiChunks = msg.aoi_chunks;
+      if (msg.public_camera_chunk &&
+          typeof msg.public_camera_chunk.cx === "number" &&
+          typeof msg.public_camera_chunk.cy === "number") {
+        debugPublicChunk = { cx: msg.public_camera_chunk.cx, cy: msg.public_camera_chunk.cy };
+      }
+      if (msg.camera && typeof msg.camera.x === "number" && typeof msg.camera.y === "number") {
+        const shouldApplyServerCamera = (msg.channel !== "private") || !!watchedSnakeId;
+        if (shouldApplyServerCamera) {
+          camera.setCenter(msg.camera.x, msg.camera.y);
+          if (typeof msg.camera.zoom === "number") camera.setZoom(msg.camera.zoom);
+        }
+      }
       pushStateBuffer(state);
       const view = buildWorldView();
       if (view) drawFrame(view);
       updateDebugOverlay();
-    });
-    es.onerror = () => {
-      // auto reconnect
-      es.close();
-      setTimeout(startStream, 1000);
+      return;
+    }
+
+    if (msg.type === "economy_world") {
+      ecoMEl.textContent = fmtInt(Number(msg.M));
+      ecoPEl.textContent = Number.isFinite(Number(msg.P)) ? Number(msg.P).toFixed(3) : "—";
+      ecoPiEl.textContent = Number.isFinite(Number(msg.pi)) ? Number(msg.pi).toFixed(4) : "—";
+      ecoAWorldEl.textContent = fmtInt(Number(msg.A_world));
+      ecoMWhiteEl.textContent = fmtInt(Number(msg.M_white));
+      ecoStatusEl.textContent = "Economy: live";
+      return;
+    }
+
+    if (msg.type === "user_state") {
+      if (Number.isFinite(Number(msg.balance_mi))) {
+        myBalance = Number(msg.balance_mi);
+        myBalanceEl.textContent = fmtInt(myBalance);
+      }
+      if (Number.isFinite(Number(msg.deployed_k))) {
+        myDeployedEl.textContent = fmtInt(Number(msg.deployed_k));
+      }
+      if (Number.isFinite(Number(msg.snake_count))) {
+        mySnakeCountEl.textContent = fmtInt(Number(msg.snake_count));
+      }
+      updateActionButtons();
+      return;
+    }
+
+    if (msg.type === "auth_ack") {
+      if (msg.ok) {
+        debugModeLabel = "AUTH";
+        postCamera({ autoFollow: true });
+      }
+      return;
+    }
+  }
+
+  function startStream() {
+    const ws = new WebSocket(wsPath("/ws"));
+    wsHandle = ws;
+    ws.onopen = () => {
+      wsConnected = true;
+      stopStateFallback();
+      wsBackoffMs = 1000;
+      if (token) {
+        ws.send(JSON.stringify({ type: "auth", channel: "private", token }));
+      }
+    };
+    ws.onmessage = (ev) => handleWsMessage(ev.data);
+    ws.onclose = () => {
+      wsConnected = false;
+      ensureStateFallbackRunning();
+      if (wsHandle === ws) wsHandle = null;
+      setTimeout(startStream, wsBackoffMs);
+      wsBackoffMs = Math.min(15000, wsBackoffMs * 2);
+    };
+    ws.onerror = () => {
+      wsConnected = false;
+      ensureStateFallbackRunning();
+      try { ws.close(); } catch (_) {}
     };
   }
 
   function restartStream() {
-    if (streamHandle) {
-      streamHandle.close();
-      streamHandle = null;
+    if (wsHandle) {
+      try { wsHandle.close(); } catch (_) {}
+      wsHandle = null;
     }
     startStream();
   }
@@ -875,37 +1076,39 @@
         const target = getCameraTargetForFollow();
         camera.setCenter(target.x, target.y);
       }
-      const res = await api("/game/camera", {
-        method: "POST",
-        body: JSON.stringify({
-          sid: streamSessionId,
-          x: Math.round(camera.x),
-          y: Math.round(camera.y),
-          zoom: camera.zoom,
-          watch_snake_id: watchedSnakeId || null
-        })
-      });
-      if (res.ok) {
-        const data = await res.json().catch(() => null);
-        if (data && typeof data.aoi_chunks === "number") serverAoiChunks = data.aoi_chunks;
-      }
+      if (!wsHandle || wsHandle.readyState !== WebSocket.OPEN) return;
+      const now = Date.now();
+      if (now - lastCameraSendAt < 200) return;
+      const payloadObj = {
+        type: "camera_set",
+        channel: "private",
+        x: Math.round(camera.x),
+        y: Math.round(camera.y),
+        zoom: Number(camera.zoom.toFixed(3)),
+        mode: watchedSnakeId ? "follow" : "free",
+        follow_snake_id: watchedSnakeId || null,
+        seq: ++cameraSendSeq.v
+      };
+      const payload = JSON.stringify(payloadObj);
+      if (payload === lastCameraPayload) return;
+      wsHandle.send(payload);
+      lastCameraSendAt = now;
+      lastCameraPayload = payload;
       updateDebugOverlay();
     } catch (_) {
-      // Optional session camera update. Stream falls back to defaults if this fails.
+      // Optional session camera update.
     }
   }
 
   function zoomIn() {
     camera.setZoom(camera.zoom * 1.1);
-    applyZoomToBoard();
-    centerViewportOnCamera();
+    if (latestServerState) renderer.render(latestServerState, camera);
     postCamera();
   }
 
   function zoomOut() {
     camera.setZoom(camera.zoom / 1.1);
-    applyZoomToBoard();
-    centerViewportOnCamera();
+    if (latestServerState) renderer.render(latestServerState, camera);
     postCamera();
   }
 
@@ -915,38 +1118,57 @@
       const target = getCameraTargetForFollow();
       camera.setCenter(target.x, target.y);
     }
-    applyZoomToBoard();
-    centerViewportOnCamera();
+    if (latestServerState) renderer.render(latestServerState, camera);
     postCamera();
   }
 
-  function centerViewportOnCamera() {
-    const side = Math.max(4, Math.round(BASE_CELL_SIZE * camera.zoom));
-    const px = camera.x * side + side / 2;
-    const py = camera.y * side + side / 2;
-    suppressScrollSync = true;
-    boardWrap.scrollLeft = Math.max(0, px - boardWrap.clientWidth / 2);
-    boardWrap.scrollTop = Math.max(0, py - boardWrap.clientHeight / 2);
-    requestAnimationFrame(() => {
-      suppressScrollSync = false;
-    });
-  }
-
-  function syncCameraFromViewport() {
-    const side = Math.max(4, Math.round(BASE_CELL_SIZE * camera.zoom));
-    if (side <= 0) return;
-    const cx = (boardWrap.scrollLeft + boardWrap.clientWidth / 2) / side;
-    const cy = (boardWrap.scrollTop + boardWrap.clientHeight / 2) / side;
-    camera.setCenter(cx, cy);
-  }
-
   function onBoardWheel(ev) {
-    if (!ev.ctrlKey && !ev.metaKey) return;
+    if (!token) return;
     ev.preventDefault();
     if (ev.deltaY < 0) {
       zoomIn();
     } else {
       zoomOut();
+    }
+  }
+
+  function clampCameraToWorld() {
+    if (!Number.isFinite(camera.x) || !Number.isFinite(camera.y)) return;
+    const maxX = Math.max(0, gridW - 1);
+    const maxY = Math.max(0, gridH - 1);
+    camera.x = Math.max(0, Math.min(maxX, camera.x));
+    camera.y = Math.max(0, Math.min(maxY, camera.y));
+  }
+
+  function onPointerDown(ev) {
+    if (!token || watchedSnakeId) return;
+    isDragging = true;
+    dragLastX = ev.clientX;
+    dragLastY = ev.clientY;
+    canvas.classList.add("dragging");
+    canvas.setPointerCapture(ev.pointerId);
+  }
+
+  function onPointerMove(ev) {
+    if (!isDragging || !token || watchedSnakeId || !latestServerState) return;
+    const dx = ev.clientX - dragLastX;
+    const dy = ev.clientY - dragLastY;
+    dragLastX = ev.clientX;
+    dragLastY = ev.clientY;
+    const viewX = renderer.visibleCellsX || 1;
+    const viewY = renderer.visibleCellsY || 1;
+    camera.x -= dx * (viewX / Math.max(1, canvas.clientWidth));
+    camera.y -= dy * (viewY / Math.max(1, canvas.clientHeight));
+    clampCameraToWorld();
+    renderer.render(latestServerState, camera);
+    postCamera({ autoFollow: false });
+  }
+
+  function onPointerUp(ev) {
+    isDragging = false;
+    canvas.classList.remove("dragging");
+    if (canvas.hasPointerCapture(ev.pointerId)) {
+      canvas.releasePointerCapture(ev.pointerId);
     }
   }
 
@@ -957,11 +1179,13 @@
   zoomInBtn.addEventListener("click", zoomIn);
   zoomOutBtn.addEventListener("click", zoomOut);
   zoomResetBtn.addEventListener("click", resetView);
-  board.addEventListener("wheel", onBoardWheel, { passive: false });
-  boardWrap.addEventListener("scroll", () => {
-    if (suppressScrollSync) return;
-    if (token && watchedSnakeId) return; // follow mode controls camera, not manual scroll
-    syncCameraFromViewport();
+  canvas.addEventListener("wheel", onBoardWheel, { passive: false });
+  canvas.addEventListener("pointerdown", onPointerDown);
+  canvas.addEventListener("pointermove", onPointerMove);
+  canvas.addEventListener("pointerup", onPointerUp);
+  canvas.addEventListener("pointercancel", onPointerUp);
+  window.addEventListener("resize", () => {
+    if (latestServerState) renderer.render(latestServerState, camera);
   });
 
   applyViewControlAuthState();
@@ -972,15 +1196,15 @@
     loadUserMe();
   }
   startStream();
+  ensureStateFallbackRunning();
+  loadStateFallbackOnce();
   loadRuntimeSpeed();
   loadEconomyState();
-  refreshViewState();
   runtimeSpeedPollTimer = setInterval(loadRuntimeSpeed, 10000);
-  economyPollTimer = setInterval(loadEconomyState, 2000);
-  viewPollTimer = setInterval(refreshViewState, 1000);
+  setInterval(loadEconomyState, 10000);
   cameraPollTimer = setInterval(() => {
     if (token) postCamera();
-  }, 100);
+  }, 250);
   if (token) postCamera();
   updateDebugOverlay();
 </script>

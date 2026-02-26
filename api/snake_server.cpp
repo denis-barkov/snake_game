@@ -435,6 +435,32 @@ static optional<double> get_json_double_field(const string& body, const string& 
   }
 }
 
+static optional<bool> get_json_bool_field(const string& body, const string& key) {
+  const string pat = "\"" + key + "\"";
+  size_t p = body.find(pat);
+  if (p == string::npos) return nullopt;
+  p = body.find(':', p);
+  if (p == string::npos) return nullopt;
+  ++p;
+  while (p < body.size() && isspace(static_cast<unsigned char>(body[p]))) ++p;
+  if (body.compare(p, 4, "true") == 0) return true;
+  if (body.compare(p, 5, "false") == 0) return false;
+  return nullopt;
+}
+
+static bool origin_allowed_for_ws(const string& origin) {
+  if (origin.empty()) return false;
+  auto starts_with = [](const string& s, const string& p) {
+    return s.rfind(p, 0) == 0;
+  };
+  // Local file:// pages send Origin: null in browsers; allow for local dev mode.
+  if (origin == "null") return true;
+  if (origin == "https://terrariumsnake.com") return true;
+  if (starts_with(origin, "http://127.0.0.1")) return true;
+  if (starts_with(origin, "http://localhost")) return true;
+  return false;
+}
+
 static protocol::Snapshot to_protocol_snapshot(const world::WorldSnapshot& snap_in) {
   protocol::Snapshot snap;
   snap.tick = snap_in.tick;
@@ -804,6 +830,224 @@ int main(int argc, char** argv) {
     }
     return it->second;
   };
+
+  srv.set_pre_routing_handler([&](const httplib::Request& req, httplib::Response& res) {
+    const auto upgrade = req.get_header_value("Upgrade");
+    const bool is_ws_upgrade = !upgrade.empty() &&
+                               std::equal(upgrade.begin(), upgrade.end(), "websocket",
+                                          [](char a, char b) { return std::tolower(static_cast<unsigned char>(a)) == b; });
+    if (req.path == "/ws" && is_ws_upgrade) {
+      const auto origin = req.get_header_value("Origin");
+      if (!origin_allowed_for_ws(origin)) {
+        res.status = 403;
+        res.set_content("{\"error\":\"forbidden_origin\"}", "application/json");
+        return httplib::Server::HandlerResponse::Handled;
+      }
+    }
+    return httplib::Server::HandlerResponse::Unhandled;
+  });
+
+  srv.WebSocket("/ws", [&](const httplib::Request& req, httplib::ws::WebSocket& ws) {
+    (void)req;
+    const string sid = rand_token(16);
+    {
+      lock_guard<mutex> lock(sessions_mu);
+      ClientSession s;
+      s.session_id = sid;
+      s.camera_x = grid_w / 2;
+      s.camera_y = grid_h / 2;
+      s.camera_zoom = 1.0;
+      s.is_watcher = true;
+      s.subscribed_chunks_count = compute_subscribed_chunks_count(s);
+      s.updated_at_ms = now_ms();
+      sessions[sid] = s;
+    }
+
+    atomic<bool> alive{true};
+    thread reader([&] {
+      while (alive.load() && ws.is_open()) {
+        string msg;
+        auto rr = ws.read(msg);
+        if (rr != httplib::ws::Text) break;
+
+        auto type = get_json_string_field(msg, "type");
+        if (!type) continue;
+
+        if (*type == "auth") {
+          auto token = get_json_string_field(msg, "token");
+          if (!token || token->empty()) {
+            ws.send("{\"type\":\"auth_ack\",\"channel\":\"private\",\"ok\":false}");
+            continue;
+          }
+          auto uid = auth.token_to_user(*token);
+          if (!uid) {
+            ws.send("{\"type\":\"auth_ack\",\"channel\":\"private\",\"ok\":false}");
+            continue;
+          }
+          {
+            lock_guard<mutex> lock(sessions_mu);
+            auto it = sessions.find(sid);
+            if (it != sessions.end()) {
+              it->second.auth_user_id = *uid;
+              it->second.is_watcher = false;
+              it->second.updated_at_ms = now_ms();
+            }
+          }
+          ws.send("{\"type\":\"auth_ack\",\"channel\":\"private\",\"ok\":true}");
+          continue;
+        }
+
+        ClientSession session = get_or_create_session(sid);
+        if (!session.auth_user_id.has_value()) continue;
+
+        if (*type == "input") {
+          auto snake_id = get_json_int_field(msg, "snake_id");
+          auto dir = get_json_string_field(msg, "dir");
+          auto pause_toggle = get_json_bool_field(msg, "pause_toggle");
+          if (snake_id && dir) {
+            int d = 0;
+            if (*dir == "L") d = 1;
+            else if (*dir == "R") d = 2;
+            else if (*dir == "U") d = 3;
+            else if (*dir == "D") d = 4;
+            if (d >= 1 && d <= 4) {
+              game.set_snake_dir(*session.auth_user_id, *snake_id, static_cast<world::Dir>(d));
+            }
+          }
+          if (snake_id && pause_toggle && *pause_toggle) {
+            game.toggle_snake_pause(*session.auth_user_id, *snake_id);
+          }
+          continue;
+        }
+
+        if (*type == "camera_set") {
+          auto x = get_json_int_field(msg, "x");
+          auto y = get_json_int_field(msg, "y");
+          auto zoom = get_json_double_field(msg, "zoom");
+          if (!x || !y) continue;
+          const uint64_t now_millis = now_ms();
+          const uint64_t min_gap = static_cast<uint64_t>(
+              max(1, static_cast<int>(std::lround(1000.0 / static_cast<double>(runtime_cfg.camera_msg_max_hz)))));
+          if (session.last_camera_update_ms != 0 && now_millis - session.last_camera_update_ms < min_gap) continue;
+          session.camera_x = max(0, min(game.snapshot().w - 1, *x));
+          session.camera_y = max(0, min(game.snapshot().h - 1, *y));
+          if (zoom) session.camera_zoom = max(0.25, min(4.0, *zoom));
+          auto follow_id = get_json_int_field(msg, "follow_snake_id");
+          if (follow_id && *follow_id > 0) session.watched_snake_id = *follow_id;
+          session.subscribed_chunks_count = compute_subscribed_chunks_count(session);
+          session.last_camera_update_ms = now_millis;
+          session.updated_at_ms = now_millis;
+          lock_guard<mutex> lock(sessions_mu);
+          sessions[sid] = session;
+        }
+      }
+      alive.store(false);
+    });
+
+    auto next_world_send = chrono::steady_clock::now();
+    auto next_economy_send = chrono::steady_clock::now();
+    auto next_private_send = chrono::steady_clock::now();
+
+    while (alive.load() && ws.is_open()) {
+      ClientSession session = get_or_create_session(sid);
+      const bool is_auth = session.auth_user_id.has_value();
+      const int hz = is_auth ? runtime_cfg.auth_spectator_hz : runtime_cfg.public_spectator_hz;
+      const auto world_dt = chrono::milliseconds(max(1, static_cast<int>(std::lround(1000.0 / static_cast<double>(hz)))));
+
+      auto now = chrono::steady_clock::now();
+      if (now >= next_world_send) {
+        world::WorldSnapshot snap;
+        string channel = "public";
+        int cam_x = 0;
+        int cam_y = 0;
+        int aoi_radius = runtime_cfg.public_aoi_radius;
+        string mode = "PUBLIC";
+        int aoi_chunks = runtime_cfg.single_chunk_mode ? 1 : (aoi_radius * 2 + 1) * (aoi_radius * 2 + 1);
+        int public_chunk_cx = 0;
+        int public_chunk_cy = 0;
+
+        if (is_auth) {
+          channel = "private";
+          mode = "AUTH";
+          cam_x = session.camera_x;
+          cam_y = session.camera_y;
+          aoi_radius = runtime_cfg.auth_aoi_radius;
+          aoi_chunks = compute_subscribed_chunks_count(session);
+        } else {
+          PublicViewState pv;
+          {
+            lock_guard<mutex> lock(public_view_mu);
+            pv = public_view;
+          }
+          cam_x = pv.camera_x;
+          cam_y = pv.camera_y;
+          public_chunk_cx = pv.chunk_cx;
+          public_chunk_cy = pv.chunk_cy;
+        }
+
+        snap = game.snapshot_for_camera(cam_x, cam_y, runtime_cfg.aoi_enabled, aoi_radius);
+        const string snap_json = state_to_json(snap);
+        ostringstream out;
+        out << "{"
+            << "\"type\":\"world_snapshot\","
+            << "\"channel\":\"" << channel << "\","
+            << "\"mode\":\"" << mode << "\","
+            << "\"camera\":{\"x\":" << cam_x << ",\"y\":" << cam_y << ",\"zoom\":" << json_number(session.camera_zoom) << "},"
+            << "\"aoi_chunks\":" << aoi_chunks << ","
+            << "\"public_camera_chunk\":{\"cx\":" << public_chunk_cx << ",\"cy\":" << public_chunk_cy << "},"
+            << "\"chunk_size\":" << runtime_cfg.chunk_size << ","
+            << "\"snapshot\":" << snap_json
+            << "}";
+        if (!ws.send(out.str())) break;
+        next_world_send = now + world_dt;
+      }
+
+      if (now >= next_economy_send) {
+        const auto eco = economy.GetState();
+        ostringstream out;
+        out << "{"
+            << "\"type\":\"economy_world\","
+            << "\"channel\":\"public\","
+            << "\"M\":" << eco.state.m << ","
+            << "\"P\":" << json_number(eco.state.p) << ","
+            << "\"pi\":" << json_number(eco.state.pi) << ","
+            << "\"A_world\":" << eco.state.a_world << ","
+            << "\"M_white\":" << eco.state.m_white
+            << "}";
+        if (!ws.send(out.str())) break;
+        next_economy_send = now + chrono::seconds(1);
+      }
+
+      if (is_auth && now >= next_private_send) {
+        const auto user = storage->GetUserById(std::to_string(*session.auth_user_id));
+        if (user.has_value()) {
+          const auto snakes = game.list_user_snakes(*session.auth_user_id);
+          int64_t deployed = 0;
+          for (const auto& s : snakes) deployed += static_cast<int64_t>(s.body.size());
+          ostringstream out;
+          out << "{"
+              << "\"type\":\"user_state\","
+              << "\"channel\":\"private\","
+              << "\"user_id\":" << *session.auth_user_id << ","
+              << "\"balance_mi\":" << user->balance_mi << ","
+              << "\"deployed_k\":" << deployed << ","
+              << "\"snake_count\":" << snakes.size()
+              << "}";
+          if (!ws.send(out.str())) break;
+        }
+        next_private_send = now + chrono::seconds(5);
+      }
+
+      this_thread::sleep_for(chrono::milliseconds(10));
+    }
+
+    alive.store(false);
+    if (reader.joinable()) reader.join();
+    {
+      lock_guard<mutex> lock(sessions_mu);
+      sessions.erase(sid);
+    }
+  });
 
   srv.Options(R"(.*)", [&](const httplib::Request&, httplib::Response& res) {
     add_cors(res);
@@ -1339,7 +1583,7 @@ int main(int argc, char** argv) {
   });
 
   cout << "Server on http://" << bind_host << ":" << bind_port << "\n";
-  cout << "SSE:   GET /game/stream\n";
+  cout << "WS:    GET /ws\n";
   cout << "State: GET /game/state\n";
   cout << "Login: POST /auth/login {username,password}\n";
 
