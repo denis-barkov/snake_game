@@ -19,11 +19,20 @@ class IStorage {
   virtual bool PutUser(const User& u) = 0;
   virtual bool UpdateUserBalance(const std::string& user_id, int64_t new_balance) = 0;
   virtual bool IncrementUserBalance(const std::string& user_id, int64_t delta_balance) = 0;
+  virtual bool BorrowCellsAndTrackPeriod(const std::string& user_id,
+                                         int64_t amount,
+                                         const std::string& period_key,
+                                         int64_t& out_balance_mi) = 0;
 
   virtual std::vector<Snake> ListSnakes() = 0;
   virtual std::optional<Snake> GetSnakeById(const std::string& snake_id) = 0;
   virtual bool PutSnake(const Snake& s) = 0;
   virtual bool DeleteSnake(const std::string& snake_id) = 0;
+  virtual bool AttachCellsToSnake(const std::string& user_id,
+                                  const std::string& snake_id,
+                                  int64_t amount,
+                                  int64_t& out_balance_mi,
+                                  int64_t& out_length_k) = 0;
 
   virtual std::optional<WorldChunk> GetWorldChunk(const std::string& chunk_id) = 0;
   virtual bool PutWorldChunk(const WorldChunk& chunk) = 0;

@@ -37,6 +37,10 @@ Simulation internals are structured in `api/world`:
 - `PUBLIC_AOI_RADIUS` (default `1`)
 - `AUTH_AOI_RADIUS` (default `2`)
 - `CAMERA_MSG_MAX_HZ` (default `10`)
+- `MAX_BORROW_PER_CALL` (default `1000000`)
+- `FOOD_REWARD_CELLS` (default `1`)
+- `RESIZE_THRESHOLD` (default `0.05`)
+- `WORLD_ASPECT_RATIO` (default `1.7777777778`)
 - `ECONOMY_CACHE_MS` (default `2000`, min `500`, max `10000`) for `/economy/state` read cache
 
 Default run values in Make:
@@ -53,6 +57,10 @@ Default run values in Make:
 - `PUBLIC_AOI_RADIUS=1`
 - `AUTH_AOI_RADIUS=2`
 - `CAMERA_MSG_MAX_HZ=10`
+- `MAX_BORROW_PER_CALL=1000000`
+- `FOOD_REWARD_CELLS=1`
+- `RESIZE_THRESHOLD=0.05`
+- `WORLD_ASPECT_RATIO=1.7777777778`
 
 Notes:
 - With default rollout flags (`SINGLE_CHUNK_MODE=true`, `AOI_ENABLED=false`) behavior stays equivalent to previous full-world snapshots.
@@ -62,6 +70,16 @@ Notes:
 
 - Backend endpoint: `GET /economy/state`
 - Frontend HUD polls this endpoint every 2 seconds.
+
+### Economy/game write paths (Step 10)
+
+- `GET /user/me` (auth) returns `balance_mi`, deployed capital, and snake count.
+- `POST /user/borrow` (auth) with `{ "amount": <int> }` credits storage and economy period buys.
+- `POST /snake/{snake_id}/attach` (auth) with `{ "amount": <int> }` moves cells from storage to selected snake.
+- `POST /economy/purchase` remains as an alias of `/user/borrow` for compatibility.
+
+Gameplay update:
+- Food events credit owner storage (`FOOD_REWARD_CELLS`) instead of auto-growing snake length.
 - Economy is computed outside the tick loop and cached in-process to avoid DynamoDB hammering.
 - No gameplay rules are changed by economy values in this step (display-only).
 - User HUD does not show `period_key`; period remains available in `snakecli economy status`.

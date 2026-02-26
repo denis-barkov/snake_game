@@ -254,6 +254,54 @@ std::optional<int> World::CreateSnakeForUser(int user_id, const std::string& col
   return s.id;
 }
 
+std::optional<int> World::AttachCellsForUser(int user_id, int snake_id, int amount) {
+  std::lock_guard<std::mutex> lock(mu_);
+  if (amount <= 0) return std::nullopt;
+  Snake* s = FindSnakeLocked(snake_id);
+  if (!s || !s->alive || s->user_id != user_id || s->body.empty()) return std::nullopt;
+
+  const Vec2 tail = s->body.back();
+  for (int i = 0; i < amount; ++i) {
+    // Deterministic extension: append at tail position; movement spreads it naturally.
+    s->body.push_back(tail);
+  }
+  s->grow = 0;
+  s->paused = false;
+  MarkSnakeDirtyLocked(s->id);
+  chunk_manager_.Rebuild(snakes_, foods_, obstacles_, tick_);
+  return static_cast<int>(s->body.size());
+}
+
+void World::ResizeWorld(int new_width, int new_height) {
+  std::lock_guard<std::mutex> lock(mu_);
+  if (new_width < 10 || new_height < 10) return;
+  if (new_width == width_ && new_height == height_) return;
+
+  width_ = new_width;
+  height_ = new_height;
+
+  auto clamp_point = [&](Vec2& p) {
+    p.x = std::max(0, std::min(width_ - 1, p.x));
+    p.y = std::max(0, std::min(height_ - 1, p.y));
+  };
+
+  for (auto& s : snakes_) {
+    for (auto& seg : s.body) clamp_point(seg);
+    if (s.body.empty()) {
+      s.body.push_back({0, 0});
+    }
+    MarkSnakeDirtyLocked(s.id);
+  }
+  for (auto& f : foods_) {
+    f.x = std::max(0, std::min(width_ - 1, f.x));
+    f.y = std::max(0, std::min(height_ - 1, f.y));
+  }
+
+  world_chunk_dirty_ = true;
+  ++world_version_;
+  chunk_manager_.Rebuild(snakes_, foods_, obstacles_, tick_);
+}
+
 PersistenceDelta World::DrainPersistenceDelta(int64_t ts_ms) {
   std::lock_guard<std::mutex> lock(mu_);
 

@@ -32,6 +32,15 @@ int getenv_int(const char* name, int default_value) {
   return static_cast<int>(parsed);
 }
 
+double getenv_double(const char* name, double default_value) {
+  const char* v = std::getenv(name);
+  if (!v || !*v) return default_value;
+  char* end = nullptr;
+  double parsed = std::strtod(v, &end);
+  if (end == v || *end != '\0') return default_value;
+  return parsed;
+}
+
 bool getenv_bool(const char* name, bool default_value) {
   const char* v = std::getenv(name);
   if (!v || !*v) return default_value;
@@ -68,6 +77,10 @@ RuntimeConfig RuntimeConfig::FromEnv() {
   cfg.public_aoi_radius = clamp_int(getenv_int("PUBLIC_AOI_RADIUS", cfg.public_aoi_radius), 0, 16);
   cfg.auth_aoi_radius = clamp_int(getenv_int("AUTH_AOI_RADIUS", cfg.auth_aoi_radius), 0, 16);
   cfg.camera_msg_max_hz = clamp_int(getenv_int("CAMERA_MSG_MAX_HZ", cfg.camera_msg_max_hz), 1, 120);
+  cfg.max_borrow_per_call = clamp_int(getenv_int("MAX_BORROW_PER_CALL", cfg.max_borrow_per_call), 1, 100000000);
+  cfg.food_reward_cells = clamp_int(getenv_int("FOOD_REWARD_CELLS", cfg.food_reward_cells), 1, 1000);
+  cfg.resize_threshold = std::max(0.0, std::min(1.0, getenv_double("RESIZE_THRESHOLD", cfg.resize_threshold)));
+  cfg.world_aspect_ratio = std::max(0.2, std::min(5.0, getenv_double("WORLD_ASPECT_RATIO", cfg.world_aspect_ratio)));
   if (!has_env("DEBUG_TPS")) {
     // Backward compatibility for older deployments that used LOG_HZ.
     cfg.debug_tps = getenv_bool("LOG_HZ", cfg.debug_tps);

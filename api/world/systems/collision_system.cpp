@@ -103,8 +103,7 @@ void CollisionSystem::Run(std::vector<Snake>& snakes,
     const Vec2 head = s.body[0];
     for (auto& f : foods) {
       if (f.x == head.x && f.y == head.y) {
-        s.grow += 1;
-        events.push_back(CollisionEvent{"FOOD", s.id, 0, head.x, head.y, 1});
+        events.push_back(CollisionEvent{"FOOD_EATEN", s.id, 0, head.x, head.y, 1});
         Vec2 replacement = SpawnSystem::RandFreeCell(snakes, foods, width, height, rng);
         f.x = replacement.x;
         f.y = replacement.y;

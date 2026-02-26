@@ -16,6 +16,8 @@
 #include <aws/dynamodb/model/PutItemRequest.h>
 #include <aws/dynamodb/model/QueryRequest.h>
 #include <aws/dynamodb/model/ScanRequest.h>
+#include <aws/dynamodb/model/TransactWriteItem.h>
+#include <aws/dynamodb/model/TransactWriteItemsRequest.h>
 #include <aws/dynamodb/model/UpdateItemRequest.h>
 
 namespace storage {
@@ -283,6 +285,45 @@ bool DynamoStorage::IncrementUserBalance(const std::string& user_id, int64_t del
   return false;
 }
 
+bool DynamoStorage::BorrowCellsAndTrackPeriod(const std::string& user_id,
+                                              int64_t amount,
+                                              const std::string& period_key,
+                                              int64_t& out_balance_mi) {
+  if (amount <= 0) return false;
+
+  Aws::DynamoDB::Model::TransactWriteItemsRequest tx;
+
+  Aws::DynamoDB::Model::Update user_update;
+  user_update.SetTableName(cfg_.users_table.c_str());
+  user_update.AddKey("user_id", S(user_id));
+  user_update.SetUpdateExpression("SET balance_mi = if_not_exists(balance_mi, :z) + :a");
+  user_update.SetConditionExpression("attribute_exists(user_id)");
+  user_update.AddExpressionAttributeValues(":z", N(0));
+  user_update.AddExpressionAttributeValues(":a", N(amount));
+
+  Aws::DynamoDB::Model::TransactWriteItem user_item;
+  user_item.SetUpdate(user_update);
+  tx.AddTransactItems(user_item);
+
+  Aws::DynamoDB::Model::Update period_update;
+  period_update.SetTableName(cfg_.economy_period_table.c_str());
+  period_update.AddKey("period_key", S(period_key));
+  period_update.SetUpdateExpression("ADD delta_m_buy :a");
+  period_update.AddExpressionAttributeValues(":a", N(amount));
+
+  Aws::DynamoDB::Model::TransactWriteItem period_item;
+  period_item.SetUpdate(period_update);
+  tx.AddTransactItems(period_item);
+
+  auto tx_res = client_->TransactWriteItems(tx);
+  if (!tx_res.IsSuccess()) return false;
+
+  const auto user = GetUserById(user_id);
+  if (!user.has_value()) return false;
+  out_balance_mi = user->balance_mi;
+  return true;
+}
+
 std::vector<Snake> DynamoStorage::ListSnakes() {
   std::vector<Snake> out;
   Aws::DynamoDB::Model::ScanRequest req;
@@ -371,6 +412,58 @@ bool DynamoStorage::DeleteSnake(const std::string& snake_id) {
   req.SetTableName(cfg_.snakes_table.c_str());
   req.AddKey("snake_id", S(snake_id));
   return client_->DeleteItem(req).IsSuccess();
+}
+
+bool DynamoStorage::AttachCellsToSnake(const std::string& user_id,
+                                       const std::string& snake_id,
+                                       int64_t amount,
+                                       int64_t& out_balance_mi,
+                                       int64_t& out_length_k) {
+  if (amount <= 0) return false;
+
+  Aws::DynamoDB::Model::TransactWriteItemsRequest tx;
+
+  Aws::DynamoDB::Model::Update user_update;
+  user_update.SetTableName(cfg_.users_table.c_str());
+  user_update.AddKey("user_id", S(user_id));
+  user_update.SetConditionExpression("attribute_exists(user_id) AND balance_mi >= :a");
+  user_update.SetUpdateExpression("SET balance_mi = balance_mi - :a");
+  user_update.AddExpressionAttributeValues(":a", N(amount));
+  user_update.AddExpressionAttributeValues(":z", N(0));
+
+  Aws::DynamoDB::Model::TransactWriteItem user_item;
+  user_item.SetUpdate(user_update);
+  tx.AddTransactItems(user_item);
+
+  const int64_t ts = static_cast<int64_t>(time(nullptr));
+  Aws::DynamoDB::Model::Update snake_update;
+  snake_update.SetTableName(cfg_.snakes_table.c_str());
+  snake_update.AddKey("snake_id", S(snake_id));
+  snake_update.SetConditionExpression(
+      "attribute_exists(snake_id) AND owner_user_id = :uid "
+      "AND (attribute_not_exists(alive) OR alive = :alive) "
+      "AND (attribute_not_exists(is_on_field) OR is_on_field = :onfield)");
+  snake_update.SetUpdateExpression("SET length_k = if_not_exists(length_k, :z) + :a, updated_at = :ts");
+  snake_update.AddExpressionAttributeValues(":uid", S(user_id));
+  snake_update.AddExpressionAttributeValues(":alive", B(true));
+  snake_update.AddExpressionAttributeValues(":onfield", B(true));
+  snake_update.AddExpressionAttributeValues(":z", N(0));
+  snake_update.AddExpressionAttributeValues(":a", N(amount));
+  snake_update.AddExpressionAttributeValues(":ts", N(ts));
+
+  Aws::DynamoDB::Model::TransactWriteItem snake_item;
+  snake_item.SetUpdate(snake_update);
+  tx.AddTransactItems(snake_item);
+
+  auto tx_res = client_->TransactWriteItems(tx);
+  if (!tx_res.IsSuccess()) return false;
+
+  const auto user = GetUserById(user_id);
+  const auto snake = GetSnakeById(snake_id);
+  if (!user.has_value() || !snake.has_value()) return false;
+  out_balance_mi = user->balance_mi;
+  out_length_k = snake->length_k;
+  return true;
 }
 
 std::optional<WorldChunk> DynamoStorage::GetWorldChunk(const std::string& chunk_id) {

@@ -62,6 +62,17 @@ static string utc_period_key_yyyymmddhh() {
   return buf;
 }
 
+static pair<int, int> dims_from_area(int64_t area, double aspect_ratio) {
+  const int64_t safe_area = max<int64_t>(100, area);
+  const double safe_aspect = (aspect_ratio > 0.1) ? aspect_ratio : 16.0 / 9.0;
+  int width = max(10, static_cast<int>(ceil(sqrt(static_cast<double>(safe_area) * safe_aspect))));
+  int height = max(10, static_cast<int>(ceil(static_cast<double>(safe_area) / static_cast<double>(width))));
+  while (static_cast<int64_t>(width) * static_cast<int64_t>(height) < safe_area) {
+    ++height;
+  }
+  return {width, height};
+}
+
 static string json_escape(const string& s) {
   ostringstream o;
   for (char c : s) {
@@ -206,14 +217,41 @@ class GameService {
     return world_.CreateSnakeForUser(user_id, color);
   }
 
+  optional<int> attach_cells_to_snake(int user_id, int snake_id, int amount) {
+    ensure_loaded_from_storage_if_empty();
+    return world_.AttachCellsForUser(user_id, snake_id, amount);
+  }
+
+  void resize_world(int width, int height) {
+    world_.ResizeWorld(width, height);
+  }
+
   // Writes only event-driven deltas. No per-tick checkpoint persistence.
-  void flush_persistence_delta() {
+  int64_t flush_persistence_delta_and_credit_food(int64_t food_reward_cells) {
     const auto delta = world_.DrainPersistenceDelta(static_cast<int64_t>(now_ms()));
-    if (delta.empty()) return;
+    if (delta.empty()) return 0;
+
+    int64_t credited_food_events = 0;
+    if (food_reward_cells > 0) {
+      for (const auto& e : delta.snake_events) {
+        if (e.event_type != "FOOD_EATEN") continue;
+        auto snake = storage_.GetSnakeById(e.snake_id);
+        if (!snake.has_value() || snake->owner_user_id.empty()) continue;
+        if (storage_.IncrementUserBalance(snake->owner_user_id, food_reward_cells)) {
+          ++credited_food_events;
+        }
+      }
+    }
+
     for (const auto& s : delta.upsert_snakes) storage_.PutSnake(s);
     for (const auto& sid : delta.delete_snake_ids) storage_.DeleteSnake(sid);
     if (delta.upsert_world_chunk.has_value()) storage_.PutWorldChunk(*delta.upsert_world_chunk);
     for (const auto& e : delta.snake_events) storage_.AppendSnakeEvent(e);
+    return credited_food_events;
+  }
+
+  void flush_persistence_delta() {
+    (void)flush_persistence_delta_and_credit_food(0);
   }
 
  private:
@@ -530,6 +568,10 @@ int main(int argc, char** argv) {
        << ", PUBLIC_AOI_RADIUS=" << runtime_cfg.public_aoi_radius
        << ", AUTH_AOI_RADIUS=" << runtime_cfg.auth_aoi_radius
        << ", CAMERA_MSG_MAX_HZ=" << runtime_cfg.camera_msg_max_hz
+       << ", MAX_BORROW_PER_CALL=" << runtime_cfg.max_borrow_per_call
+       << ", FOOD_REWARD_CELLS=" << runtime_cfg.food_reward_cells
+       << ", RESIZE_THRESHOLD=" << runtime_cfg.resize_threshold
+       << ", WORLD_ASPECT_RATIO=" << runtime_cfg.world_aspect_ratio
        << "\n";
 
   unique_ptr<storage::IStorage> storage;
@@ -565,6 +607,18 @@ int main(int argc, char** argv) {
   EconomyService economy(*storage);
   game.load_from_storage_or_seed_positions();
   game.flush_persistence_delta();
+
+  auto maybe_resize_world_from_economy = [&](const EconomyService::Snapshot& eco) {
+    const auto current = game.snapshot();
+    const int64_t current_area = static_cast<int64_t>(current.w) * static_cast<int64_t>(current.h);
+    const int64_t target_area = max<int64_t>(100, eco.state.a_world);
+    if (current_area <= 0) return;
+    const double rel_diff = std::abs(static_cast<double>(target_area - current_area) / static_cast<double>(current_area));
+    if (rel_diff < runtime_cfg.resize_threshold) return;
+    const auto [new_w, new_h] = dims_from_area(target_area, runtime_cfg.world_aspect_ratio);
+    game.resize_world(new_w, new_h);
+    game.flush_persistence_delta();
+  };
 
   if (mode == "reset") {
     if (!storage->ResetForDev()) {
@@ -656,7 +710,8 @@ int main(int argc, char** argv) {
       int catch_up_ticks = 0;
       while (now >= next_tick && catch_up_ticks < max_catch_up_ticks) {
         game.tick();
-        game.flush_persistence_delta();
+        const auto food_credits = game.flush_persistence_delta_and_credit_food(runtime_cfg.food_reward_cells);
+        if (food_credits > 0) economy.InvalidateCache();
         ++ticks_since_log;
         ++catch_up_ticks;
         if (runtime_cfg.public_view_enabled) {
@@ -828,6 +883,135 @@ int main(int argc, char** argv) {
     res.set_content(o.str(), "application/json");
   });
 
+  srv.Get("/user/me", [&](const httplib::Request& req, httplib::Response& res) {
+    add_cors(res);
+    auto uid = require_auth_user(auth, req);
+    if (!uid) {
+      res.status = 401;
+      res.set_content("{\"error\":\"unauthorized\"}", "application/json");
+      return;
+    }
+
+    const auto user = storage->GetUserById(std::to_string(*uid));
+    if (!user.has_value()) {
+      res.status = 404;
+      res.set_content("{\"error\":\"user_not_found\"}", "application/json");
+      return;
+    }
+
+    const auto snakes = game.list_user_snakes(*uid);
+    int64_t deployed = 0;
+    for (const auto& s : snakes) deployed += static_cast<int64_t>(s.body.size());
+
+    ostringstream o;
+    o << "{"
+      << "\"user_id\":" << *uid << ","
+      << "\"balance_mi\":" << user->balance_mi << ","
+      << "\"deployed_k\":" << deployed << ","
+      << "\"snake_count\":" << snakes.size()
+      << "}";
+    res.set_content(o.str(), "application/json");
+  });
+
+  auto handle_borrow_cells = [&](const httplib::Request& req, httplib::Response& res) {
+    add_cors(res);
+    auto uid = require_auth_user(auth, req);
+    if (!uid) {
+      res.status = 401;
+      res.set_content("{\"error\":\"unauthorized\"}", "application/json");
+      return;
+    }
+
+    auto amount = get_json_int_field(req.body, "amount");
+    if (!amount) amount = get_json_int_field(req.body, "cells");
+    if (!amount || *amount <= 0 || *amount > runtime_cfg.max_borrow_per_call) {
+      res.status = 400;
+      res.set_content("{\"error\":\"bad_amount\"}", "application/json");
+      return;
+    }
+
+    int64_t balance_after = 0;
+    const string user_id = std::to_string(*uid);
+    const string period_key = utc_period_key_yyyymmddhh();
+    if (!storage->BorrowCellsAndTrackPeriod(user_id, *amount, period_key, balance_after)) {
+      res.status = 500;
+      res.set_content("{\"error\":\"borrow_failed\"}", "application/json");
+      return;
+    }
+
+    economy.InvalidateCache();
+    const auto eco = economy.GetState();
+    maybe_resize_world_from_economy(eco);
+
+    ostringstream o;
+    o << "{"
+      << "\"ok\":true,"
+      << "\"amount\":" << *amount << ","
+      << "\"balance_mi\":" << balance_after << ","
+      << "\"period_key\":\"" << json_escape(period_key) << "\","
+      << "\"economy\":{"
+      << "\"M\":" << eco.state.m << ","
+      << "\"K\":" << eco.state.k << ","
+      << "\"A_world\":" << eco.state.a_world << ","
+      << "\"M_white\":" << eco.state.m_white << ","
+      << "\"P\":" << json_number(eco.state.p) << ","
+      << "\"pi\":" << json_number(eco.state.pi)
+      << "}"
+      << "}";
+    res.set_content(o.str(), "application/json");
+  };
+
+  srv.Post("/user/borrow", handle_borrow_cells);
+  srv.Post("/economy/purchase", handle_borrow_cells);
+
+  srv.Post(R"(/snake/(\d+)/attach)", [&](const httplib::Request& req, httplib::Response& res) {
+    add_cors(res);
+    auto uid = require_auth_user(auth, req);
+    if (!uid) {
+      res.status = 401;
+      res.set_content("{\"error\":\"unauthorized\"}", "application/json");
+      return;
+    }
+
+    int snake_id = stoi(req.matches[1]);
+    auto amount = get_json_int_field(req.body, "amount");
+    if (!amount || *amount <= 0) {
+      res.status = 400;
+      res.set_content("{\"error\":\"bad_amount\"}", "application/json");
+      return;
+    }
+
+    int64_t balance_after = 0;
+    int64_t snake_len_after = 0;
+    if (!storage->AttachCellsToSnake(std::to_string(*uid), std::to_string(snake_id), *amount, balance_after, snake_len_after)) {
+      res.status = 409;
+      res.set_content("{\"error\":\"attach_failed\"}", "application/json");
+      return;
+    }
+
+    auto world_len_after = game.attach_cells_to_snake(*uid, snake_id, *amount);
+    if (!world_len_after.has_value()) {
+      // Keep DB and runtime eventually consistent if this process missed the snake.
+      game.load_from_storage_or_seed_positions();
+      const auto refreshed = game.attach_cells_to_snake(*uid, snake_id, *amount);
+      if (!refreshed.has_value()) {
+        res.status = 500;
+        res.set_content("{\"error\":\"attach_runtime_failed\"}", "application/json");
+        return;
+      }
+      world_len_after = refreshed;
+    }
+    game.flush_persistence_delta();
+
+    ostringstream o;
+    o << "{"
+      << "\"ok\":true,"
+      << "\"balance_mi\":" << balance_after << ","
+      << "\"snake_length_k\":" << *world_len_after
+      << "}";
+    res.set_content(o.str(), "application/json");
+  });
+
   srv.Post("/game/camera", [&](const httplib::Request& req, httplib::Response& res) {
     add_cors(res);
     auto uid = require_auth_user(auth, req);
@@ -885,52 +1069,6 @@ int main(int argc, char** argv) {
         << "\"aoi_enabled\":" << (runtime_cfg.aoi_enabled ? "true" : "false")
         << "}";
     res.set_content(out.str(), "application/json");
-  });
-
-  srv.Post("/economy/purchase", [&](const httplib::Request& req, httplib::Response& res) {
-    add_cors(res);
-    auto uid = require_auth_user(auth, req);
-    if (!uid) {
-      res.status = 401;
-      res.set_content("{\"error\":\"unauthorized\"}", "application/json");
-      return;
-    }
-
-    auto cells = get_json_int_field(req.body, "cells");
-    if (!cells) cells = get_json_int_field(req.body, "purchased_cells");
-    if (!cells || *cells <= 0) {
-      res.status = 400;
-      res.set_content("{\"error\":\"bad_cells\"}", "application/json");
-      return;
-    }
-
-    const string user_id = std::to_string(*uid);
-    const string period_key = utc_period_key_yyyymmddhh();
-
-    if (!storage->IncrementUserBalance(user_id, *cells)) {
-      res.status = 500;
-      res.set_content("{\"error\":\"purchase_user_update_failed\"}", "application/json");
-      return;
-    }
-    if (!storage->IncrementEconomyPeriodDeltaMBuy(period_key, *cells)) {
-      // Best-effort compensation for partial failure in non-transactional MVP flow.
-      storage->IncrementUserBalance(user_id, -*cells);
-      res.status = 500;
-      res.set_content("{\"error\":\"purchase_period_update_failed\"}", "application/json");
-      return;
-    }
-
-    economy.InvalidateCache();
-    const auto eco = economy.GetState();
-    ostringstream o;
-    o << "{"
-      << "\"status\":\"OK\","
-      << "\"cells\":" << *cells << ","
-      << "\"period_key\":\"" << json_escape(period_key) << "\","
-      << "\"M\":" << eco.state.m << ","
-      << "\"P\":" << json_number(eco.state.p)
-      << "}";
-    res.set_content(o.str(), "application/json");
   });
 
   srv.Get("/game/view", [&](const httplib::Request& req, httplib::Response& res) {
@@ -1159,17 +1297,44 @@ int main(int argc, char** argv) {
 
     auto c = get_json_string_field(req.body, "color");
     string color = c ? *c : "#ff00ff";
+    const string uid_str = std::to_string(*uid);
+
+    auto user = storage->GetUserById(uid_str);
+    if (!user.has_value()) {
+      res.status = 404;
+      res.set_content("{\"error\":\"user_not_found\"}", "application/json");
+      return;
+    }
+    if (user->balance_mi < 1) {
+      res.status = 409;
+      res.set_content("{\"error\":\"insufficient_cells\"}", "application/json");
+      return;
+    }
+    if (!storage->IncrementUserBalance(uid_str, -1)) {
+      res.status = 500;
+      res.set_content("{\"error\":\"balance_update_failed\"}", "application/json");
+      return;
+    }
 
     auto id = game.create_snake_for_user(*uid, color);
     if (!id) {
+      // Roll back storage debit when snake creation fails (limit/placement/etc).
+      storage->IncrementUserBalance(uid_str, 1);
       res.status = 429;
       res.set_content("{\"error\":\"snake_limit\"}", "application/json");
       return;
     }
     game.flush_persistence_delta();
+    economy.InvalidateCache();
+
+    const auto user_after = storage->GetUserById(uid_str);
+    const int64_t balance_after = user_after ? user_after->balance_mi : 0;
 
     ostringstream o;
-    o << "{\"id\":" << *id << "}";
+    o << "{"
+      << "\"id\":" << *id << ","
+      << "\"balance_mi\":" << balance_after
+      << "}";
     res.set_content(o.str(), "application/json");
   });
 

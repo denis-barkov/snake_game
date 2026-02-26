@@ -65,6 +65,8 @@ class World {
 
   std::vector<Snake> ListUserSnakes(int user_id) const;
   std::optional<int> CreateSnakeForUser(int user_id, const std::string& color);
+  std::optional<int> AttachCellsForUser(int user_id, int snake_id, int amount);
+  void ResizeWorld(int new_width, int new_height);
 
   // Drains only meaningful state mutations (no per-tick movement writes).
   PersistenceDelta DrainPersistenceDelta(int64_t ts_ms);

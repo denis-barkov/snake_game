@@ -115,6 +115,10 @@ module "compute" {
     PUBLIC_AOI_RADIUS          = "1"
     AUTH_AOI_RADIUS            = "2"
     CAMERA_MSG_MAX_HZ          = "10"
+    MAX_BORROW_PER_CALL        = "1000000"
+    FOOD_REWARD_CELLS          = "1"
+    RESIZE_THRESHOLD           = "0.05"
+    WORLD_ASPECT_RATIO         = "1.7777777778"
     ADMIN_TOKEN                = "change-me"
   })
   domain_name       = var.domain_name

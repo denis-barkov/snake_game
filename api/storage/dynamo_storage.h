@@ -33,11 +33,20 @@ class DynamoStorage : public IStorage {
   bool PutUser(const User& u) override;
   bool UpdateUserBalance(const std::string& user_id, int64_t new_balance) override;
   bool IncrementUserBalance(const std::string& user_id, int64_t delta_balance) override;
+  bool BorrowCellsAndTrackPeriod(const std::string& user_id,
+                                 int64_t amount,
+                                 const std::string& period_key,
+                                 int64_t& out_balance_mi) override;
 
   std::vector<Snake> ListSnakes() override;
   std::optional<Snake> GetSnakeById(const std::string& snake_id) override;
   bool PutSnake(const Snake& s) override;
   bool DeleteSnake(const std::string& snake_id) override;
+  bool AttachCellsToSnake(const std::string& user_id,
+                          const std::string& snake_id,
+                          int64_t amount,
+                          int64_t& out_balance_mi,
+                          int64_t& out_length_k) override;
 
   std::optional<WorldChunk> GetWorldChunk(const std::string& chunk_id) override;
   bool PutWorldChunk(const WorldChunk& chunk) override;

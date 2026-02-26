@@ -19,6 +19,10 @@ struct RuntimeConfig {
   int public_aoi_radius = 1;
   int auth_aoi_radius = 2;
   int camera_msg_max_hz = 10;
+  int max_borrow_per_call = 1000000;
+  int food_reward_cells = 1;
+  double resize_threshold = 0.05;
+  double world_aspect_ratio = 16.0 / 9.0;
 
   static RuntimeConfig FromEnv();
   int TickIntervalMs() const;

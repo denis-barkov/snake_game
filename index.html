@@ -205,6 +205,23 @@
       <div class="row"><strong>My Snakes</strong></div>
       <div id="mySnakes"></div>
       <div class="row"><button id="createSnakeBtn" disabled>Create Snake</button></div>
+      <div class="row"><strong>Storage</strong></div>
+      <div class="row"><small>My Cells: <span id="myBalance">—</span></small></div>
+      <div class="row"><small>My Deployed: <span id="myDeployed">—</span></small></div>
+      <div class="row"><small>Snake Count: <span id="mySnakeCount">—</span></small></div>
+      <div class="row">
+        <input id="borrowAmount" type="number" min="1" step="1" placeholder="Borrow amount" />
+      </div>
+      <div class="row"><button id="borrowBtn" disabled>Borrow</button></div>
+      <div class="row">
+        <input id="attachAmount" type="number" min="1" step="1" placeholder="Attach to selected snake" />
+      </div>
+      <div class="row" style="display:flex; gap:6px;">
+        <button id="attach1Btn" disabled>+1</button>
+        <button id="attach10Btn" disabled>+10</button>
+        <button id="attach50Btn" disabled>+50</button>
+        <button id="attachBtn" disabled>Attach</button>
+      </div>
       <div class="row"><small>Controls: W/A/S/D move selected snake, P pause selected snake</small></div>
     </div>
   </div>
@@ -311,6 +328,16 @@
   const authStatus = document.getElementById("authStatus");
   const mySnakesEl = document.getElementById("mySnakes");
   const createSnakeBtn = document.getElementById("createSnakeBtn");
+  const myBalanceEl = document.getElementById("myBalance");
+  const myDeployedEl = document.getElementById("myDeployed");
+  const mySnakeCountEl = document.getElementById("mySnakeCount");
+  const borrowAmountEl = document.getElementById("borrowAmount");
+  const borrowBtn = document.getElementById("borrowBtn");
+  const attachAmountEl = document.getElementById("attachAmount");
+  const attachBtn = document.getElementById("attachBtn");
+  const attach1Btn = document.getElementById("attach1Btn");
+  const attach10Btn = document.getElementById("attach10Btn");
+  const attach50Btn = document.getElementById("attach50Btn");
   const zoomInBtn = document.getElementById("zoomInBtn");
   const zoomOutBtn = document.getElementById("zoomOutBtn");
   const zoomResetBtn = document.getElementById("zoomResetBtn");
@@ -331,6 +358,7 @@
   let debugPublicChunk = { cx: 0, cy: 0 };
   let streamHandle = null;
   let suppressScrollSync = false;
+  let myBalance = 0;
 
   function buildBoard(w, h) {
     gridW = w; gridH = h;
@@ -545,6 +573,7 @@
     restartStream();
 
     await loadMySnakes();
+    await loadUserMe();
   }
 
   function applyViewControlAuthState() {
@@ -552,8 +581,32 @@
     zoomInBtn.disabled = !isAuth;
     zoomOutBtn.disabled = !isAuth;
     zoomResetBtn.disabled = !isAuth;
+    borrowBtn.disabled = !isAuth;
+    attachBtn.disabled = !isAuth;
+    attach1Btn.disabled = !isAuth;
+    attach10Btn.disabled = !isAuth;
+    attach50Btn.disabled = !isAuth;
     publicViewHintEl.style.display = isAuth ? "none" : "inline";
     viewControlsEl.style.opacity = isAuth ? "1" : "0.82";
+    if (!isAuth) {
+      myBalanceEl.textContent = "—";
+      myDeployedEl.textContent = "—";
+      mySnakeCountEl.textContent = "—";
+    }
+    updateActionButtons();
+  }
+
+  function updateActionButtons() {
+    const isAuth = !!token;
+    const hasSnake = !!selectedSnakeId;
+    const attachAmount = Math.floor(Number(attachAmountEl.value || "0"));
+    const attachValid = isAuth && hasSnake && Number.isFinite(attachAmount) && attachAmount > 0 && attachAmount <= myBalance;
+    attachBtn.disabled = !attachValid;
+    attach1Btn.disabled = !(isAuth && hasSnake && myBalance >= 1);
+    attach10Btn.disabled = !(isAuth && hasSnake && myBalance >= 10);
+    attach50Btn.disabled = !(isAuth && hasSnake && myBalance >= 50);
+    const borrowAmount = Math.floor(Number(borrowAmountEl.value || "0"));
+    borrowBtn.disabled = !(isAuth && Number.isFinite(borrowAmount) && borrowAmount > 0);
   }
 
   async function refreshViewState() {
@@ -641,6 +694,68 @@
     mySnakesEl.querySelectorAll("label").forEach((el) => {
       el.addEventListener("click", (ev) => ev.stopPropagation());
     });
+    updateActionButtons();
+  }
+
+  async function loadUserMe() {
+    if (!token) return;
+    const res = await api("/user/me");
+    if (!res.ok) return;
+    const data = await res.json();
+    myBalance = Number.isFinite(Number(data.balance_mi)) ? Number(data.balance_mi) : 0;
+    myBalanceEl.textContent = fmtInt(myBalance);
+    myDeployedEl.textContent = fmtInt(Number(data.deployed_k));
+    mySnakeCountEl.textContent = fmtInt(Number(data.snake_count));
+    updateActionButtons();
+  }
+
+  async function borrowCells() {
+    if (!token) return;
+    const amount = Number(borrowAmountEl.value);
+    if (!Number.isFinite(amount) || amount <= 0) return;
+    const res = await api("/user/borrow", {
+      method: "POST",
+      body: JSON.stringify({ amount: Math.floor(amount) })
+    });
+    if (!res.ok) {
+      const t = await res.text();
+      alert("Borrow failed: " + t);
+      return;
+    }
+    const data = await res.json();
+    if (Number.isFinite(Number(data.balance_mi))) {
+      myBalance = Number(data.balance_mi);
+      myBalanceEl.textContent = fmtInt(myBalance);
+    }
+    await loadEconomyState();
+    await loadUserMe();
+  }
+
+  async function attachCells(amountOverride = null) {
+    if (!token || !selectedSnakeId) return;
+    const raw = amountOverride == null ? Number(attachAmountEl.value) : Number(amountOverride);
+    const amount = Math.floor(raw);
+    if (!Number.isFinite(amount) || amount <= 0) return;
+    if (amount > myBalance) {
+      alert("Not enough cells in storage.");
+      return;
+    }
+    const res = await api(`/snake/${selectedSnakeId}/attach`, {
+      method: "POST",
+      body: JSON.stringify({ amount })
+    });
+    if (!res.ok) {
+      const t = await res.text();
+      alert("Attach failed: " + t);
+      return;
+    }
+    const data = await res.json();
+    if (Number.isFinite(Number(data.balance_mi))) {
+      myBalance = Number(data.balance_mi);
+      myBalanceEl.textContent = fmtInt(myBalance);
+    }
+    await loadMySnakes();
+    await loadUserMe();
   }
 
   async function createSnake() {
@@ -653,7 +768,13 @@
       alert("Create snake failed: " + t);
       return;
     }
+    const data = await res.json().catch(() => ({}));
+    if (Number.isFinite(Number(data.balance_mi))) {
+      myBalance = Number(data.balance_mi);
+      myBalanceEl.textContent = fmtInt(myBalance);
+    }
     await loadMySnakes();
+    await loadUserMe();
   }
 
   async function setDir(dir) {
@@ -696,6 +817,13 @@
 
   document.getElementById("loginBtn").onclick = login;
   document.getElementById("createSnakeBtn").onclick = createSnake;
+  borrowBtn.onclick = borrowCells;
+  attachBtn.onclick = () => attachCells();
+  attach1Btn.onclick = () => attachCells(1);
+  attach10Btn.onclick = () => attachCells(10);
+  attach50Btn.onclick = () => attachCells(50);
+  borrowAmountEl.addEventListener("input", updateActionButtons);
+  attachAmountEl.addEventListener("input", updateActionButtons);
 
   // SSE stream (watchers scale well)
   function startStream() {
@@ -841,6 +969,7 @@
     authStatus.textContent = `Logged in as user_id=${myUserId}`;
     createSnakeBtn.disabled = false;
     loadMySnakes();
+    loadUserMe();
   }
   startStream();
   loadRuntimeSpeed();

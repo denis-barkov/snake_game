@@ -338,6 +338,28 @@ def generate_world_dimensions(area_target: int) -> Tuple[int, int]:
     return w, h
 
 
+def resize_world_chunk_to_area(world_chunks_table: str, area_target: int) -> Tuple[int, int]:
+    w, h = generate_world_dimensions(area_target)
+    existing = ddb_get_item(world_chunks_table, {"chunk_id": {"S": "main"}})
+    obstacles_attr = existing.get("obstacles", {"S": "[]"})
+    food_attr = existing.get("food_state", {"S": "[]"})
+    next_version = av_n(existing, "version", 0) + 1
+    ts = now_unix()
+    ddb_put_item(
+        world_chunks_table,
+        {
+            "chunk_id": {"S": "main"},
+            "width": {"N": str(w)},
+            "height": {"N": str(h)},
+            "obstacles": obstacles_attr if isinstance(obstacles_attr, dict) else {"S": "[]"},
+            "food_state": food_attr if isinstance(food_attr, dict) else {"S": "[]"},
+            "version": {"N": str(next_version)},
+            "updated_at": {"N": str(ts)},
+        },
+    )
+    return w, h
+
+
 def weighted_split(total: int, n: int, rng: random.Random) -> List[int]:
     if n <= 0:
         return []
@@ -769,7 +791,23 @@ def cmd_economy_set(args) -> int:
     params["updated_at"] = now_unix()
     params["updated_by"] = env("USER", "snakecli")
     upsert_active_and_history(params_table, params)
+
+    # Keep world dimensions aligned with economy policy on admin policy updates.
+    users_table = table_env("USERS")
+    snakes_table = table_env("SNAKES")
+    world_chunks_table = table_env("WORLD_CHUNKS")
+    period_table = table_env("ECONOMY_PERIOD")
+    period = get_period(period_table, current_period_key())
+    sum_mi, k_snakes = aggregate_inputs(users_table, snakes_table)
+    state = compute_economy_state(params, sum_mi, period["delta_m_buy"], k_snakes)
+    w, h = resize_world_chunk_to_area(world_chunks_table, int(state["A_world"]))
     print(f"Updated {args.param}={new_value}; new version={params['version']}")
+    print(f"World resized to {w}x{h} (A_world={state['A_world']})")
+    try:
+        send_reload_signal()
+        print("runtime reload: requested")
+    except Exception as e:
+        print(f"runtime reload: skipped ({e})")
     return 0
 
 
@@ -778,6 +816,7 @@ def cmd_economy_recompute(_args) -> int:
     period_table = table_env("ECONOMY_PERIOD")
     users_table = table_env("USERS")
     snakes_table = table_env("SNAKES")
+    world_chunks_table = table_env("WORLD_CHUNKS")
 
     period_key = current_period_key()
     params = load_active_params(params_table)
@@ -794,9 +833,16 @@ def cmd_economy_recompute(_args) -> int:
     period["computed_white"] = state["M_white"]
     period["computed_at"] = now_unix()
     put_period(period_table, period)
+    w, h = resize_world_chunk_to_area(world_chunks_table, int(state["A_world"]))
 
     print(f"Recomputed period {period_key}")
     print(f"M={state['M']} K={state['K']} Y={state['Y']:.3f} P={state['P']:.6f} pi={state['pi']:.6f} A_world={state['A_world']} M_white={state['M_white']}")
+    print(f"World resized to {w}x{h}")
+    try:
+        send_reload_signal()
+        print("runtime reload: requested")
+    except Exception as e:
+        print(f"runtime reload: skipped ({e})")
     return 0
 
 
