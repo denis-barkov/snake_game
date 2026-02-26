@@ -52,6 +52,20 @@
       padding: 6px 10px;
       min-width: 44px;
     }
+    #view-controls select {
+      padding: 5px 8px;
+      min-width: 120px;
+      border: 1px solid #cbd6c8;
+      border-radius: 6px;
+      background: #fff;
+    }
+    .view-inline {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: #374534;
+    }
     #view-help {
       color: #4b5b49;
       font-size: 12px;
@@ -238,6 +252,17 @@
         <button id="zoomInBtn" type="button">+ Zoom In</button>
         <button id="zoomOutBtn" type="button">- Zoom Out</button>
         <button id="zoomResetBtn" type="button">Reset</button>
+        <label class="view-inline">Grid
+          <select id="gridModeSelect">
+            <option value="off">Off</option>
+            <option value="cells">Cells</option>
+            <option value="cells_chunks">Cells+Chunks</option>
+          </select>
+        </label>
+        <label class="view-inline">
+          <input id="boundsToggle" type="checkbox" checked />
+          Bounds
+        </label>
         <small id="view-help">Zoom: +/- buttons. Reset returns to default view.</small>
         <small id="public-view-hint">Login to control camera &amp; zoom.</small>
       </div>
@@ -300,10 +325,9 @@
       this.aColor = -1;
       this.uViewMin = null;
       this.uViewSize = null;
-      this.vertexData = new Float32Array(0);
-      this.colorData = new Float32Array(0);
       this.visibleCellsX = 0;
       this.visibleCellsY = 0;
+      this.visibleCellCount = 0;
       if (this.gl) this.init();
     }
 
@@ -311,10 +335,10 @@
       const gl = this.gl;
       const vertSrc = `
         attribute vec2 a_pos;
-        attribute vec3 a_color;
+        attribute vec4 a_color;
         uniform vec2 u_view_min;
         uniform vec2 u_view_size;
-        varying vec3 v_color;
+        varying vec4 v_color;
         void main() {
           vec2 p = (a_pos - u_view_min) / u_view_size;
           vec2 ndc = vec2(p.x * 2.0 - 1.0, 1.0 - p.y * 2.0);
@@ -324,9 +348,9 @@
       `;
       const fragSrc = `
         precision mediump float;
-        varying vec3 v_color;
+        varying vec4 v_color;
         void main() {
-          gl_FragColor = vec4(v_color, 1.0);
+          gl_FragColor = v_color;
         }
       `;
       const vs = this.compile(gl.VERTEX_SHADER, vertSrc);
@@ -347,6 +371,8 @@
       this.posBuffer = gl.createBuffer();
       this.colorBuffer = gl.createBuffer();
       gl.useProgram(program);
+      gl.enable(gl.BLEND);
+      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     }
 
     compile(type, src) {
@@ -388,28 +414,51 @@
       };
     }
 
-    render(state, camera) {
-      if (!this.gl || !this.program || !state) return;
-      this.resizeToDisplaySize();
-      const gl = this.gl;
-
+    viewRect(state, camera) {
       const view = this.getViewSize(state.w, state.h, camera.zoom);
       this.visibleCellsX = view.visibleX;
       this.visibleCellsY = view.visibleY;
+      this.visibleCellCount = view.visibleX * view.visibleY;
       const minX = camera.x - view.visibleX / 2;
       const minY = camera.y - view.visibleY / 2;
       const maxX = minX + view.visibleX;
       const maxY = minY + view.visibleY;
+      return { view, minX, minY, maxX, maxY };
+    }
 
-      const vertices = [];
-      const colors = [];
-      const pushQuad = (x, y, r, g, b) => {
+    drawBatched(mode, vertices, colors) {
+      const gl = this.gl;
+      if (!vertices.length || !colors.length) return;
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.posBuffer);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertices), gl.DYNAMIC_DRAW);
+      gl.enableVertexAttribArray(this.aPos);
+      gl.vertexAttribPointer(this.aPos, 2, gl.FLOAT, false, 0, 0);
+
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.colorBuffer);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(colors), gl.DYNAMIC_DRAW);
+      gl.enableVertexAttribArray(this.aColor);
+      gl.vertexAttribPointer(this.aColor, 4, gl.FLOAT, false, 0, 0);
+
+      gl.drawArrays(mode, 0, vertices.length / 2);
+    }
+
+    render(state, camera, overlay) {
+      if (!this.gl || !this.program || !state) return;
+      this.resizeToDisplaySize();
+      const gl = this.gl;
+
+      const vr = this.viewRect(state, camera);
+      const { view, minX, minY, maxX, maxY } = vr;
+
+      const triVertices = [];
+      const triColors = [];
+      const pushQuad = (x, y, r, g, b, a = 1.0) => {
         const x0 = x;
         const y0 = y;
         const x1 = x + 1;
         const y1 = y + 1;
-        vertices.push(x0, y0, x1, y0, x0, y1, x0, y1, x1, y0, x1, y1);
-        for (let i = 0; i < 6; ++i) colors.push(r, g, b);
+        triVertices.push(x0, y0, x1, y0, x0, y1, x0, y1, x1, y0, x1, y1);
+        for (let i = 0; i < 6; ++i) triColors.push(r, g, b, a);
       };
 
       for (const f of state.foods || []) {
@@ -424,28 +473,79 @@
         }
       }
 
-      this.vertexData = new Float32Array(vertices);
-      this.colorData = new Float32Array(colors);
-
       gl.clearColor(0.92, 0.96, 0.91, 1.0);
       gl.clear(gl.COLOR_BUFFER_BIT);
-      if (this.vertexData.length === 0) return;
 
       gl.useProgram(this.program);
       gl.uniform2f(this.uViewMin, minX, minY);
       gl.uniform2f(this.uViewSize, view.visibleX, view.visibleY);
 
-      gl.bindBuffer(gl.ARRAY_BUFFER, this.posBuffer);
-      gl.bufferData(gl.ARRAY_BUFFER, this.vertexData, gl.DYNAMIC_DRAW);
-      gl.enableVertexAttribArray(this.aPos);
-      gl.vertexAttribPointer(this.aPos, 2, gl.FLOAT, false, 0, 0);
+      this.drawBatched(gl.TRIANGLES, triVertices, triColors);
+      this.drawOverlays(state, vr, overlay || {});
+    }
 
-      gl.bindBuffer(gl.ARRAY_BUFFER, this.colorBuffer);
-      gl.bufferData(gl.ARRAY_BUFFER, this.colorData, gl.DYNAMIC_DRAW);
-      gl.enableVertexAttribArray(this.aColor);
-      gl.vertexAttribPointer(this.aColor, 3, gl.FLOAT, false, 0, 0);
+    drawOverlays(state, vr, overlay) {
+      const gl = this.gl;
+      const { minX, minY, maxX, maxY } = vr;
+      const lineVertices = [];
+      const lineColors = [];
+      const addLine = (x1, y1, x2, y2, r, g, b, a) => {
+        lineVertices.push(x1, y1, x2, y2);
+        lineColors.push(r, g, b, a, r, g, b, a);
+      };
 
-      gl.drawArrays(gl.TRIANGLES, 0, this.vertexData.length / 2);
+      const gridMode = overlay.gridMode || "off";
+      const showBounds = !!overlay.showBounds;
+      const chunkSize = Math.max(1, Number(overlay.chunkSize || 64));
+      const aoi = overlay.aoi || null;
+      const showCellGrid = gridMode !== "off" && this.visibleCellCount <= 30000;
+      const showChunkGrid = gridMode === "cells_chunks" || (gridMode === "cells" && !showCellGrid);
+
+      if (showCellGrid) {
+        const xStart = Math.floor(minX);
+        const xEnd = Math.ceil(maxX);
+        const yStart = Math.floor(minY);
+        const yEnd = Math.ceil(maxY);
+        for (let x = xStart; x <= xEnd; ++x) addLine(x, minY, x, maxY, 0.08, 0.08, 0.08, 0.06);
+        for (let y = yStart; y <= yEnd; ++y) addLine(minX, y, maxX, y, 0.08, 0.08, 0.08, 0.06);
+      }
+
+      if (showChunkGrid) {
+        const cxStart = Math.floor(minX / chunkSize) - 1;
+        const cxEnd = Math.ceil(maxX / chunkSize) + 1;
+        const cyStart = Math.floor(minY / chunkSize) - 1;
+        const cyEnd = Math.ceil(maxY / chunkSize) + 1;
+        for (let cx = cxStart; cx <= cxEnd; ++cx) {
+          const x = cx * chunkSize;
+          addLine(x, minY, x, maxY, 0.12, 0.12, 0.12, 0.16);
+        }
+        for (let cy = cyStart; cy <= cyEnd; ++cy) {
+          const y = cy * chunkSize;
+          addLine(minX, y, maxX, y, 0.12, 0.12, 0.12, 0.16);
+        }
+      }
+
+      if (showBounds) {
+        addLine(0, 0, state.w, 0, 0.18, 0.18, 0.18, 0.38);
+        addLine(state.w, 0, state.w, state.h, 0.18, 0.18, 0.18, 0.38);
+        addLine(state.w, state.h, 0, state.h, 0.18, 0.18, 0.18, 0.38);
+        addLine(0, state.h, 0, 0, 0.18, 0.18, 0.18, 0.38);
+      }
+
+      if (aoi &&
+          Number.isFinite(aoi.min_chunk_x) && Number.isFinite(aoi.max_chunk_x) &&
+          Number.isFinite(aoi.min_chunk_y) && Number.isFinite(aoi.max_chunk_y)) {
+        const ax0 = aoi.min_chunk_x * chunkSize;
+        const ay0 = aoi.min_chunk_y * chunkSize;
+        const ax1 = (aoi.max_chunk_x + 1) * chunkSize;
+        const ay1 = (aoi.max_chunk_y + 1) * chunkSize;
+        addLine(ax0, ay0, ax1, ay0, 0.05, 0.28, 0.88, 0.34);
+        addLine(ax1, ay0, ax1, ay1, 0.05, 0.28, 0.88, 0.34);
+        addLine(ax1, ay1, ax0, ay1, 0.05, 0.28, 0.88, 0.34);
+        addLine(ax0, ay1, ax0, ay0, 0.05, 0.28, 0.88, 0.34);
+      }
+
+      this.drawBatched(gl.LINES, lineVertices, lineColors);
     }
   }
 
@@ -453,6 +553,8 @@
   const USER_ID_STORAGE_KEY = "snake_auth_user_id";
   const SELECTED_SNAKE_STORAGE_KEY = "snake_selected_snake_id";
   const WATCHED_SNAKE_STORAGE_KEY = "snake_watched_snake_id";
+  const GRID_MODE_STORAGE_KEY = "snake_grid_mode";
+  const BOUNDS_TOGGLE_STORAGE_KEY = "snake_bounds_toggle";
 
   let token = localStorage.getItem(TOKEN_STORAGE_KEY);
   let myUserId = Number(localStorage.getItem(USER_ID_STORAGE_KEY));
@@ -494,6 +596,8 @@
   const zoomInBtn = document.getElementById("zoomInBtn");
   const zoomOutBtn = document.getElementById("zoomOutBtn");
   const zoomResetBtn = document.getElementById("zoomResetBtn");
+  const gridModeSelect = document.getElementById("gridModeSelect");
+  const boundsToggle = document.getElementById("boundsToggle");
   const debugOverlayEl = document.getElementById("debug-overlay");
   const viewControlsEl = document.getElementById("view-controls");
   const publicViewHintEl = document.getElementById("public-view-hint");
@@ -504,7 +608,9 @@
   let runtimeSpeedPollTimer = null;
   let cameraPollTimer = null;
   let latestSnapshotBytes = 0;
+  let serverChunkSize = 64;
   let serverAoiChunks = 0;
+  let serverAoiRange = null;
   let debugModeLabel = "PUBLIC";
   let debugPublicChunk = { cx: 0, cy: 0 };
   let wsHandle = null;
@@ -517,6 +623,19 @@
   let myBalance = 0;
   let lastCameraSendAt = 0;
   let lastCameraPayload = "";
+  let gridMode = localStorage.getItem(GRID_MODE_STORAGE_KEY) || "cells_chunks";
+  if (!["off", "cells", "cells_chunks"].includes(gridMode)) gridMode = "cells_chunks";
+  let showBounds = localStorage.getItem(BOUNDS_TOGGLE_STORAGE_KEY) !== "0";
+
+  function renderCurrentState() {
+    if (!latestServerState) return;
+    renderer.render(latestServerState, camera, {
+      gridMode,
+      showBounds,
+      chunkSize: serverChunkSize,
+      aoi: serverAoiRange
+    });
+  }
 
   function drawFrame(state) {
     latestServerState = state;
@@ -525,13 +644,13 @@
     gridW = state.w;
     gridH = state.h;
     clampCameraToWorld();
-    renderer.render(state, camera);
+    renderCurrentState();
     // Continuous follow is only active when watch checkbox is enabled.
     if (token && watchedSnakeId) {
       const followTarget = findSnakeHeadById(watchedSnakeId);
       if (followTarget) {
         camera.setCenter(followTarget.x, followTarget.y);
-        renderer.render(state, camera);
+        renderCurrentState();
       }
     }
   }
@@ -555,6 +674,9 @@
       `camera: x=${camera.x.toFixed(2)} y=${camera.y.toFixed(2)}\n` +
       `zoom: ${camera.zoom.toFixed(2)}\n` +
       `public_chunk: cx=${debugPublicChunk.cx} cy=${debugPublicChunk.cy}\n` +
+      `chunk_size: ${serverChunkSize}\n` +
+      `camera_chunk: ${serverAoiRange ? `(${serverAoiRange.camera_chunk_x},${serverAoiRange.camera_chunk_y})` : "-" }\n` +
+      `aoi_range: ${serverAoiRange ? `[${serverAoiRange.min_chunk_x}..${serverAoiRange.max_chunk_x}] [${serverAoiRange.min_chunk_y}..${serverAoiRange.max_chunk_y}]` : "-" }\n` +
       `aoi_chunks: ${serverAoiChunks}\n` +
       `last_snapshot_bytes: ${latestSnapshotBytes}`;
   }
@@ -761,7 +883,7 @@
         if (jumpTarget) {
           camera.setCenter(jumpTarget.x, jumpTarget.y);
           postCamera({ autoFollow: false });
-          if (latestServerState) renderer.render(latestServerState, camera);
+          renderCurrentState();
         }
         loadMySnakes();
       };
@@ -968,6 +1090,23 @@
       latestSnapshotBytes = new TextEncoder().encode(raw).length;
       if (typeof msg.mode === "string") debugModeLabel = msg.mode;
       if (typeof msg.aoi_chunks === "number") serverAoiChunks = msg.aoi_chunks;
+      if (typeof msg.chunk_size === "number" && msg.chunk_size > 0) {
+        serverChunkSize = Math.floor(msg.chunk_size);
+      }
+      if (msg.aoi &&
+          Number.isFinite(msg.aoi.min_chunk_x) &&
+          Number.isFinite(msg.aoi.max_chunk_x) &&
+          Number.isFinite(msg.aoi.min_chunk_y) &&
+          Number.isFinite(msg.aoi.max_chunk_y)) {
+        serverAoiRange = {
+          min_chunk_x: Number(msg.aoi.min_chunk_x),
+          max_chunk_x: Number(msg.aoi.max_chunk_x),
+          min_chunk_y: Number(msg.aoi.min_chunk_y),
+          max_chunk_y: Number(msg.aoi.max_chunk_y),
+          camera_chunk_x: Number.isFinite(msg.aoi.camera_chunk_x) ? Number(msg.aoi.camera_chunk_x) : 0,
+          camera_chunk_y: Number.isFinite(msg.aoi.camera_chunk_y) ? Number(msg.aoi.camera_chunk_y) : 0
+        };
+      }
       if (msg.public_camera_chunk &&
           typeof msg.public_camera_chunk.cx === "number" &&
           typeof msg.public_camera_chunk.cy === "number") {
@@ -1102,13 +1241,13 @@
 
   function zoomIn() {
     camera.setZoom(camera.zoom * 1.1);
-    if (latestServerState) renderer.render(latestServerState, camera);
+    renderCurrentState();
     postCamera();
   }
 
   function zoomOut() {
     camera.setZoom(camera.zoom / 1.1);
-    if (latestServerState) renderer.render(latestServerState, camera);
+    renderCurrentState();
     postCamera();
   }
 
@@ -1118,7 +1257,7 @@
       const target = getCameraTargetForFollow();
       camera.setCenter(target.x, target.y);
     }
-    if (latestServerState) renderer.render(latestServerState, camera);
+    renderCurrentState();
     postCamera();
   }
 
@@ -1160,7 +1299,7 @@
     camera.x -= dx * (viewX / Math.max(1, canvas.clientWidth));
     camera.y -= dy * (viewY / Math.max(1, canvas.clientHeight));
     clampCameraToWorld();
-    renderer.render(latestServerState, camera);
+    renderCurrentState();
     postCamera({ autoFollow: false });
   }
 
@@ -1175,17 +1314,34 @@
   if (DEBUG_MODE) {
     debugOverlayEl.style.display = "block";
   }
+  gridModeSelect.value = gridMode;
+  boundsToggle.checked = showBounds;
 
   zoomInBtn.addEventListener("click", zoomIn);
   zoomOutBtn.addEventListener("click", zoomOut);
   zoomResetBtn.addEventListener("click", resetView);
+  gridModeSelect.addEventListener("change", () => {
+    const next = gridModeSelect.value;
+    if (["off", "cells", "cells_chunks"].includes(next)) {
+      gridMode = next;
+      localStorage.setItem(GRID_MODE_STORAGE_KEY, gridMode);
+      renderCurrentState();
+      updateDebugOverlay();
+    }
+  });
+  boundsToggle.addEventListener("change", () => {
+    showBounds = !!boundsToggle.checked;
+    localStorage.setItem(BOUNDS_TOGGLE_STORAGE_KEY, showBounds ? "1" : "0");
+    renderCurrentState();
+    updateDebugOverlay();
+  });
   canvas.addEventListener("wheel", onBoardWheel, { passive: false });
   canvas.addEventListener("pointerdown", onPointerDown);
   canvas.addEventListener("pointermove", onPointerMove);
   canvas.addEventListener("pointerup", onPointerUp);
   canvas.addEventListener("pointercancel", onPointerUp);
   window.addEventListener("resize", () => {
-    if (latestServerState) renderer.render(latestServerState, camera);
+    renderCurrentState();
   });
 
   applyViewControlAuthState();

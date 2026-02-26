@@ -263,10 +263,13 @@ Expected:
   - `+ Zoom In`
   - `- Zoom Out`
   - `Reset` (returns zoom to `1.0` and default/follow center)
+  - `Grid`: `Off` / `Cells` / `Cells+Chunks`
+  - `Bounds`: world border toggle
 - Zoom bounds: `0.25 .. 4.0`
 - Optional debug overlay:
   - add `?debug=1` to URL
-  - shows mode (`PUBLIC`/`AUTH`), camera center, zoom, public camera chunk, AOI chunk count, and last snapshot payload size
+  - shows mode (`PUBLIC`/`AUTH`), camera center, zoom, chunk size, camera chunk, AOI range/chunk count, and last snapshot payload size
+- Visual overlays are WebGL-rendered and session-persisted via `localStorage`.
 
 ### Auth-gated camera/zoom (Step 9.1)
 

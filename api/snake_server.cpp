@@ -990,6 +990,32 @@ int main(int argc, char** argv) {
         }
 
         snap = game.snapshot_for_camera(cam_x, cam_y, runtime_cfg.aoi_enabled, aoi_radius);
+        int aoi_min_x = 0;
+        int aoi_max_x = 0;
+        int aoi_min_y = 0;
+        int aoi_max_y = 0;
+        int cam_chunk_x = 0;
+        int cam_chunk_y = 0;
+        int effective_radius = std::max(0, aoi_radius + runtime_cfg.aoi_pad_chunks);
+        if (!runtime_cfg.single_chunk_mode) {
+          const int cs = std::max(1, runtime_cfg.chunk_size);
+          const int chunks_x = std::max(1, (snap.w + cs - 1) / cs);
+          const int chunks_y = std::max(1, (snap.h + cs - 1) / cs);
+          cam_chunk_x = std::max(0, std::min(chunks_x - 1, cam_x / cs));
+          cam_chunk_y = std::max(0, std::min(chunks_y - 1, cam_y / cs));
+          if (!runtime_cfg.aoi_enabled) {
+            aoi_min_x = 0;
+            aoi_max_x = chunks_x - 1;
+            aoi_min_y = 0;
+            aoi_max_y = chunks_y - 1;
+          } else {
+            aoi_min_x = std::max(0, cam_chunk_x - effective_radius);
+            aoi_max_x = std::min(chunks_x - 1, cam_chunk_x + effective_radius);
+            aoi_min_y = std::max(0, cam_chunk_y - effective_radius);
+            aoi_max_y = std::min(chunks_y - 1, cam_chunk_y + effective_radius);
+          }
+        }
+
         const string snap_json = state_to_json(snap);
         ostringstream out;
         out << "{"
@@ -997,6 +1023,16 @@ int main(int argc, char** argv) {
             << "\"channel\":\"" << channel << "\","
             << "\"mode\":\"" << mode << "\","
             << "\"camera\":{\"x\":" << cam_x << ",\"y\":" << cam_y << ",\"zoom\":" << json_number(session.camera_zoom) << "},"
+            << "\"aoi\":{"
+            << "\"min_chunk_x\":" << aoi_min_x << ","
+            << "\"max_chunk_x\":" << aoi_max_x << ","
+            << "\"min_chunk_y\":" << aoi_min_y << ","
+            << "\"max_chunk_y\":" << aoi_max_y << ","
+            << "\"camera_chunk_x\":" << cam_chunk_x << ","
+            << "\"camera_chunk_y\":" << cam_chunk_y << ","
+            << "\"radius\":" << aoi_radius << ","
+            << "\"effective_radius\":" << effective_radius
+            << "},"
             << "\"aoi_chunks\":" << aoi_chunks << ","
             << "\"public_camera_chunk\":{\"cx\":" << public_chunk_cx << ",\"cy\":" << public_chunk_cy << "},"
             << "\"chunk_size\":" << runtime_cfg.chunk_size << ","
