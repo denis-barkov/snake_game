@@ -1280,6 +1280,7 @@ int main(int argc, char** argv) {
 
   srv.Post(R"(/snake/(\d+)/attach)", [&](const httplib::Request& req, httplib::Response& res) {
     add_cors(res);
+    res.set_header("X-Snake-Attach-Api", "v2");
     auto uid = require_auth_user(auth, req);
     if (!uid) {
       res.status = 401;
@@ -1295,11 +1296,36 @@ int main(int argc, char** argv) {
       return;
     }
 
+    const std::string uid_str = std::to_string(*uid);
+    const std::string snake_id_str = std::to_string(snake_id);
+    const auto user = storage->GetUserById(uid_str);
+    if (!user.has_value()) {
+      res.status = 404;
+      res.set_content("{\"error\":\"user_not_found\"}", "application/json");
+      return;
+    }
+    if (user->balance_mi < *amount) {
+      res.status = 409;
+      res.set_content("{\"error\":\"insufficient_cells\"}", "application/json");
+      return;
+    }
+    const auto snake = storage->GetSnakeById(snake_id_str);
+    if (!snake.has_value()) {
+      res.status = 404;
+      res.set_content("{\"error\":\"snake_not_found\"}", "application/json");
+      return;
+    }
+    if (snake->owner_user_id != uid_str) {
+      res.status = 403;
+      res.set_content("{\"error\":\"forbidden\"}", "application/json");
+      return;
+    }
+
     int64_t balance_after = 0;
     int64_t snake_len_after = 0;
-    if (!storage->AttachCellsToSnake(std::to_string(*uid), std::to_string(snake_id), *amount, balance_after, snake_len_after)) {
+    if (!storage->AttachCellsToSnake(uid_str, snake_id_str, *amount, balance_after, snake_len_after)) {
       res.status = 409;
-      res.set_content("{\"error\":\"attach_failed\"}", "application/json");
+      res.set_content("{\"error\":\"attach_conflict\"}", "application/json");
       return;
     }
 

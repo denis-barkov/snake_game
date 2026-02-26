@@ -972,6 +972,22 @@
     const res = await api("/me/snakes");
     if (!res.ok) return;
     const data = await res.json();
+    const snakeIds = new Set((data.snakes || []).map((s) => Number(s.id)).filter((v) => Number.isFinite(v) && v > 0));
+
+    // Normalize persisted selection against currently owned snakes.
+    if (!snakeIds.has(selectedSnakeId)) {
+      if (data.snakes.length > 0) {
+        selectedSnakeId = Number(data.snakes[0].id);
+        localStorage.setItem(SELECTED_SNAKE_STORAGE_KEY, String(selectedSnakeId));
+      } else {
+        selectedSnakeId = null;
+        localStorage.removeItem(SELECTED_SNAKE_STORAGE_KEY);
+      }
+    }
+    if (!snakeIds.has(watchedSnakeId) || watchedSnakeId !== selectedSnakeId) {
+      watchedSnakeId = null;
+      localStorage.removeItem(WATCHED_SNAKE_STORAGE_KEY);
+    }
 
     mySnakesEl.innerHTML = "";
     for (const s of data.snakes) {
@@ -1005,9 +1021,6 @@
       `;
       mySnakesEl.appendChild(div);
     }
-
-    if (!selectedSnakeId && data.snakes.length > 0) selectedSnakeId = data.snakes[0].id;
-    if (watchedSnakeId && watchedSnakeId !== selectedSnakeId) watchedSnakeId = null;
 
     mySnakesEl.querySelectorAll(".watch-toggle").forEach((el) => {
       el.addEventListener("click", async (ev) => {

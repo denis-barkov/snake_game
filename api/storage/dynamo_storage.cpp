@@ -426,8 +426,8 @@ bool DynamoStorage::AttachCellsToSnake(const std::string& user_id,
   Aws::DynamoDB::Model::Update user_update;
   user_update.SetTableName(cfg_.users_table.c_str());
   user_update.AddKey("user_id", S(user_id));
-  user_update.SetConditionExpression("attribute_exists(user_id) AND balance_mi >= :a");
-  user_update.SetUpdateExpression("SET balance_mi = balance_mi - :a");
+  user_update.SetConditionExpression("attribute_exists(user_id) AND if_not_exists(balance_mi, :z) >= :a");
+  user_update.SetUpdateExpression("SET balance_mi = if_not_exists(balance_mi, :z) - :a");
   user_update.AddExpressionAttributeValues(":a", N(amount));
   user_update.AddExpressionAttributeValues(":z", N(0));
 
@@ -439,14 +439,11 @@ bool DynamoStorage::AttachCellsToSnake(const std::string& user_id,
   Aws::DynamoDB::Model::Update snake_update;
   snake_update.SetTableName(cfg_.snakes_table.c_str());
   snake_update.AddKey("snake_id", S(snake_id));
-  snake_update.SetConditionExpression(
-      "attribute_exists(snake_id) AND owner_user_id = :uid "
-      "AND (attribute_not_exists(alive) OR alive = :alive) "
-      "AND (attribute_not_exists(is_on_field) OR is_on_field = :onfield)");
+  // Keep transaction ownership-safe but do not require alive/on_field flags in DB.
+  // Runtime world validation controls whether a snake can be actively manipulated.
+  snake_update.SetConditionExpression("attribute_exists(snake_id) AND owner_user_id = :uid");
   snake_update.SetUpdateExpression("SET length_k = if_not_exists(length_k, :z) + :a, updated_at = :ts");
   snake_update.AddExpressionAttributeValues(":uid", S(user_id));
-  snake_update.AddExpressionAttributeValues(":alive", B(true));
-  snake_update.AddExpressionAttributeValues(":onfield", B(true));
   snake_update.AddExpressionAttributeValues(":z", N(0));
   snake_update.AddExpressionAttributeValues(":a", N(amount));
   snake_update.AddExpressionAttributeValues(":ts", N(ts));
@@ -456,7 +453,51 @@ bool DynamoStorage::AttachCellsToSnake(const std::string& user_id,
   tx.AddTransactItems(snake_item);
 
   auto tx_res = client_->TransactWriteItems(tx);
-  if (!tx_res.IsSuccess()) return false;
+  if (tx_res.IsSuccess()) {
+    const auto user = GetUserById(user_id);
+    const auto snake = GetSnakeById(snake_id);
+    if (!user.has_value() || !snake.has_value()) return false;
+    out_balance_mi = user->balance_mi;
+    out_length_k = snake->length_k;
+    return true;
+  }
+
+  // Fallback path for environments where transactions are unavailable or flaky:
+  // 1) conditionally debit user balance
+  // 2) conditionally grow owned snake
+  // 3) rollback debit on step 2 failure
+  Aws::DynamoDB::Model::UpdateItemRequest user_debit;
+  user_debit.SetTableName(cfg_.users_table.c_str());
+  user_debit.AddKey("user_id", S(user_id));
+  user_debit.SetConditionExpression("attribute_exists(user_id) AND if_not_exists(balance_mi, :z) >= :a");
+  user_debit.SetUpdateExpression("SET balance_mi = if_not_exists(balance_mi, :z) - :a");
+  user_debit.AddExpressionAttributeValues(":z", N(0));
+  user_debit.AddExpressionAttributeValues(":a", N(amount));
+  auto debit_res = client_->UpdateItem(user_debit);
+  if (!debit_res.IsSuccess()) return false;
+
+  const int64_t ts_fallback = static_cast<int64_t>(time(nullptr));
+  Aws::DynamoDB::Model::UpdateItemRequest snake_grow;
+  snake_grow.SetTableName(cfg_.snakes_table.c_str());
+  snake_grow.AddKey("snake_id", S(snake_id));
+  snake_grow.SetConditionExpression("attribute_exists(snake_id) AND owner_user_id = :uid");
+  snake_grow.SetUpdateExpression("SET length_k = if_not_exists(length_k, :z) + :a, updated_at = :ts");
+  snake_grow.AddExpressionAttributeValues(":uid", S(user_id));
+  snake_grow.AddExpressionAttributeValues(":z", N(0));
+  snake_grow.AddExpressionAttributeValues(":a", N(amount));
+  snake_grow.AddExpressionAttributeValues(":ts", N(ts_fallback));
+  auto grow_res = client_->UpdateItem(snake_grow);
+  if (!grow_res.IsSuccess()) {
+    // Best-effort compensation to preserve user funds if snake update failed.
+    Aws::DynamoDB::Model::UpdateItemRequest rollback_user;
+    rollback_user.SetTableName(cfg_.users_table.c_str());
+    rollback_user.AddKey("user_id", S(user_id));
+    rollback_user.SetUpdateExpression("SET balance_mi = if_not_exists(balance_mi, :z) + :a");
+    rollback_user.AddExpressionAttributeValues(":z", N(0));
+    rollback_user.AddExpressionAttributeValues(":a", N(amount));
+    (void)client_->UpdateItem(rollback_user);
+    return false;
+  }
 
   const auto user = GetUserById(user_id);
   const auto snake = GetSnakeById(snake_id);
