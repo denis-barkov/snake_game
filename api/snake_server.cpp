@@ -197,7 +197,21 @@ class GameService {
 
   world::WorldSnapshot snapshot_for_camera(int camera_x, int camera_y, bool aoi_enabled, int aoi_radius) {
     ensure_loaded_from_storage_if_empty();
-    return world_.SnapshotForCamera(camera_x, camera_y, aoi_enabled, aoi_radius);
+    return world_.SnapshotForCamera(camera_x, camera_y, aoi_enabled, aoi_radius, aoi_pad_chunks_);
+  }
+
+  world::ChunkId coord_to_chunk(int x, int y) {
+    ensure_loaded_from_storage_if_empty();
+    return world_.CoordToChunk(x, y);
+  }
+
+  world::Vec2 chunk_center_to_world(const world::ChunkId& id) {
+    ensure_loaded_from_storage_if_empty();
+    return world_.ChunkCenterToWorld(id);
+  }
+
+  void set_aoi_pad_chunks(int pad) {
+    aoi_pad_chunks_ = max(0, pad);
   }
 
   bool set_snake_dir(int user_id, int snake_id, world::Dir d) {
@@ -270,6 +284,7 @@ class GameService {
 
   storage::IStorage& storage_;
   world::World world_;
+  int aoi_pad_chunks_ = 0;
   chrono::steady_clock::time_point last_empty_reload_attempt_{};
 };
 
@@ -593,6 +608,7 @@ int main(int argc, char** argv) {
        << ", PUBLIC_CAMERA_SWITCH_TICKS=" << runtime_cfg.public_camera_switch_ticks
        << ", PUBLIC_AOI_RADIUS=" << runtime_cfg.public_aoi_radius
        << ", AUTH_AOI_RADIUS=" << runtime_cfg.auth_aoi_radius
+       << ", AOI_PAD_CHUNKS=" << runtime_cfg.aoi_pad_chunks
        << ", CAMERA_MSG_MAX_HZ=" << runtime_cfg.camera_msg_max_hz
        << ", MAX_BORROW_PER_CALL=" << runtime_cfg.max_borrow_per_call
        << ", FOOD_REWARD_CELLS=" << runtime_cfg.food_reward_cells
@@ -630,6 +646,7 @@ int main(int argc, char** argv) {
 
   GameService game(*storage, grid_w, grid_h, FOOD_COUNT, max_snakes_per_user);
   game.configure_chunking(runtime_cfg.chunk_size, runtime_cfg.single_chunk_mode);
+  game.set_aoi_pad_chunks(runtime_cfg.aoi_pad_chunks);
   EconomyService economy(*storage);
   game.load_from_storage_or_seed_positions();
   game.flush_persistence_delta();
@@ -683,24 +700,6 @@ int main(int argc, char** argv) {
     int cy = static_cast<int>(key & 0xffffffff);
     return {cx, cy};
   };
-  auto coord_to_chunk = [&](int x, int y) -> pair<int, int> {
-    if (runtime_cfg.single_chunk_mode) return {0, 0};
-    const int cs = max(1, runtime_cfg.chunk_size);
-    int cx = x / cs;
-    int cy = y / cs;
-    if (x < 0 && x % cs) --cx;
-    if (y < 0 && y % cs) --cy;
-    return {cx, cy};
-  };
-  auto chunk_center_to_world = [&](int cx, int cy) -> pair<int, int> {
-    if (runtime_cfg.single_chunk_mode) return {grid_w / 2, grid_h / 2};
-    const int cs = max(1, runtime_cfg.chunk_size);
-    int x = cx * cs + cs / 2;
-    int y = cy * cs + cs / 2;
-    x = max(0, min(grid_w - 1, x));
-    y = max(0, min(grid_h - 1, y));
-    return {x, y};
-  };
 
   signal(SIGUSR1, on_reload_signal);
   signal(SIGHUP, on_reload_signal);
@@ -746,7 +745,9 @@ int main(int argc, char** argv) {
             lock_guard<mutex> lock(public_view_mu);
             for (const auto& s : snap.snakes) {
               if (s.body.empty()) continue;
-              const auto [cx, cy] = coord_to_chunk(s.body.front().x, s.body.front().y);
+              const auto cid = game.coord_to_chunk(s.body.front().x, s.body.front().y);
+              const int cx = cid.cx;
+              const int cy = cid.cy;
               public_activity_scores[pack_chunk_key(cx, cy)] += 1;
             }
             if (runtime_cfg.public_camera_switch_ticks > 0 &&
@@ -761,7 +762,9 @@ int main(int argc, char** argv) {
                 }
               }
               const auto [best_cx, best_cy] = unpack_chunk_key(best_key);
-              const auto [px, py] = chunk_center_to_world(best_cx, best_cy);
+              const auto center = game.chunk_center_to_world({best_cx, best_cy});
+              const int px = center.x;
+              const int py = center.y;
               public_view.chunk_cx = best_cx;
               public_view.chunk_cy = best_cy;
               public_view.camera_x = px;
@@ -811,7 +814,7 @@ int main(int argc, char** argv) {
   auto compute_subscribed_chunks_count = [&](const ClientSession&) -> int {
     if (!runtime_cfg.aoi_enabled) return -1;  // all-entities mode
     if (runtime_cfg.single_chunk_mode) return 1;
-    const int span = runtime_cfg.auth_aoi_radius * 2 + 1;
+    const int span = (runtime_cfg.auth_aoi_radius + runtime_cfg.aoi_pad_chunks) * 2 + 1;
     return span * span;
   };
 
@@ -962,7 +965,8 @@ int main(int argc, char** argv) {
         int cam_y = 0;
         int aoi_radius = runtime_cfg.public_aoi_radius;
         string mode = "PUBLIC";
-        int aoi_chunks = runtime_cfg.single_chunk_mode ? 1 : (aoi_radius * 2 + 1) * (aoi_radius * 2 + 1);
+        const int padded_public_radius = aoi_radius + runtime_cfg.aoi_pad_chunks;
+        int aoi_chunks = runtime_cfg.single_chunk_mode ? 1 : (padded_public_radius * 2 + 1) * (padded_public_radius * 2 + 1);
         int public_chunk_cx = 0;
         int public_chunk_cy = 0;
 
@@ -1069,6 +1073,7 @@ int main(int argc, char** argv) {
       << "\"enable_broadcast\":" << (runtime_cfg.enable_broadcast ? "true" : "false") << ","
       << "\"chunk_size\":" << runtime_cfg.chunk_size << ","
       << "\"aoi_radius\":" << runtime_cfg.aoi_radius << ","
+      << "\"aoi_pad_chunks\":" << runtime_cfg.aoi_pad_chunks << ","
       << "\"single_chunk_mode\":" << (runtime_cfg.single_chunk_mode ? "true" : "false") << ","
       << "\"aoi_enabled\":" << (runtime_cfg.aoi_enabled ? "true" : "false")
       << "}";
@@ -1342,6 +1347,7 @@ int main(int argc, char** argv) {
         << "\"camera_y\":" << session.camera_y << ","
         << "\"zoom\":" << json_number(session.camera_zoom) << ","
         << "\"aoi_radius\":" << runtime_cfg.auth_aoi_radius << ","
+        << "\"aoi_pad_chunks\":" << runtime_cfg.aoi_pad_chunks << ","
         << "\"aoi_chunks\":" << session.subscribed_chunks_count
         << "}";
       res.set_content(o.str(), "application/json");
@@ -1360,7 +1366,8 @@ int main(int argc, char** argv) {
       << "\"camera_y\":" << pv.camera_y << ","
       << "\"zoom\":1.0,"
       << "\"aoi_radius\":" << runtime_cfg.public_aoi_radius << ","
-      << "\"aoi_chunks\":" << (runtime_cfg.single_chunk_mode ? 1 : (runtime_cfg.public_aoi_radius * 2 + 1) * (runtime_cfg.public_aoi_radius * 2 + 1)) << ","
+      << "\"aoi_pad_chunks\":" << runtime_cfg.aoi_pad_chunks << ","
+      << "\"aoi_chunks\":" << (runtime_cfg.single_chunk_mode ? 1 : ((runtime_cfg.public_aoi_radius + runtime_cfg.aoi_pad_chunks) * 2 + 1) * ((runtime_cfg.public_aoi_radius + runtime_cfg.aoi_pad_chunks) * 2 + 1)) << ","
       << "\"public_camera_chunk\":{\"cx\":" << pv.chunk_cx << ",\"cy\":" << pv.chunk_cy << "}"
       << "}";
     res.set_content(o.str(), "application/json");

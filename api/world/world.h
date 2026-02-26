@@ -56,8 +56,10 @@ class World {
   std::vector<Food> Foods() const;
   Obstacles ObstaclesList() const;
   WorldSnapshot Snapshot() const;
-  WorldSnapshot SnapshotForCamera(int camera_x, int camera_y, bool aoi_enabled, int aoi_radius) const;
+  WorldSnapshot SnapshotForCamera(int camera_x, int camera_y, bool aoi_enabled, int aoi_radius, int aoi_pad_chunks = 0) const;
   void ConfigureChunking(int chunk_size, bool single_chunk_mode);
+  ChunkId CoordToChunk(int x, int y) const;
+  Vec2 ChunkCenterToWorld(const ChunkId& id) const;
 
   // Network layer writes user intents; systems consume them on Tick().
   bool QueueDirectionInput(int user_id, int snake_id, Dir d);

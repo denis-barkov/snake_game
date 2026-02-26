@@ -18,6 +18,7 @@ struct RuntimeConfig {
   int public_camera_switch_ticks = 600;
   int public_aoi_radius = 1;
   int auth_aoi_radius = 2;
+  int aoi_pad_chunks = 1;
   int camera_msg_max_hz = 10;
   int max_borrow_per_call = 1000000;
   int food_reward_cells = 1;

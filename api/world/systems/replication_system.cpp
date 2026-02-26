@@ -11,7 +11,8 @@ WorldSnapshot ReplicationSystem::BuildSnapshot(const WorldSnapshot& source,
   if (!req.aoi_enabled) return out;
 
   const ChunkId center = chunk_manager.CoordToChunk(req.camera_x, req.camera_y);
-  const auto visible = chunk_manager.GetChunksInRadius(center, req.aoi_radius);
+  const int effective_radius = std::max(0, req.aoi_radius + req.aoi_pad_chunks);
+  const auto visible = chunk_manager.GetChunksInRadius(center, effective_radius);
   std::unordered_set<ChunkId, ChunkIdHash> visible_set(visible.begin(), visible.end());
 
   out.snakes.clear();

@@ -67,6 +67,7 @@ void World::LoadFromStorage(const std::vector<storage::Snake>& stored_snakes,
 
   SpawnSystem::Run(snakes_, foods_, food_count_, width_, height_, rng_);
   ResolveOverlapsOnStartLocked();
+  chunk_manager_.SetWorldBounds(width_, height_);
   chunk_manager_.Rebuild(snakes_, foods_, obstacles_, tick_);
 
   if (!world_chunk.has_value()) {
@@ -163,7 +164,7 @@ WorldSnapshot World::Snapshot() const {
   return snap;
 }
 
-WorldSnapshot World::SnapshotForCamera(int camera_x, int camera_y, bool aoi_enabled, int aoi_radius) const {
+WorldSnapshot World::SnapshotForCamera(int camera_x, int camera_y, bool aoi_enabled, int aoi_radius, int aoi_pad_chunks) const {
   std::lock_guard<std::mutex> lock(mu_);
   WorldSnapshot snap;
   snap.tick = tick_;
@@ -177,13 +178,25 @@ WorldSnapshot World::SnapshotForCamera(int camera_x, int camera_y, bool aoi_enab
   req.camera_y = camera_y;
   req.aoi_enabled = aoi_enabled;
   req.aoi_radius = aoi_radius;
+  req.aoi_pad_chunks = aoi_pad_chunks;
   return ReplicationSystem::BuildSnapshot(snap, chunk_manager_, req);
 }
 
 void World::ConfigureChunking(int chunk_size, bool single_chunk_mode) {
   std::lock_guard<std::mutex> lock(mu_);
   chunk_manager_.SetConfig(chunk_size, single_chunk_mode);
+  chunk_manager_.SetWorldBounds(width_, height_);
   chunk_manager_.Rebuild(snakes_, foods_, obstacles_, tick_);
+}
+
+ChunkId World::CoordToChunk(int x, int y) const {
+  std::lock_guard<std::mutex> lock(mu_);
+  return chunk_manager_.CoordToChunk(x, y);
+}
+
+Vec2 World::ChunkCenterToWorld(const ChunkId& id) const {
+  std::lock_guard<std::mutex> lock(mu_);
+  return chunk_manager_.ChunkCenterToWorld(id);
 }
 
 bool World::QueueDirectionInput(int user_id, int snake_id, Dir d) {
@@ -279,6 +292,7 @@ void World::ResizeWorld(int new_width, int new_height) {
 
   width_ = new_width;
   height_ = new_height;
+  chunk_manager_.SetWorldBounds(width_, height_);
 
   auto clamp_point = [&](Vec2& p) {
     p.x = std::max(0, std::min(width_ - 1, p.x));

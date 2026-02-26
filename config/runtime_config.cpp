@@ -76,6 +76,7 @@ RuntimeConfig RuntimeConfig::FromEnv() {
       clamp_int(getenv_int("PUBLIC_CAMERA_SWITCH_TICKS", cfg.public_camera_switch_ticks), 30, 1000000);
   cfg.public_aoi_radius = clamp_int(getenv_int("PUBLIC_AOI_RADIUS", cfg.public_aoi_radius), 0, 16);
   cfg.auth_aoi_radius = clamp_int(getenv_int("AUTH_AOI_RADIUS", cfg.auth_aoi_radius), 0, 16);
+  cfg.aoi_pad_chunks = clamp_int(getenv_int("AOI_PAD_CHUNKS", cfg.aoi_pad_chunks), 0, 4);
   cfg.camera_msg_max_hz = clamp_int(getenv_int("CAMERA_MSG_MAX_HZ", cfg.camera_msg_max_hz), 1, 120);
   cfg.max_borrow_per_call = clamp_int(getenv_int("MAX_BORROW_PER_CALL", cfg.max_borrow_per_call), 1, 100000000);
   cfg.food_reward_cells = clamp_int(getenv_int("FOOD_REWARD_CELLS", cfg.food_reward_cells), 1, 1000);

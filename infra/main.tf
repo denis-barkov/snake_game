@@ -117,6 +117,7 @@ module "compute" {
     PUBLIC_CAMERA_SWITCH_TICKS = "600"
     PUBLIC_AOI_RADIUS          = "2"
     AUTH_AOI_RADIUS            = "4"
+    AOI_PAD_CHUNKS             = "1"
     CAMERA_MSG_MAX_HZ          = "10"
     MAX_BORROW_PER_CALL        = "1000000"
     FOOD_REWARD_CELLS          = "1"

@@ -38,8 +38,10 @@ class ChunkManager {
   ChunkManager(int chunk_size = 64, bool single_chunk_mode = true);
 
   void SetConfig(int chunk_size, bool single_chunk_mode);
+  void SetWorldBounds(int world_w, int world_h);
   ChunkId CoordToChunk(int x, int y) const;
   std::vector<ChunkId> GetChunksInRadius(const ChunkId& center, int radius) const;
+  Vec2 ChunkCenterToWorld(const ChunkId& id) const;
 
   void Rebuild(const std::vector<Snake>& snakes,
                const std::vector<Food>& foods,
@@ -52,11 +54,19 @@ class ChunkManager {
 
  private:
   ChunkData& EnsureChunk(const ChunkId& id, uint64_t tick_id);
+  int ClampX(int x) const;
+  int ClampY(int y) const;
+  void RecomputeChunkGrid();
 
   int chunk_size_ = 64;
   bool single_chunk_mode_ = true;
+  int world_w_ = 40;
+  int world_h_ = 20;
+  int num_chunks_x_ = 1;
+  int num_chunks_y_ = 1;
   std::unordered_map<ChunkId, ChunkData, ChunkIdHash> chunks_;
   std::unordered_map<int, ChunkId> snake_head_chunk_;
+  std::unordered_map<int, std::unordered_set<ChunkId, ChunkIdHash>> snake_body_chunks_;
 };
 
 }  // namespace world

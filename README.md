@@ -277,6 +277,7 @@ Expected:
 - Debug overlay (`?debug=1`) reads mode/camera/AOI/public chunk from WS snapshot metadata.
 - Watch stream broadcast rate is restored to `SPECTATOR_HZ` (default `10 Hz`) for everyone.
 - AOI filtering is active with chunk-based replication; zoom/camera only changes viewport, not world simulation.
+- AOI edge stability uses `AOI_PAD_CHUNKS` (default `1`) to avoid chunk-boundary flicker.
 
 ## Modes
 
