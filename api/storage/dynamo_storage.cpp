@@ -426,10 +426,9 @@ bool DynamoStorage::AttachCellsToSnake(const std::string& user_id,
   Aws::DynamoDB::Model::Update user_update;
   user_update.SetTableName(cfg_.users_table.c_str());
   user_update.AddKey("user_id", S(user_id));
-  user_update.SetConditionExpression("attribute_exists(user_id) AND if_not_exists(balance_mi, :z) >= :a");
-  user_update.SetUpdateExpression("SET balance_mi = if_not_exists(balance_mi, :z) - :a");
+  user_update.SetConditionExpression("attribute_exists(user_id) AND attribute_exists(balance_mi) AND balance_mi >= :a");
+  user_update.SetUpdateExpression("SET balance_mi = balance_mi - :a");
   user_update.AddExpressionAttributeValues(":a", N(amount));
-  user_update.AddExpressionAttributeValues(":z", N(0));
 
   Aws::DynamoDB::Model::TransactWriteItem user_item;
   user_item.SetUpdate(user_update);
@@ -469,9 +468,8 @@ bool DynamoStorage::AttachCellsToSnake(const std::string& user_id,
   Aws::DynamoDB::Model::UpdateItemRequest user_debit;
   user_debit.SetTableName(cfg_.users_table.c_str());
   user_debit.AddKey("user_id", S(user_id));
-  user_debit.SetConditionExpression("attribute_exists(user_id) AND if_not_exists(balance_mi, :z) >= :a");
-  user_debit.SetUpdateExpression("SET balance_mi = if_not_exists(balance_mi, :z) - :a");
-  user_debit.AddExpressionAttributeValues(":z", N(0));
+  user_debit.SetConditionExpression("attribute_exists(user_id) AND attribute_exists(balance_mi) AND balance_mi >= :a");
+  user_debit.SetUpdateExpression("SET balance_mi = balance_mi - :a");
   user_debit.AddExpressionAttributeValues(":a", N(amount));
   auto debit_res = client_->UpdateItem(user_debit);
   if (!debit_res.IsSuccess()) return false;
@@ -492,8 +490,8 @@ bool DynamoStorage::AttachCellsToSnake(const std::string& user_id,
     Aws::DynamoDB::Model::UpdateItemRequest rollback_user;
     rollback_user.SetTableName(cfg_.users_table.c_str());
     rollback_user.AddKey("user_id", S(user_id));
-    rollback_user.SetUpdateExpression("SET balance_mi = if_not_exists(balance_mi, :z) + :a");
-    rollback_user.AddExpressionAttributeValues(":z", N(0));
+    rollback_user.SetUpdateExpression("SET balance_mi = if_not_exists(balance_mi, :zero) + :a");
+    rollback_user.AddExpressionAttributeValues(":zero", N(0));
     rollback_user.AddExpressionAttributeValues(":a", N(amount));
     (void)client_->UpdateItem(rollback_user);
     return false;
