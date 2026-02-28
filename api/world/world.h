@@ -37,9 +37,12 @@ struct PersistenceDelta {
   std::vector<std::string> delete_snake_ids;
   std::optional<storage::WorldChunk> upsert_world_chunk;
   std::vector<storage::SnakeEvent> snake_events;
+  std::vector<std::pair<std::string, int64_t>> user_balance_deltas;
+  int64_t system_balance_delta = 0;
 
   bool empty() const {
-    return upsert_snakes.empty() && delete_snake_ids.empty() && !upsert_world_chunk.has_value() && snake_events.empty();
+    return upsert_snakes.empty() && delete_snake_ids.empty() && !upsert_world_chunk.has_value() &&
+           snake_events.empty() && user_balance_deltas.empty() && system_balance_delta == 0;
   }
 };
 
@@ -68,6 +71,7 @@ class World {
                                   int aoi_pad_chunks = 0,
                                   bool debug_validate_bounds = false) const;
   void ConfigureChunking(int chunk_size, bool single_chunk_mode);
+  void SetDuelDelayTicks(int ticks);
   void ConfigureMask(const std::string& mode, int seed, const std::string& style);
   void SetPlayableCellTarget(int64_t playable_cells_target);
   ChunkId CoordToChunk(int x, int y) const;
@@ -127,7 +131,10 @@ class World {
   std::unordered_set<int> dirty_snake_ids_;
   std::unordered_set<int> deleted_snake_ids_;
   std::vector<storage::SnakeEvent> pending_snake_events_;
+  std::unordered_map<int, int64_t> pending_user_balance_deltas_;
+  int64_t pending_system_balance_delta_ = 0;
   bool world_chunk_dirty_ = false;
+  int duel_delay_ticks_ = 10;
 
   std::mt19937 rng_;
   ChunkManager chunk_manager_;

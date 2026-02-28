@@ -103,6 +103,8 @@ void World::LoadFromStorage(const std::vector<storage::Snake>& stored_snakes,
   dirty_snake_ids_.clear();
   deleted_snake_ids_.clear();
   pending_snake_events_.clear();
+  pending_user_balance_deltas_.clear();
+  pending_system_balance_delta_ = 0;
   world_chunk_dirty_ = false;
 
   int max_snake_id = 0;
@@ -114,6 +116,11 @@ void World::LoadFromStorage(const std::vector<storage::Snake>& stored_snakes,
     s.dir = static_cast<Dir>(ss.direction);
     s.paused = ss.paused;
     s.grow = 0;
+    s.last_reverse_tick = UINT64_MAX;
+    s.last_loss_tick = UINT64_MAX;
+    s.duel_pending = false;
+    s.duel_with_id = 0;
+    s.duel_resolve_tick = 0;
     s.color = ss.color.empty() ? ColorForUser(s.user_id) : ss.color;
     s.body = DecodeBody(ss.body_compact);
     if (s.body.empty()) {
@@ -162,30 +169,17 @@ void World::Tick() {
 
   std::unordered_map<int, std::pair<Dir, bool>> before_dir_pause;
   before_dir_pause.reserve(snakes_.size());
-  std::unordered_map<int, std::vector<Vec2>> before_bodies;
-  before_bodies.reserve(snakes_.size());
   for (const auto& s : snakes_) {
     before_dir_pause[s.id] = {s.dir, s.paused};
-    before_bodies[s.id] = s.body;
   }
 
   MovementSystem::Run(snakes_, input_buffer_, width_, height_);
-
-  // Non-rectangular world mask: if a snake enters unplayable space, stop and revert move.
-  for (auto& s : snakes_) {
-    if (!s.alive || s.body.empty()) continue;
-    if (IsPlayableLocked(s.body.front())) continue;
-    auto it = before_bodies.find(s.id);
-    if (it != before_bodies.end()) s.body = it->second;
-    s.paused = true;
-    s.dir = Dir::Stop;
-  }
 
   std::vector<CollisionEvent> events;
   events.reserve(8);
   bool food_changed = false;
   auto is_playable = [&](const Vec2& p) { return IsPlayableLocked(p); };
-  CollisionSystem::Run(snakes_, foods_, width_, height_, rng_, events, food_changed, is_playable);
+  CollisionSystem::Run(snakes_, foods_, width_, height_, tick_, duel_delay_ticks_, rng_, events, food_changed, is_playable);
 
   foods_.erase(std::remove_if(foods_.begin(), foods_.end(), [&](const Food& f) {
                 return !is_playable(Vec2{f.x, f.y});
@@ -196,6 +190,12 @@ void World::Tick() {
   const int64_t created_at = 0;
   for (const auto& e : events) {
     PushSnakeEventLocked(e, created_at);
+    if (e.delta_user_cells > 0 && e.credit_user_id > 0) {
+      pending_user_balance_deltas_[e.credit_user_id] += e.delta_user_cells;
+    }
+    if (e.delta_system_cells != 0) {
+      pending_system_balance_delta_ += e.delta_system_cells;
+    }
     if (e.snake_id > 0) MarkSnakeDirtyLocked(e.snake_id);
     if (e.other_snake_id > 0) MarkSnakeDirtyLocked(e.other_snake_id);
     if (e.event_type == "DEATH" && e.snake_id > 0) {
@@ -303,6 +303,11 @@ void World::ConfigureChunking(int chunk_size, bool single_chunk_mode) {
   chunk_manager_.Rebuild(snakes_, foods_, obstacles_, tick_);
 }
 
+void World::SetDuelDelayTicks(int ticks) {
+  std::lock_guard<std::mutex> lock(mu_);
+  duel_delay_ticks_ = std::max(1, ticks);
+}
+
 void World::ConfigureMask(const std::string& mode, int seed, const std::string& style) {
   std::lock_guard<std::mutex> lock(mu_);
   mask_mode_ = (mode == "torn") ? "torn" : "none";
@@ -331,6 +336,40 @@ bool World::QueueDirectionInput(int user_id, int snake_id, Dir d) {
   std::lock_guard<std::mutex> lock(mu_);
   Snake* s = FindSnakeLocked(snake_id);
   if (!s || s->user_id != user_id) return false;
+
+  if (d != Dir::Stop && s->dir != Dir::Stop && OppositeDir(s->dir) == d) {
+    // Reverse-direction punishment: at most once per tick and max one lost cell per tick.
+    if (s->last_reverse_tick != tick_ && s->last_loss_tick != tick_) {
+      s->last_reverse_tick = tick_;
+      if (!s->body.empty()) s->body.pop_back();
+      s->last_loss_tick = tick_;
+      pending_system_balance_delta_ += 1;
+      CollisionEvent ev;
+      ev.event_type = "REVERSE_PENALTY";
+      ev.snake_id = s->id;
+      if (!s->body.empty()) {
+        ev.x = s->body.front().x;
+        ev.y = s->body.front().y;
+      }
+      ev.delta_length = -1;
+      ev.delta_system_cells = 1;
+      PushSnakeEventLocked(ev, 0);
+      if (s->body.empty()) {
+        s->alive = false;
+        CollisionEvent death;
+        death.event_type = "DEATH";
+        death.snake_id = s->id;
+        death.delta_length = -1;
+        PushSnakeEventLocked(death, 0);
+        deleted_snake_ids_.insert(s->id);
+      }
+      MarkSnakeDirtyLocked(s->id);
+      world_chunk_dirty_ = true;
+      ++world_version_;
+    }
+  }
+
+  if (!s->alive) return true;
 
   InputIntent& intent = input_buffer_[snake_id];
   intent.has_desired_dir = true;
@@ -528,6 +567,14 @@ PersistenceDelta World::DrainPersistenceDelta(int64_t ts_ms) {
     if (e.created_at <= 0) e.created_at = ts_ms;
     if (e.world_version <= 0) e.world_version = world_version_;
   }
+
+  for (const auto& kv : pending_user_balance_deltas_) {
+    if (kv.first <= 0 || kv.second == 0) continue;
+    delta.user_balance_deltas.push_back({std::to_string(kv.first), kv.second});
+  }
+  pending_user_balance_deltas_.clear();
+  delta.system_balance_delta = pending_system_balance_delta_;
+  pending_system_balance_delta_ = 0;
 
   return delta;
 }

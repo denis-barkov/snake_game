@@ -11,12 +11,15 @@
 namespace world {
 
 struct CollisionEvent {
-  std::string event_type;  // BITE, BITTEN, FOOD_EATEN, DEATH, SELF_COLLISION
+  std::string event_type;  // FOOD_EATEN, TAIL_BITE, TAIL_BITTEN, HEAD_DUEL_WIN, HEAD_DUEL_LOSS, HEAD_ONCOMING, DEATH, SELF_COLLISION, REVERSE_PENALTY
   int snake_id = 0;
   int other_snake_id = 0;
   int x = 0;
   int y = 0;
   int delta_length = 0;
+  int credit_user_id = 0;
+  int delta_user_cells = 0;
+  int delta_system_cells = 0;
 };
 
 class CollisionSystem {
@@ -26,6 +29,8 @@ class CollisionSystem {
                   std::vector<Food>& foods,
                   int width,
                   int height,
+                  uint64_t tick_id,
+                  int duel_delay_ticks,
                   std::mt19937& rng,
                   std::vector<CollisionEvent>& events,
                   bool& food_changed,

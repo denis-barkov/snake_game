@@ -226,6 +226,10 @@ class GameService {
     aoi_pad_chunks_ = max(0, pad);
   }
 
+  void set_duel_delay_ticks(int ticks) {
+    world_.SetDuelDelayTicks(std::max(1, ticks));
+  }
+
   bool set_snake_dir(int user_id, int snake_id, world::Dir d) {
     return world_.QueueDirectionInput(user_id, snake_id, d);
   }
@@ -267,6 +271,13 @@ class GameService {
           ++credited_food_events;
         }
       }
+    }
+    for (const auto& ud : delta.user_balance_deltas) {
+      if (ud.first.empty() || ud.second == 0) continue;
+      (void)storage_.IncrementUserBalance(ud.first, ud.second);
+    }
+    if (delta.system_balance_delta != 0) {
+      (void)storage_.IncrementSystemReserve(delta.system_balance_delta);
     }
 
     for (const auto& s : delta.upsert_snakes) storage_.PutSnake(s);
@@ -661,6 +672,7 @@ int main(int argc, char** argv) {
 
   GameService game(*storage, grid_w, grid_h, FOOD_COUNT, max_snakes_per_user);
   game.configure_chunking(runtime_cfg.chunk_size, runtime_cfg.single_chunk_mode);
+  game.set_duel_delay_ticks(runtime_cfg.tick_hz);
   game.set_aoi_pad_chunks(runtime_cfg.aoi_pad_chunks);
   game.configure_mask(runtime_cfg.world_mask_mode, runtime_cfg.world_mask_seed, runtime_cfg.world_mask_style);
   EconomyService economy(*storage);

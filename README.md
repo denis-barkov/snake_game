@@ -80,6 +80,11 @@ Notes:
 
 Gameplay update:
 - Food events credit owner storage (`FOOD_REWARD_CELLS`) instead of auto-growing snake length.
+- Snake-vs-snake collisions are bounded: max 1 cell loss per snake per tick.
+- Tail-hit: attacker pauses, victim loses 1, attacker owner gains 1 storage cell.
+- Head-oncoming (same-next-cell or swap): both lose 1 to system reserve and reverse direction.
+- Side head-hit: both pause, then duel resolves once after ~1 second; winner gains 1 storage cell.
+- Reverse-direction input applies one-time penalty (max 1 per tick): snake loses 1 to system reserve.
 - Economy is computed outside the tick loop and cached in-process to avoid DynamoDB hammering.
 - No gameplay rules are changed by economy values in this step (display-only).
 - User HUD does not show `period_key`; period remains available in `snakecli economy status`.

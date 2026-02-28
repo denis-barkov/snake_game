@@ -49,6 +49,7 @@ class IStorage {
   virtual std::optional<EconomyPeriod> GetEconomyPeriod(const std::string& period_key) = 0;
   virtual bool PutEconomyPeriod(const EconomyPeriod& p) = 0;
   virtual bool IncrementEconomyPeriodDeltaMBuy(const std::string& period_key, int64_t delta_m_buy) = 0;
+  virtual bool IncrementSystemReserve(int64_t delta_cells) = 0;
 
   virtual bool HealthCheck() = 0;
   virtual bool ResetForDev() = 0;

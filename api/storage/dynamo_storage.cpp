@@ -713,6 +713,32 @@ bool DynamoStorage::IncrementEconomyPeriodDeltaMBuy(const std::string& period_ke
   return false;
 }
 
+bool DynamoStorage::IncrementSystemReserve(int64_t delta_cells) {
+  if (delta_cells == 0) return true;
+  const int64_t ts = static_cast<int64_t>(time(nullptr));
+
+  auto update_row = [&](const std::string& params_id) {
+    Aws::DynamoDB::Model::UpdateItemRequest req;
+    req.SetTableName(cfg_.economy_params_table.c_str());
+    req.AddKey("params_id", S(params_id));
+    req.SetUpdateExpression(
+        "SET m_gov_reserve = if_not_exists(m_gov_reserve, :zero) + :delta, "
+        "updated_at = :ts, "
+        "updated_by = :by");
+    req.AddExpressionAttributeValues(":zero", N(0));
+    req.AddExpressionAttributeValues(":delta", N(delta_cells));
+    req.AddExpressionAttributeValues(":ts", N(ts));
+    req.AddExpressionAttributeValues(":by", S("runtime"));
+    return client_->UpdateItem(req);
+  };
+
+  auto active_res = update_row("active");
+  if (active_res.IsSuccess()) return true;
+  auto global_res = update_row("global");
+  if (global_res.IsSuccess()) return true;
+  return false;
+}
+
 bool DynamoStorage::HealthCheck() {
   Aws::DynamoDB::Model::DescribeTableRequest req;
   req.SetTableName(cfg_.users_table.c_str());

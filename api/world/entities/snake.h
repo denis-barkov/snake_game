@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -34,6 +35,13 @@ struct Snake {
   bool alive = true;
   int grow = 0;
   std::vector<Vec2> body;
+  // Guards to prevent repeated punishment/drain within the same simulation tick.
+  uint64_t last_reverse_tick = UINT64_MAX;
+  uint64_t last_loss_tick = UINT64_MAX;
+  // Side-head duel state (resolved asynchronously after ~1 second in ticks).
+  bool duel_pending = false;
+  int duel_with_id = 0;
+  uint64_t duel_resolve_tick = 0;
 };
 
 }  // namespace world

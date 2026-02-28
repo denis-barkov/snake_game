@@ -63,6 +63,7 @@ class DynamoStorage : public IStorage {
   std::optional<EconomyPeriod> GetEconomyPeriod(const std::string& period_key) override;
   bool PutEconomyPeriod(const EconomyPeriod& p) override;
   bool IncrementEconomyPeriodDeltaMBuy(const std::string& period_key, int64_t delta_m_buy) override;
+  bool IncrementSystemReserve(int64_t delta_cells) override;
 
   bool HealthCheck() override;
   bool ResetForDev() override;
