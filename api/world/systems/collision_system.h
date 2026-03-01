@@ -11,7 +11,7 @@
 namespace world {
 
 struct CollisionEvent {
-  std::string event_type;  // FOOD_EATEN, TAIL_BITE, TAIL_BITTEN, HEAD_DUEL_WIN, HEAD_DUEL_LOSS, HEAD_ONCOMING, DEATH, SELF_COLLISION, REVERSE_PENALTY
+  std::string event_type;  // FOOD_EATEN, TAIL_BITE, TAIL_BITTEN, HEAD_DUEL_WIN, HEAD_DUEL_LOSS, HEAD_ONCOMING, DEATH, SELF_COLLISION
   int snake_id = 0;
   int other_snake_id = 0;
   int x = 0;

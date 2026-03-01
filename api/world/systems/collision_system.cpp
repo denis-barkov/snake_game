@@ -30,6 +30,15 @@ bool IsOpposite(Dir a, Dir b) {
   return OppositeDir(a) == b;
 }
 
+void ApplyForcedReverseTurn(Snake& s) {
+  if (!s.alive) return;
+  if (s.body.size() > 1) {
+    std::reverse(s.body.begin(), s.body.end());
+  }
+  s.dir = OppositeDir(s.dir);
+  s.paused = false;
+}
+
 void ApplySingleCellLoss(Snake& s,
                          uint64_t tick_id,
                          const std::string& event_type,
@@ -163,16 +172,15 @@ void CollisionSystem::Run(std::vector<Snake>& snakes,
     const Vec2 impact = proposed.count(a->id) ? proposed[a->id].next_head : (a->body.empty() ? Vec2{} : a->body.front());
     ApplySingleCellLoss(*a, tick_id, "HEAD_ONCOMING", b->id, impact, events, 1);
     ApplySingleCellLoss(*b, tick_id, "HEAD_ONCOMING", a->id, impact, events, 1);
-    a->dir = OppositeDir(a->dir);
-    b->dir = OppositeDir(b->dir);
-    a->paused = false;
-    b->paused = false;
+    ApplyForcedReverseTurn(*a);
+    ApplyForcedReverseTurn(*b);
     blocked_move.insert(a->id);
     blocked_move.insert(b->id);
   }
 
   // 4) Priority 2: side head-hit duel (non-oncoming).
   std::set<std::pair<int, int>> duel_pairs;
+  std::unordered_set<int> single_cell_head_resolved;
   for (const auto& attacker : snakes) {
     if (!attacker.alive || blocked_move.count(attacker.id)) continue;
     auto ita = proposed.find(attacker.id);
@@ -189,6 +197,26 @@ void CollisionSystem::Run(std::vector<Snake>& snakes,
       const bool same_next = (itb != proposed.end()) && (ita->second.next_head == itb->second.next_head);
       if (swap || same_next) continue;
       if (itb != proposed.end() && IsOpposite(ita->second.dir, itb->second.dir)) continue;
+
+      // Special case: hitting a 1-cell head should not create a paused duel loop.
+      // Resolve immediately as forced overturn: attacker loses 1 to system, reverses,
+      // keeps moving; defender loses 1 and dies.
+      if (defender.body.size() == 1 && !single_cell_head_resolved.count(attacker.id) && !single_cell_head_resolved.count(defender.id)) {
+        Snake* atk = FindSnakeById(snakes, attacker.id);
+        Snake* def = FindSnakeById(snakes, defender.id);
+        if (atk && def && atk->alive && def->alive) {
+          const Vec2 impact = ita->second.next_head;
+          ApplySingleCellLoss(*atk, tick_id, "HEAD_ONCOMING", def->id, impact, events, 1);
+          ApplySingleCellLoss(*def, tick_id, "HEAD_ONCOMING", atk->id, impact, events, 1);
+          ApplyForcedReverseTurn(*atk);
+          blocked_move.insert(atk->id);
+          blocked_move.insert(def->id);
+          single_cell_head_resolved.insert(atk->id);
+          single_cell_head_resolved.insert(def->id);
+        }
+        continue;
+      }
+
       const int a = std::min(attacker.id, defender.id);
       const int b = std::max(attacker.id, defender.id);
       duel_pairs.insert({a, b});

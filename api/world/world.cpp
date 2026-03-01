@@ -116,7 +116,6 @@ void World::LoadFromStorage(const std::vector<storage::Snake>& stored_snakes,
     s.dir = static_cast<Dir>(ss.direction);
     s.paused = ss.paused;
     s.grow = 0;
-    s.last_reverse_tick = UINT64_MAX;
     s.last_loss_tick = UINT64_MAX;
     s.duel_pending = false;
     s.duel_with_id = 0;
@@ -337,39 +336,16 @@ bool World::QueueDirectionInput(int user_id, int snake_id, Dir d) {
   Snake* s = FindSnakeLocked(snake_id);
   if (!s || s->user_id != user_id) return false;
 
-  if (d != Dir::Stop && s->dir != Dir::Stop && OppositeDir(s->dir) == d) {
-    // Reverse-direction punishment: at most once per tick and max one lost cell per tick.
-    if (s->last_reverse_tick != tick_ && s->last_loss_tick != tick_) {
-      s->last_reverse_tick = tick_;
-      if (!s->body.empty()) s->body.pop_back();
-      s->last_loss_tick = tick_;
-      pending_system_balance_delta_ += 1;
-      CollisionEvent ev;
-      ev.event_type = "REVERSE_PENALTY";
-      ev.snake_id = s->id;
-      if (!s->body.empty()) {
-        ev.x = s->body.front().x;
-        ev.y = s->body.front().y;
-      }
-      ev.delta_length = -1;
-      ev.delta_system_cells = 1;
-      PushSnakeEventLocked(ev, 0);
-      if (s->body.empty()) {
-        s->alive = false;
-        CollisionEvent death;
-        death.event_type = "DEATH";
-        death.snake_id = s->id;
-        death.delta_length = -1;
-        PushSnakeEventLocked(death, 0);
-        deleted_snake_ids_.insert(s->id);
-      }
-      MarkSnakeDirtyLocked(s->id);
-      world_chunk_dirty_ = true;
-      ++world_version_;
-    }
-  }
-
   if (!s->alive) return true;
+  // Reverse command is allowed with no punishment.
+  // Flip body orientation so the snake keeps moving smoothly in the new opposite
+  // direction instead of instantly colliding with its own neck.
+  if (d != Dir::Stop && s->dir != Dir::Stop && OppositeDir(s->dir) == d && s->body.size() > 1) {
+    std::reverse(s->body.begin(), s->body.end());
+  }
+  s->dir = d;
+  s->paused = false;
+  MarkSnakeDirtyLocked(s->id);
 
   InputIntent& intent = input_buffer_[snake_id];
   intent.has_desired_dir = true;

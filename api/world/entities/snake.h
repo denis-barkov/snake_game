@@ -35,8 +35,7 @@ struct Snake {
   bool alive = true;
   int grow = 0;
   std::vector<Vec2> body;
-  // Guards to prevent repeated punishment/drain within the same simulation tick.
-  uint64_t last_reverse_tick = UINT64_MAX;
+  // Guard to cap losses to at most one cell per snake per tick.
   uint64_t last_loss_tick = UINT64_MAX;
   // Side-head duel state (resolved asynchronously after ~1 second in ticks).
   bool duel_pending = false;
