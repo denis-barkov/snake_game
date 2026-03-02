@@ -6,6 +6,7 @@ PROJECT_TAG="${PROJECT_TAG:-snake}"
 ENVIRONMENT_TAG="${ENVIRONMENT_TAG:-mvp}"
 ASG_NAME="${ASG_NAME:-${PROJECT_TAG}-${ENVIRONMENT_TAG}-asg}"
 APP_REF="${APP_REF:-main}"
+APP_GIT_REPO="${APP_GIT_REPO:-https://github.com/denis-progman/snake_game.git}"
 BUILD_TARGET="${BUILD_TARGET:-api/snake_server.cpp}"
 DOMAIN_NAME="${DOMAIN_NAME:-terrariumsnake.com}"
 APP_PORT="${APP_PORT:-8080}"
@@ -92,6 +93,34 @@ fi
 INSTANCE_ID="$INSTANCE_IDS"
 echo "Deploying app to ${INSTANCE_ID} (project=${PROJECT_TAG}, environment=${ENVIRONMENT_TAG})"
 
+# Ensure Route53 target EIP is attached to the current instance (fresh ASG rebuild parity).
+EIP_PARAM_NAME="/${PROJECT_TAG}/${ENVIRONMENT_TAG}/eip_allocation_id"
+EIP_ALLOCATION_ID="$(
+  aws ssm get-parameter \
+    --region "$REGION" \
+    --name "$EIP_PARAM_NAME" \
+    --query 'Parameter.Value' \
+    --output text 2>/dev/null || true
+)"
+if [[ -z "$EIP_ALLOCATION_ID" || "$EIP_ALLOCATION_ID" == "None" ]]; then
+  EIP_ALLOCATION_ID="$(
+    aws ec2 describe-addresses \
+      --region "$REGION" \
+      --filters \
+        "Name=tag:project,Values=${PROJECT_TAG}" \
+        "Name=tag:environment,Values=${ENVIRONMENT_TAG}" \
+      --query 'Addresses[0].AllocationId' \
+      --output text 2>/dev/null || true
+  )"
+fi
+if [[ -n "$EIP_ALLOCATION_ID" && "$EIP_ALLOCATION_ID" != "None" ]]; then
+  aws ec2 associate-address \
+    --region "$REGION" \
+    --allocation-id "$EIP_ALLOCATION_ID" \
+    --instance-id "$INSTANCE_ID" \
+    --allow-reassociation >/dev/null || true
+fi
+
 wait_for_ssm_online() {
   local instance_id="$1"
   local ping=""
@@ -127,7 +156,7 @@ COMMAND_ID="$(
 \"dnf -y install git clang boost-devel cmake gcc-c++ libcurl-devel openssl-devel zlib-devel python3 >/dev/null\",
 \"if [ ! -f /usr/local/lib64/libaws-cpp-sdk-dynamodb.so ] && [ ! -f /usr/local/lib/libaws-cpp-sdk-dynamodb.so ]; then if [ ! -d /opt/aws-sdk-cpp ]; then git clone --depth 1 --branch 1.11.676 --recurse-submodules https://github.com/aws/aws-sdk-cpp.git /opt/aws-sdk-cpp; else cd /opt/aws-sdk-cpp; git fetch --tags --force; git checkout 1.11.676; git submodule sync --recursive; git submodule update --init --recursive; fi; cmake -S /opt/aws-sdk-cpp -B /opt/aws-sdk-cpp/build -DBUILD_ONLY='dynamodb' -DCMAKE_BUILD_TYPE=Release -DENABLE_TESTING=OFF >/dev/null; cmake --build /opt/aws-sdk-cpp/build -j2 >/dev/null; cmake --install /opt/aws-sdk-cpp/build >/dev/null; echo -e '/usr/local/lib64\\n/usr/local/lib' >/etc/ld.so.conf.d/aws-sdk-cpp.conf; ldconfig || true; fi\",
 \"mkdir -p /opt/snake\",
-\"if [ ! -d /opt/snake/repo ]; then echo Missing /opt/snake/repo; exit 1; fi\",
+\"if [ ! -d /opt/snake/repo/.git ]; then rm -rf /opt/snake/repo; git clone '${APP_GIT_REPO}' /opt/snake/repo; fi\",
 \"cd /opt/snake/repo\",
 \"git fetch --all --prune\",
 \"git checkout ${APP_REF}\",
@@ -243,7 +272,7 @@ COMMAND_ID="$(
 \"[Service]\",
 \"LimitNOFILE=100000\",
 \"EOF_SNAKE_LIMITS\",
-\"if ! command -v caddy >/dev/null 2>&1; then dnf -y install dnf-plugins-core ca-certificates curl tar >/dev/null || true; dnf config-manager --add-repo https://dl.cloudsmith.io/public/caddy/stable/rpm.repo >/dev/null 2>&1 || true; rpm --import https://dl.cloudsmith.io/public/caddy/stable/gpg.key >/dev/null 2>&1 || true; dnf -y install caddy >/dev/null 2>&1 || true; fi\",
+\"if ! command -v caddy >/dev/null 2>&1; then dnf -y install dnf-plugins-core ca-certificates tar >/dev/null || true; dnf config-manager --add-repo https://dl.cloudsmith.io/public/caddy/stable/rpm.repo >/dev/null 2>&1 || true; rpm --import https://dl.cloudsmith.io/public/caddy/stable/gpg.key >/dev/null 2>&1 || true; dnf -y install caddy >/dev/null 2>&1 || true; fi\",
 \"if ! command -v caddy >/dev/null 2>&1; then curl -fsSL 'https://caddyserver.com/api/download?os=linux&arch=arm64&p=github.com/caddyserver/caddy/v2' -o /usr/local/bin/caddy && chmod +x /usr/local/bin/caddy; fi\",
 \"if [ -x /usr/local/bin/caddy ]; then mkdir -p /etc/caddy /var/lib/caddy /var/log/caddy; cat > /etc/systemd/system/caddy.service <<'EOF_CADDY_UNIT'\",
 \"[Unit]\",
@@ -321,8 +350,26 @@ COMMAND_ID="$(
 \"EOF_NGINX\",
 \"nginx -t || true\",
 \"systemctl restart nginx >/dev/null 2>&1 || true\",
+\"if [ ! -f /etc/systemd/system/snake.service ] && [ ! -f /usr/lib/systemd/system/snake.service ]; then cat > /etc/systemd/system/snake.service <<'EOF_SNAKE_UNIT'\",
+\"[Unit]\",
+\"Description=Snake game server\",
+\"After=network-online.target\",
+\"Wants=network-online.target\",
+\"[Service]\",
+\"Type=simple\",
+\"User=ec2-user\",
+\"WorkingDirectory=/opt/snake\",
+\"EnvironmentFile=/etc/snake.env\",
+\"ExecStart=/opt/snake/snake_server serve\",
+\"Restart=always\",
+\"RestartSec=2\",
+\"[Install]\",
+\"WantedBy=multi-user.target\",
+\"EOF_SNAKE_UNIT\",
+\"fi\",
 \"systemctl daemon-reload || true\",
-\"systemctl restart snake\",
+\"systemctl enable snake >/dev/null 2>&1 || true\",
+\"systemctl restart snake >/dev/null 2>&1 || systemctl start snake\",
 \"systemctl is-active snake\",
 \"if command -v caddy >/dev/null 2>&1; then systemctl daemon-reload || true; systemctl enable caddy >/dev/null 2>&1 || true; systemctl restart caddy >/dev/null 2>&1 || systemctl start caddy >/dev/null 2>&1 || true; systemctl stop nginx >/dev/null 2>&1 || true; systemctl disable nginx >/dev/null 2>&1 || true; fi\",
 \"if command -v caddy >/dev/null 2>&1 && systemctl is-active --quiet caddy; then systemctl is-active caddy; else nginx -t; systemctl enable --now nginx; systemctl is-active nginx; fi\"
