@@ -194,7 +194,7 @@
       font-size: 13px;
       color: #21301f;
       display: none;
-      white-space: normal;
+      white-space: pre-line;
     }
     #eco-auth-note {
       color: #5c6e5a;
@@ -289,8 +289,7 @@
       <div class="row"><button id="createSnakeBtn" disabled>Create Snake</button></div>
       <div class="row"><strong>Storage</strong></div>
       <div class="row"><small>My Cells: <span id="myBalance">—</span></small></div>
-      <div class="row"><small>My Deployed: <span id="myDeployed">—</span></small></div>
-      <div class="row"><small>Snake Count: <span id="mySnakeCount">—</span></small></div>
+      <div class="row"><small>Snakes count: <span id="mySnakeCount">—</span></small></div>
       <div class="row">
         <input id="borrowAmount" type="number" min="1" step="1" placeholder="Borrow amount" />
       </div>
@@ -306,39 +305,41 @@
       </div>
       <div class="row"><small>Controls: W/A/S/D move selected snake, P pause selected snake</small></div>
     </div>
+
+    <div class="panel">
+      <details class="eco-card" id="eco-user-card" open>
+        <summary>My Economy</summary>
+        <div class="eco-grid">
+          <div class="eco-row"><span class="label">Personal Output (Yᵤ)</span><button class="eco-help-btn" data-tip="Real Economy: Your firm’s production during a period.&#10;Real-World Impact: Higher production usually strengthens profitability and resilience.&#10;In This Game: Food harvested by your snakes during the current period.&#10;How to Use It: Raise Yᵤ by harvesting more food to improve your market share and your productivity metrics.">i</button><span class="value" id="ecoUY">—</span></div>
+          <div class="eco-row"><span class="label">Personal Labor (Lᵤ)</span><button class="eco-help-btn" data-tip="Real Economy: Your firm’s effort during the period.&#10;Real-World Impact: Effort matters, but efficiency matters more than raw hours.&#10;In This Game: Your movement activity ticks during this period.&#10;How to Use It: If Lᵤ rises but Yᵤ doesn’t, you’re working hard but not producing—change strategy.">i</button><span class="value" id="ecoUL">—</span></div>
+          <div class="eco-row"><span class="label">Personal Capital (Kᵤ)</span><button class="eco-help-btn" data-tip="Real Economy: Your deployed productive assets.&#10;Real-World Impact: More capital can scale output, but inefficient capital reduces productivity.&#10;In This Game: Your deployed snake cells currently on the field.&#10;How to Use It: Deploy cells to increase Kᵤ, but don’t overextend—capital without output reduces efficiency.">i</button><span class="value" id="ecoUK">—</span></div>
+          <div class="eco-row"><span class="label">Personal Productivity (Aᵤ)</span><button class="eco-help-btn" data-tip="Real Economy: Your firm’s efficiency.&#10;Real-World Impact: High productivity means strong results with less waste.&#10;In This Game: How efficiently your capital (snake size) and labor (moves) produce food.&#10;How to Use It: Aim to increase Aᵤ by harvesting more with fewer moves or better deployment.">i</button><span class="value" id="ecoUA">—</span></div>
+          <div class="eco-row"><span class="label">Personal Capital Share (αᵤ)</span><button class="eco-help-btn" data-tip="Real Economy: How much of your production comes from capital vs effort.&#10;Real-World Impact: Helps diagnose whether scaling assets or improving execution is better.&#10;In This Game: Shows whether your output is more size-driven or activity-driven.&#10;How to Use It: High αᵤ → scaling capital may help. Low αᵤ → improve movement/harvest efficiency.">i</button><span class="value" id="ecoUAlpha">—</span></div>
+          <div class="eco-row"><span class="label">Market Share (Yᵤ / Y)</span><button class="eco-help-btn" data-tip="Real Economy: Your share of total production in the economy.&#10;Real-World Impact: Higher market share often means stronger influence and performance.&#10;In This Game: Your output divided by global output during the period.&#10;How to Use It: Increase market share by harvesting more food relative to others.">i</button><span class="value" id="ecoMarket">—</span></div>
+        </div>
+        <div id="eco-auth-note">Login to see your personal economy metrics.</div>
+      </details>
+    </div>
   </div>
 
   <div id="game">
     <div id="game-main">
       <div id="economy-panels">
-        <details class="eco-card" id="eco-global-card" open>
-          <summary>Global Economy</summary>
+        <div class="eco-card" id="eco-global-card">
+          <div><strong>Global Economy</strong></div>
           <div class="eco-grid">
-            <div class="eco-row"><span class="label">Total Output (Y)</span><button class="eco-help-btn" data-tip="Total goods produced in the current economic period; here it is harvested food.">i</button><span class="value" id="ecoY">—</span></div>
-            <div class="eco-row"><span class="label">Total Capital (K)</span><button class="eco-help-btn" data-tip="Total deployed on-field snake cells in the world (plus configured fixed capital offset).">i</button><span class="value" id="ecoK">—</span></div>
-            <div class="eco-row"><span class="label">Total Labor (L)</span><button class="eco-help-btn" data-tip="Successful snake movement steps in the current period.">i</button><span class="value" id="ecoL">—</span></div>
-            <div class="eco-row"><span class="label">Capital Share (α)</span><button class="eco-help-btn" data-tip="Observed capital contribution computed from period-over-period marginal productivity; bootstrap uses 0.5 only for first period.">i</button><span class="value" id="ecoAlpha">—</span></div>
-            <div class="eco-row"><span class="label">Productivity (A)</span><button class="eco-help-btn" data-tip="Cobb-Douglas productivity index: Y / (K^α * L^(1-α)) with safe math guards.">i</button><span class="value" id="ecoA">—</span></div>
-            <div class="eco-row"><span class="label">Money Supply (M)</span><button class="eco-help-btn" data-tip="Users storage balances plus treasury balance.">i</button><span class="value" id="ecoM">—</span></div>
-            <div class="eco-row"><span class="label">Price Index (P)</span><button class="eco-help-btn" data-tip="Macro price proxy computed as M / max(Y,1).">i</button><span class="value" id="ecoP">—</span></div>
-            <div class="eco-row"><span class="label">Inflation</span><button class="eco-help-btn" data-tip="Period-over-period change of P: (P_t - P_t-1) / max(P_t-1, eps).">i</button><span class="value" id="ecoPi">—</span></div>
-            <div class="eco-row"><span class="label">Treasury Balance</span><button class="eco-help-btn" data-tip="System reserve used in money supply and macro accounting.">i</button><span class="value" id="ecoTreasury">—</span></div>
+            <div class="eco-row"><span class="label">Total Output (Y)</span><button class="eco-help-btn" data-tip="Real Economy: Total goods/services produced in a period (real output).&#10;Real-World Impact: More output supports stable prices and growth; weak output makes money less valuable.&#10;In This Game: Total food harvested by all players during this economic period.&#10;How to Use It: If Y is rising, the world is producing more; prices should stabilize. If Y is low, expect higher price pressure when money grows.">i</button><span class="value" id="ecoY">—</span></div>
+            <div class="eco-row"><span class="label">Total Capital (K)</span><button class="eco-help-btn" data-tip="Real Economy: Productive infrastructure used to produce output (machines, factories).&#10;Real-World Impact: Capital boosts output potential, but needs effective use to be productive.&#10;In This Game: Total deployed snake cells on the field (not storage).&#10;How to Use It: Higher K means more production capacity in the world—watch how efficiently it converts into Y.">i</button><span class="value" id="ecoK">—</span></div>
+            <div class="eco-row"><span class="label">Total Labor (L)</span><button class="eco-help-btn" data-tip="Real Economy: Total work effort spent producing output during the period.&#10;Real-World Impact: Labor contributes to output, but too much effort with low output signals inefficiency.&#10;In This Game: Total movement activity ticks during this period (all snakes).&#10;How to Use It: Rising L with rising Y is healthy. Rising L with flat Y means efficiency is falling.">i</button><span class="value" id="ecoL">—</span></div>
+            <div class="eco-row"><span class="label">Capital Share (α)</span><button class="eco-help-btn" data-tip="Real Economy: Portion of output attributed to capital rather than labor.&#10;Real-World Impact: High α means capital-driven growth; low α means effort/skill dominates production.&#10;In This Game: Indicates whether snake size (capital) or movement (labor) is driving output.&#10;How to Use It: If α rises, bigger deployed snakes matter more. If α falls, active movement dominates.">i</button><span class="value" id="ecoAlpha">—</span></div>
+            <div class="eco-row"><span class="label">Productivity (A)</span><button class="eco-help-btn" data-tip="Real Economy: Efficiency of turning capital and labor into output.&#10;Real-World Impact: Higher productivity enables growth without inflation pressure.&#10;In This Game: How efficiently the world converts deployed cells and movement into harvested food.&#10;How to Use It: Track A to see if strategies are becoming smarter. If A drops, output isn’t keeping up with capital/labor.">i</button><span class="value" id="ecoA">—</span></div>
+            <div class="eco-row"><span class="label">Money Supply (M)</span><button class="eco-help-btn" data-tip="Real Economy: Total liquid money available to spend.&#10;Real-World Impact: Money growth without output growth pushes prices up.&#10;In This Game: Total player storage balances plus treasury balance (deployed snake cells don’t count).&#10;How to Use It: If M rises faster than Y, expect higher P and inflation.">i</button><span class="value" id="ecoM">—</span></div>
+            <div class="eco-row"><span class="label">Price Index (P)</span><button class="eco-help-btn" data-tip="Real Economy: Average price level; reflects purchasing power.&#10;Real-World Impact: Higher prices reduce purchasing power; stable prices support planning.&#10;In This Game: Money relative to output (M compared to Y).&#10;How to Use It: If P is rising, production may be too low vs money. Focus on increasing output (harvesting food).">i</button><span class="value" id="ecoP">—</span></div>
+            <div class="eco-row"><span class="label">Inflation</span><button class="eco-help-btn" data-tip="Real Economy: Rate of price level change between periods.&#10;Real-World Impact: High inflation reduces purchasing power and increases uncertainty.&#10;In This Game: How fast P changes from one period to the next.&#10;How to Use It: Rising inflation suggests money growth outpacing output—produce more or slow money growth.">i</button><span class="value" id="ecoPi">—</span></div>
+            <div class="eco-row"><span class="label">Treasury Balance</span><button class="eco-help-btn" data-tip="Real Economy: Government reserves used for policy and stabilization.&#10;Real-World Impact: Reserves provide stability and ability to respond to shocks.&#10;In This Game: System-held cells used for economy operations and balancing.&#10;How to Use It: Higher treasury gives the system more ability to stabilize; low treasury may constrain economy actions.">i</button><span class="value" id="ecoTreasury">—</span></div>
             <div class="eco-row"><span class="label">Next Economic Period Ends In</span><button class="eco-help-btn" data-tip="Seconds until current economic period closes and snapshot becomes final.">i</button><span class="value" id="ecoEnds">—</span></div>
           </div>
-        </details>
-        <details class="eco-card" id="eco-user-card" open>
-          <summary>My Economy</summary>
-          <div class="eco-grid">
-            <div class="eco-row"><span class="label">Personal Output (Yᵤ)</span><span class="value" id="ecoUY">—</span></div>
-            <div class="eco-row"><span class="label">Personal Labor (Lᵤ)</span><span class="value" id="ecoUL">—</span></div>
-            <div class="eco-row"><span class="label">Personal Capital (Kᵤ)</span><span class="value" id="ecoUK">—</span></div>
-            <div class="eco-row"><span class="label">Personal Productivity (Aᵤ)</span><span class="value" id="ecoUA">—</span></div>
-            <div class="eco-row"><span class="label">Personal Capital Share (αᵤ)</span><span class="value" id="ecoUAlpha">—</span></div>
-            <div class="eco-row"><span class="label">Storage Balance</span><span class="value" id="ecoStorage">—</span></div>
-            <div class="eco-row"><span class="label">Market Share</span><span class="value" id="ecoMarket">—</span></div>
-          </div>
-          <div id="eco-auth-note">Login to see your personal economy metrics.</div>
-        </details>
+        </div>
       </div>
       <div id="view-controls">
         <strong>View</strong>
@@ -373,6 +374,7 @@
           <div>Tick: <span id="tick">0</span></div>
           <div>Expected speed: <span id="expectedTickHz">-</span> tick/s</div>
           <div>Actual speed: <span id="actualTickHz">-</span> tick/s</div>
+          <div>Period: <span id="ecoPeriod">—</span></div>
           <div><small id="ecoStatus">Economy: loading...</small></div>
         </div>
       </div>
@@ -746,6 +748,7 @@
   const GRID_MODE_STORAGE_KEY = "snake_grid_mode";
   const BOUNDS_TOGGLE_STORAGE_KEY = "snake_bounds_toggle";
   const EDGE_TOGGLE_STORAGE_KEY = "snake_edge_toggle";
+  const MY_ECON_OPEN_STORAGE_KEY = "snake_my_economy_open";
 
   let token = localStorage.getItem(TOKEN_STORAGE_KEY);
   let myUserId = Number(localStorage.getItem(USER_ID_STORAGE_KEY));
@@ -775,12 +778,12 @@
   const ecoPiEl = document.getElementById("ecoPi");
   const ecoTreasuryEl = document.getElementById("ecoTreasury");
   const ecoEndsEl = document.getElementById("ecoEnds");
+  const ecoPeriodEl = document.getElementById("ecoPeriod");
   const ecoUYEl = document.getElementById("ecoUY");
   const ecoUKEl = document.getElementById("ecoUK");
   const ecoULEl = document.getElementById("ecoUL");
   const ecoUAEl = document.getElementById("ecoUA");
   const ecoUAlphaEl = document.getElementById("ecoUAlpha");
-  const ecoStorageEl = document.getElementById("ecoStorage");
   const ecoMarketEl = document.getElementById("ecoMarket");
   const ecoUserCardEl = document.getElementById("eco-user-card");
   const ecoAuthNoteEl = document.getElementById("eco-auth-note");
@@ -790,7 +793,6 @@
   const mySnakesEl = document.getElementById("mySnakes");
   const createSnakeBtn = document.getElementById("createSnakeBtn");
   const myBalanceEl = document.getElementById("myBalance");
-  const myDeployedEl = document.getElementById("myDeployed");
   const mySnakeCountEl = document.getElementById("mySnakeCount");
   const borrowAmountEl = document.getElementById("borrowAmount");
   const borrowBtn = document.getElementById("borrowBtn");
@@ -835,6 +837,8 @@
   if (!["off", "cells", "cells_chunks"].includes(gridMode)) gridMode = "cells_chunks";
   let showBounds = localStorage.getItem(BOUNDS_TOGGLE_STORAGE_KEY) !== "0";
   let showEdge = localStorage.getItem(EDGE_TOGGLE_STORAGE_KEY) !== "0";
+  const savedMyEcoOpen = localStorage.getItem(MY_ECON_OPEN_STORAGE_KEY);
+  if (savedMyEcoOpen === "0") ecoUserCardEl.open = false;
 
   function renderCurrentState() {
     if (!latestServerState) return;
@@ -944,6 +948,7 @@
     ecoPiEl.textContent = "—";
     ecoTreasuryEl.textContent = "—";
     ecoEndsEl.textContent = "—";
+    ecoPeriodEl.textContent = "—";
     ecoStatusEl.textContent = "Economy unavailable";
     updateDebugOverlay();
   }
@@ -954,7 +959,6 @@
     ecoULEl.textContent = "—";
     ecoUAEl.textContent = "—";
     ecoUAlphaEl.textContent = "—";
-    ecoStorageEl.textContent = "—";
     ecoMarketEl.textContent = "—";
   }
 
@@ -1006,6 +1010,7 @@
       ecoPiEl.textContent = Number.isFinite(Number(s.pi)) ? Number(s.pi).toFixed(4) : "—";
       ecoTreasuryEl.textContent = fmtInt(Number(s.treasury_balance));
       ecoEndsEl.textContent = fmtInt(Number(s.period_ends_in_seconds));
+      ecoPeriodEl.textContent = typeof s.period_id === "string" && s.period_id ? s.period_id : "—";
       ecoStatusEl.textContent = "Economy: live";
       updateDebugOverlay();
     } catch (_) {
@@ -1075,14 +1080,12 @@
     attach50Btn.disabled = !isAuth;
     publicViewHintEl.style.display = isAuth ? "none" : "inline";
     viewControlsEl.style.opacity = isAuth ? "1" : "0.82";
-    ecoUserCardEl.open = isAuth;
     ecoAuthNoteEl.style.display = isAuth ? "none" : "block";
     if (!isAuth) {
       setEconomyUserFallback();
     }
     if (!isAuth) {
       myBalanceEl.textContent = "—";
-      myDeployedEl.textContent = "—";
       mySnakeCountEl.textContent = "—";
     }
     updateActionButtons();
@@ -1185,7 +1188,6 @@
     const data = await res.json();
     myBalance = Number.isFinite(Number(data.balance_mi)) ? Number(data.balance_mi) : 0;
     myBalanceEl.textContent = fmtInt(myBalance);
-    myDeployedEl.textContent = fmtInt(Number(data.deployed_k));
     mySnakeCountEl.textContent = fmtInt(Number(data.snake_count));
     updateActionButtons();
   }
@@ -1397,6 +1399,7 @@
       ecoPiEl.textContent = Number.isFinite(Number(msg.pi)) ? Number(msg.pi).toFixed(4) : "—";
       ecoTreasuryEl.textContent = fmtInt(Number(msg.treasury_balance));
       ecoEndsEl.textContent = fmtInt(Number(msg.period_ends_in_seconds));
+      ecoPeriodEl.textContent = typeof msg.period_id === "string" && msg.period_id ? msg.period_id : "—";
       ecoStatusEl.textContent = "Economy: live";
       return;
     }
@@ -1405,9 +1408,6 @@
       if (Number.isFinite(Number(msg.balance_mi))) {
         myBalance = Number(msg.balance_mi);
         myBalanceEl.textContent = fmtInt(myBalance);
-      }
-      if (Number.isFinite(Number(msg.deployed_k))) {
-        myDeployedEl.textContent = fmtInt(Number(msg.deployed_k));
       }
       if (Number.isFinite(Number(msg.snake_count))) {
         mySnakeCountEl.textContent = fmtInt(Number(msg.snake_count));
@@ -1418,7 +1418,6 @@
         ecoULEl.textContent = fmtInt(Number(msg.economy_user.L_u));
         ecoUAEl.textContent = Number.isFinite(Number(msg.economy_user.A_u)) ? Number(msg.economy_user.A_u).toFixed(4) : "—";
         ecoUAlphaEl.textContent = Number.isFinite(Number(msg.economy_user.alpha_u)) ? Number(msg.economy_user.alpha_u).toFixed(4) : "—";
-        ecoStorageEl.textContent = fmtInt(Number(msg.economy_user.storage_balance));
         ecoMarketEl.textContent = Number.isFinite(Number(msg.economy_user.market_share))
           ? `${(Number(msg.economy_user.market_share) * 100).toFixed(2)}%`
           : "—";
@@ -1618,6 +1617,9 @@
     renderCurrentState();
     updateDebugOverlay();
   });
+  ecoUserCardEl.addEventListener("toggle", () => {
+    localStorage.setItem(MY_ECON_OPEN_STORAGE_KEY, ecoUserCardEl.open ? "1" : "0");
+  });
   canvas.addEventListener("wheel", onBoardWheel, { passive: false });
   canvas.addEventListener("pointerdown", onPointerDown);
   canvas.addEventListener("pointermove", onPointerMove);
@@ -1631,6 +1633,12 @@
       if (!tip) return;
       ecoTipPopEl.textContent = tip;
       ecoTipPopEl.style.display = "block";
+      if (window.innerWidth <= 640) {
+        ecoTipPopEl.style.left = "50%";
+        ecoTipPopEl.style.top = "50%";
+        ecoTipPopEl.style.transform = "translate(-50%, -50%)";
+        return;
+      }
       const rect = btn.getBoundingClientRect();
       const top = Math.min(window.innerHeight - 12, rect.bottom + 8);
       const left = Math.min(window.innerWidth - 12, rect.left);
