@@ -103,6 +103,10 @@ void World::LoadFromStorage(const std::vector<storage::Snake>& stored_snakes,
   dirty_snake_ids_.clear();
   deleted_snake_ids_.clear();
   pending_snake_events_.clear();
+  pending_movement_ticks_ = 0;
+  pending_movement_ticks_by_user_.clear();
+  pending_harvested_food_ = 0;
+  pending_harvested_food_by_user_.clear();
   pending_user_balance_deltas_.clear();
   pending_system_balance_delta_ = 0;
   world_chunk_dirty_ = false;
@@ -168,8 +172,11 @@ void World::Tick() {
 
   std::unordered_map<int, std::pair<Dir, bool>> before_dir_pause;
   before_dir_pause.reserve(snakes_.size());
+  std::unordered_map<int, Vec2> before_heads;
+  before_heads.reserve(snakes_.size());
   for (const auto& s : snakes_) {
     before_dir_pause[s.id] = {s.dir, s.paused};
+    if (s.alive && !s.body.empty()) before_heads[s.id] = s.body.front();
   }
 
   MovementSystem::Run(snakes_, input_buffer_, width_, height_);
@@ -192,6 +199,12 @@ void World::Tick() {
     if (e.delta_user_cells > 0 && e.credit_user_id > 0) {
       pending_user_balance_deltas_[e.credit_user_id] += e.delta_user_cells;
     }
+    if (e.event_type == "FOOD_EATEN") {
+      pending_harvested_food_ += 1;
+      if (e.credit_user_id > 0) {
+        pending_harvested_food_by_user_[e.credit_user_id] += 1;
+      }
+    }
     if (e.delta_system_cells != 0) {
       pending_system_balance_delta_ += e.delta_system_cells;
     }
@@ -200,6 +213,16 @@ void World::Tick() {
     if (e.event_type == "DEATH" && e.snake_id > 0) {
       deleted_snake_ids_.insert(e.snake_id);
       dirty_snake_ids_.erase(e.snake_id);
+    }
+  }
+
+  for (const auto& s : snakes_) {
+    if (!s.alive || s.body.empty()) continue;
+    auto it = before_heads.find(s.id);
+    if (it == before_heads.end()) continue;
+    if (!(it->second == s.body.front())) {
+      pending_movement_ticks_ += 1;
+      pending_movement_ticks_by_user_[s.user_id] += 1;
     }
   }
 
@@ -543,6 +566,15 @@ PersistenceDelta World::DrainPersistenceDelta(int64_t ts_ms) {
     if (e.created_at <= 0) e.created_at = ts_ms;
     if (e.world_version <= 0) e.world_version = world_version_;
   }
+
+  delta.movement_ticks = pending_movement_ticks_;
+  delta.movement_ticks_by_user = std::move(pending_movement_ticks_by_user_);
+  pending_movement_ticks_ = 0;
+  pending_movement_ticks_by_user_.clear();
+  delta.harvested_food = pending_harvested_food_;
+  delta.harvested_food_by_user = std::move(pending_harvested_food_by_user_);
+  pending_harvested_food_ = 0;
+  pending_harvested_food_by_user_.clear();
 
   for (const auto& kv : pending_user_balance_deltas_) {
     if (kv.first <= 0 || kv.second == 0) continue;

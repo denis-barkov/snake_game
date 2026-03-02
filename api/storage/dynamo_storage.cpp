@@ -671,6 +671,20 @@ std::optional<EconomyPeriod> DynamoStorage::GetEconomyPeriod(const std::string& 
 
   EconomyPeriod p;
   p.period_key = period_key;
+  p.harvested_food = GetInt64(item, "harvested_food", 0);
+  p.movement_ticks = GetInt64(item, "movement_ticks", 0);
+  p.total_output = GetInt64(item, "total_output", 0);
+  p.total_capital = GetInt64(item, "total_capital", 0);
+  p.total_labor = GetInt64(item, "total_labor", 0);
+  p.capital_share = GetDouble(item, "capital_share", 0.5);
+  p.productivity_index = GetDouble(item, "productivity_index", 0.0);
+  p.money_supply = GetInt64(item, "money_supply", 0);
+  p.price_index = GetDouble(item, "price_index", 0.0);
+  p.inflation_rate = GetDouble(item, "inflation_rate", 0.0);
+  p.treasury_balance = GetInt64(item, "treasury_balance", 0);
+  p.alpha_bootstrap = GetBool(item, "alpha_bootstrap", false);
+  p.snapshot_status = GetString(item, "snapshot_status", "live_unfinalized");
+  p.period_ends_in_seconds = GetInt64(item, "period_ends_in_seconds", 0);
   p.delta_m_buy = GetInt64(item, "delta_m_buy", 0);
   p.computed_m = GetInt64(item, "computed_m", 0);
   p.computed_k = GetInt64(item, "computed_k", 0);
@@ -687,6 +701,20 @@ bool DynamoStorage::PutEconomyPeriod(const EconomyPeriod& p) {
   Aws::DynamoDB::Model::PutItemRequest req;
   req.SetTableName(cfg_.economy_period_table.c_str());
   req.AddItem("period_key", S(p.period_key));
+  req.AddItem("harvested_food", N(p.harvested_food));
+  req.AddItem("movement_ticks", N(p.movement_ticks));
+  req.AddItem("total_output", N(p.total_output));
+  req.AddItem("total_capital", N(p.total_capital));
+  req.AddItem("total_labor", N(p.total_labor));
+  req.AddItem("capital_share", D(p.capital_share));
+  req.AddItem("productivity_index", D(p.productivity_index));
+  req.AddItem("money_supply", N(p.money_supply));
+  req.AddItem("price_index", D(p.price_index));
+  req.AddItem("inflation_rate", D(p.inflation_rate));
+  req.AddItem("treasury_balance", N(p.treasury_balance));
+  req.AddItem("alpha_bootstrap", B(p.alpha_bootstrap));
+  req.AddItem("snapshot_status", S(p.snapshot_status));
+  req.AddItem("period_ends_in_seconds", N(p.period_ends_in_seconds));
   req.AddItem("delta_m_buy", N(p.delta_m_buy));
   req.AddItem("computed_m", N(p.computed_m));
   req.AddItem("computed_k", N(p.computed_k));
@@ -711,6 +739,116 @@ bool DynamoStorage::IncrementEconomyPeriodDeltaMBuy(const std::string& period_ke
     std::this_thread::sleep_for(std::chrono::milliseconds(50 * (attempt + 1)));
   }
   return false;
+}
+
+bool DynamoStorage::IncrementEconomyPeriodRaw(const std::string& period_key,
+                                              int64_t harvested_food_delta,
+                                              int64_t movement_ticks_delta) {
+  if (harvested_food_delta == 0 && movement_ticks_delta == 0) return true;
+  Aws::DynamoDB::Model::UpdateItemRequest req;
+  req.SetTableName(cfg_.economy_period_table.c_str());
+  req.AddKey("period_key", S(period_key));
+  req.SetUpdateExpression(
+      "ADD harvested_food :h, movement_ticks :m "
+      "SET snapshot_status = :status");
+  req.AddExpressionAttributeValues(":h", N(harvested_food_delta));
+  req.AddExpressionAttributeValues(":m", N(movement_ticks_delta));
+  req.AddExpressionAttributeValues(":status", S("live_unfinalized"));
+  return client_->UpdateItem(req).IsSuccess();
+}
+
+std::optional<EconomyPeriodUser> DynamoStorage::GetEconomyPeriodUser(const std::string& period_key,
+                                                                     const std::string& user_id) {
+  Aws::DynamoDB::Model::GetItemRequest req;
+  req.SetTableName(cfg_.economy_period_user_table.c_str());
+  req.AddKey("period_key", S(period_key));
+  req.AddKey("user_id", S(user_id));
+  auto out = client_->GetItem(req);
+  if (!out.IsSuccess()) return std::nullopt;
+  const auto& item = out.GetResult().GetItem();
+  if (item.empty()) return std::nullopt;
+
+  EconomyPeriodUser p;
+  p.period_key = period_key;
+  p.user_id = user_id;
+  p.user_harvested_food = GetInt64(item, "user_harvested_food", 0);
+  p.user_movement_ticks = GetInt64(item, "user_movement_ticks", 0);
+  p.user_output = GetInt64(item, "user_output", 0);
+  p.user_capital = GetInt64(item, "user_capital", 0);
+  p.user_labor = GetInt64(item, "user_labor", 0);
+  p.user_capital_share = GetDouble(item, "user_capital_share", 0.5);
+  p.user_productivity = GetDouble(item, "user_productivity", 0.0);
+  p.user_market_share = GetDouble(item, "user_market_share", 0.0);
+  p.user_storage_balance = GetInt64(item, "user_storage_balance", 0);
+  p.alpha_bootstrap = GetBool(item, "alpha_bootstrap", false);
+  p.computed_at = GetInt64(item, "computed_at", 0);
+  return p;
+}
+
+bool DynamoStorage::PutEconomyPeriodUser(const EconomyPeriodUser& p) {
+  Aws::DynamoDB::Model::PutItemRequest req;
+  req.SetTableName(cfg_.economy_period_user_table.c_str());
+  req.AddItem("period_key", S(p.period_key));
+  req.AddItem("user_id", S(p.user_id));
+  req.AddItem("user_harvested_food", N(p.user_harvested_food));
+  req.AddItem("user_movement_ticks", N(p.user_movement_ticks));
+  req.AddItem("user_output", N(p.user_output));
+  req.AddItem("user_capital", N(p.user_capital));
+  req.AddItem("user_labor", N(p.user_labor));
+  req.AddItem("user_capital_share", D(p.user_capital_share));
+  req.AddItem("user_productivity", D(p.user_productivity));
+  req.AddItem("user_market_share", D(p.user_market_share));
+  req.AddItem("user_storage_balance", N(p.user_storage_balance));
+  req.AddItem("alpha_bootstrap", B(p.alpha_bootstrap));
+  req.AddItem("computed_at", N(p.computed_at));
+  return client_->PutItem(req).IsSuccess();
+}
+
+bool DynamoStorage::IncrementEconomyPeriodUserRaw(const std::string& period_key,
+                                                  const std::string& user_id,
+                                                  int64_t harvested_food_delta,
+                                                  int64_t movement_ticks_delta) {
+  if (harvested_food_delta == 0 && movement_ticks_delta == 0) return true;
+  Aws::DynamoDB::Model::UpdateItemRequest req;
+  req.SetTableName(cfg_.economy_period_user_table.c_str());
+  req.AddKey("period_key", S(period_key));
+  req.AddKey("user_id", S(user_id));
+  req.SetUpdateExpression("ADD user_harvested_food :h, user_movement_ticks :m");
+  req.AddExpressionAttributeValues(":h", N(harvested_food_delta));
+  req.AddExpressionAttributeValues(":m", N(movement_ticks_delta));
+  return client_->UpdateItem(req).IsSuccess();
+}
+
+std::vector<EconomyPeriodUser> DynamoStorage::ListEconomyPeriodUsers(const std::string& period_key) {
+  std::vector<EconomyPeriodUser> out_rows;
+  Aws::DynamoDB::Model::QueryRequest req;
+  req.SetTableName(cfg_.economy_period_user_table.c_str());
+  req.SetKeyConditionExpression("period_key = :pk");
+  req.AddExpressionAttributeValues(":pk", S(period_key));
+  while (true) {
+    auto out = client_->Query(req);
+    if (!out.IsSuccess()) break;
+    for (const auto& item : out.GetResult().GetItems()) {
+      EconomyPeriodUser p;
+      p.period_key = period_key;
+      p.user_id = GetString(item, "user_id");
+      p.user_harvested_food = GetInt64(item, "user_harvested_food", 0);
+      p.user_movement_ticks = GetInt64(item, "user_movement_ticks", 0);
+      p.user_output = GetInt64(item, "user_output", 0);
+      p.user_capital = GetInt64(item, "user_capital", 0);
+      p.user_labor = GetInt64(item, "user_labor", 0);
+      p.user_capital_share = GetDouble(item, "user_capital_share", 0.5);
+      p.user_productivity = GetDouble(item, "user_productivity", 0.0);
+      p.user_market_share = GetDouble(item, "user_market_share", 0.0);
+      p.user_storage_balance = GetInt64(item, "user_storage_balance", 0);
+      p.alpha_bootstrap = GetBool(item, "alpha_bootstrap", false);
+      p.computed_at = GetInt64(item, "computed_at", 0);
+      out_rows.push_back(std::move(p));
+    }
+    if (out.GetResult().GetLastEvaluatedKey().empty()) break;
+    req.SetExclusiveStartKey(out.GetResult().GetLastEvaluatedKey());
+  }
+  return out_rows;
 }
 
 bool DynamoStorage::IncrementSystemReserve(int64_t delta_cells) {
@@ -779,6 +917,7 @@ bool DynamoStorage::ResetForDev() {
 
   return delete_by_scan(cfg_.snake_events_table, "snake_id", std::optional<std::string>("event_id")) &&
          delete_by_scan(cfg_.economy_period_table, "period_key", std::nullopt) &&
+         delete_by_scan(cfg_.economy_period_user_table, "period_key", std::optional<std::string>("user_id")) &&
          delete_by_scan(cfg_.economy_params_table, "params_id", std::nullopt) &&
          delete_by_scan(cfg_.settings_table, "settings_id", std::nullopt) &&
          delete_by_scan(cfg_.world_chunks_table, "chunk_id", std::nullopt) &&

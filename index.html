@@ -131,6 +131,76 @@
       grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
       gap: 6px 12px;
     }
+    #economy-panels {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 10px;
+      width: 100%;
+    }
+    .eco-card {
+      border: 1px solid #d7dfd5;
+      border-radius: 10px;
+      background: #ffffff;
+      padding: 10px;
+    }
+    .eco-card summary {
+      list-style: none;
+      cursor: pointer;
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+    .eco-card summary::-webkit-details-marker { display: none; }
+    .eco-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 6px 12px;
+    }
+    .eco-row {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+    }
+    .eco-row .label {
+      color: #32412f;
+      font-size: 13px;
+    }
+    .eco-row .value {
+      color: #131a12;
+      font-weight: 600;
+    }
+    .eco-help-btn {
+      border: 1px solid #c9d6c5;
+      border-radius: 999px;
+      width: 18px;
+      height: 18px;
+      line-height: 16px;
+      text-align: center;
+      font-size: 11px;
+      padding: 0;
+      background: #f4f8f2;
+      color: #355133;
+      cursor: pointer;
+    }
+    #eco-tip-pop {
+      position: fixed;
+      z-index: 1000;
+      max-width: min(92vw, 360px);
+      background: #ffffff;
+      border: 1px solid #cad7c7;
+      border-radius: 8px;
+      box-shadow: 0 8px 18px rgba(0, 0, 0, 0.15);
+      padding: 10px;
+      font-size: 13px;
+      color: #21301f;
+      display: none;
+      white-space: normal;
+    }
+    #eco-auth-note {
+      color: #5c6e5a;
+      font-size: 12px;
+      margin-top: 6px;
+    }
     .row { margin: 6px 0; }
     input {
       width: 100%;
@@ -188,6 +258,9 @@
         width: 64px;
         height: 64px;
       }
+      .eco-grid {
+        grid-template-columns: 1fr;
+      }
     }
   </style>
 </head>
@@ -237,15 +310,35 @@
 
   <div id="game">
     <div id="game-main">
-      <div class="panel compact-panel">
-        <h3>Economy (Read-Only)</h3>
-        <div class="stats-grid">
-          <div title="Total issued cells">Money Supply (M): <span id="ecoM">—</span></div>
-          <div title="Cost multiplier (read-only for now)">Price Index (P): <span id="ecoP">—</span></div>
-          <div title="Money growth this period">Inflation (pi): <span id="ecoPi">—</span></div>
-          <div title="World area implied by money supply">World Size (A_world): <span id="ecoAWorld">—</span></div>
-          <div title="Slack capacity">Free Space (M_white): <span id="ecoMWhite">—</span></div>
-        </div>
+      <div id="economy-panels">
+        <details class="eco-card" id="eco-global-card" open>
+          <summary>Global Economy</summary>
+          <div class="eco-grid">
+            <div class="eco-row"><span class="label">Total Output (Y)</span><button class="eco-help-btn" data-tip="Total goods produced in the current economic period; here it is harvested food.">i</button><span class="value" id="ecoY">—</span></div>
+            <div class="eco-row"><span class="label">Total Capital (K)</span><button class="eco-help-btn" data-tip="Total deployed on-field snake cells in the world (plus configured fixed capital offset).">i</button><span class="value" id="ecoK">—</span></div>
+            <div class="eco-row"><span class="label">Total Labor (L)</span><button class="eco-help-btn" data-tip="Successful snake movement steps in the current period.">i</button><span class="value" id="ecoL">—</span></div>
+            <div class="eco-row"><span class="label">Capital Share (α)</span><button class="eco-help-btn" data-tip="Observed capital contribution computed from period-over-period marginal productivity; bootstrap uses 0.5 only for first period.">i</button><span class="value" id="ecoAlpha">—</span></div>
+            <div class="eco-row"><span class="label">Productivity (A)</span><button class="eco-help-btn" data-tip="Cobb-Douglas productivity index: Y / (K^α * L^(1-α)) with safe math guards.">i</button><span class="value" id="ecoA">—</span></div>
+            <div class="eco-row"><span class="label">Money Supply (M)</span><button class="eco-help-btn" data-tip="Users storage balances plus treasury balance.">i</button><span class="value" id="ecoM">—</span></div>
+            <div class="eco-row"><span class="label">Price Index (P)</span><button class="eco-help-btn" data-tip="Macro price proxy computed as M / max(Y,1).">i</button><span class="value" id="ecoP">—</span></div>
+            <div class="eco-row"><span class="label">Inflation</span><button class="eco-help-btn" data-tip="Period-over-period change of P: (P_t - P_t-1) / max(P_t-1, eps).">i</button><span class="value" id="ecoPi">—</span></div>
+            <div class="eco-row"><span class="label">Treasury Balance</span><button class="eco-help-btn" data-tip="System reserve used in money supply and macro accounting.">i</button><span class="value" id="ecoTreasury">—</span></div>
+            <div class="eco-row"><span class="label">Next Economic Period Ends In</span><button class="eco-help-btn" data-tip="Seconds until current economic period closes and snapshot becomes final.">i</button><span class="value" id="ecoEnds">—</span></div>
+          </div>
+        </details>
+        <details class="eco-card" id="eco-user-card" open>
+          <summary>My Economy</summary>
+          <div class="eco-grid">
+            <div class="eco-row"><span class="label">Personal Output (Yᵤ)</span><span class="value" id="ecoUY">—</span></div>
+            <div class="eco-row"><span class="label">Personal Labor (Lᵤ)</span><span class="value" id="ecoUL">—</span></div>
+            <div class="eco-row"><span class="label">Personal Capital (Kᵤ)</span><span class="value" id="ecoUK">—</span></div>
+            <div class="eco-row"><span class="label">Personal Productivity (Aᵤ)</span><span class="value" id="ecoUA">—</span></div>
+            <div class="eco-row"><span class="label">Personal Capital Share (αᵤ)</span><span class="value" id="ecoUAlpha">—</span></div>
+            <div class="eco-row"><span class="label">Storage Balance</span><span class="value" id="ecoStorage">—</span></div>
+            <div class="eco-row"><span class="label">Market Share</span><span class="value" id="ecoMarket">—</span></div>
+          </div>
+          <div id="eco-auth-note">Login to see your personal economy metrics.</div>
+        </details>
       </div>
       <div id="view-controls">
         <strong>View</strong>
@@ -286,6 +379,7 @@
     </div>
   </div>
   </div>
+  <div id="eco-tip-pop"></div>
 
 <script>
   const API_BASE = window.location.protocol === "file:" ? "http://127.0.0.1:8080" : "";
@@ -671,11 +765,26 @@
   const tickEl = document.getElementById("tick");
   const expectedTickHzEl = document.getElementById("expectedTickHz");
   const actualTickHzEl = document.getElementById("actualTickHz");
+  const ecoYEl = document.getElementById("ecoY");
+  const ecoKEl = document.getElementById("ecoK");
+  const ecoLEl = document.getElementById("ecoL");
+  const ecoAlphaEl = document.getElementById("ecoAlpha");
+  const ecoAEl = document.getElementById("ecoA");
   const ecoMEl = document.getElementById("ecoM");
   const ecoPEl = document.getElementById("ecoP");
   const ecoPiEl = document.getElementById("ecoPi");
-  const ecoAWorldEl = document.getElementById("ecoAWorld");
-  const ecoMWhiteEl = document.getElementById("ecoMWhite");
+  const ecoTreasuryEl = document.getElementById("ecoTreasury");
+  const ecoEndsEl = document.getElementById("ecoEnds");
+  const ecoUYEl = document.getElementById("ecoUY");
+  const ecoUKEl = document.getElementById("ecoUK");
+  const ecoULEl = document.getElementById("ecoUL");
+  const ecoUAEl = document.getElementById("ecoUA");
+  const ecoUAlphaEl = document.getElementById("ecoUAlpha");
+  const ecoStorageEl = document.getElementById("ecoStorage");
+  const ecoMarketEl = document.getElementById("ecoMarket");
+  const ecoUserCardEl = document.getElementById("eco-user-card");
+  const ecoAuthNoteEl = document.getElementById("eco-auth-note");
+  const ecoTipPopEl = document.getElementById("eco-tip-pop");
   const ecoStatusEl = document.getElementById("ecoStatus");
   const authStatus = document.getElementById("authStatus");
   const mySnakesEl = document.getElementById("mySnakes");
@@ -825,13 +934,28 @@
   }
 
   function setEconomyFallback() {
+    ecoYEl.textContent = "—";
+    ecoKEl.textContent = "—";
+    ecoLEl.textContent = "—";
+    ecoAlphaEl.textContent = "—";
+    ecoAEl.textContent = "—";
     ecoMEl.textContent = "—";
     ecoPEl.textContent = "—";
     ecoPiEl.textContent = "—";
-    ecoAWorldEl.textContent = "—";
-    ecoMWhiteEl.textContent = "—";
+    ecoTreasuryEl.textContent = "—";
+    ecoEndsEl.textContent = "—";
     ecoStatusEl.textContent = "Economy unavailable";
     updateDebugOverlay();
+  }
+
+  function setEconomyUserFallback() {
+    ecoUYEl.textContent = "—";
+    ecoUKEl.textContent = "—";
+    ecoULEl.textContent = "—";
+    ecoUAEl.textContent = "—";
+    ecoUAlphaEl.textContent = "—";
+    ecoStorageEl.textContent = "—";
+    ecoMarketEl.textContent = "—";
   }
 
   async function loadStateFallbackOnce() {
@@ -872,11 +996,16 @@
       const res = await fetch(apiPath("/economy/state"));
       if (!res.ok) throw new Error("economy endpoint unavailable");
       const s = await res.json();
+      ecoYEl.textContent = fmtInt(Number(s.Y));
+      ecoKEl.textContent = fmtInt(Number(s.K));
+      ecoLEl.textContent = fmtInt(Number(s.L));
+      ecoAlphaEl.textContent = Number.isFinite(Number(s.alpha)) ? Number(s.alpha).toFixed(4) : "—";
+      ecoAEl.textContent = Number.isFinite(Number(s.A)) ? Number(s.A).toFixed(4) : "—";
       ecoMEl.textContent = fmtInt(Number(s.M));
       ecoPEl.textContent = Number.isFinite(Number(s.P)) ? Number(s.P).toFixed(3) : "—";
       ecoPiEl.textContent = Number.isFinite(Number(s.pi)) ? Number(s.pi).toFixed(4) : "—";
-      ecoAWorldEl.textContent = fmtInt(Number(s.A_world));
-      ecoMWhiteEl.textContent = fmtInt(Number(s.M_white));
+      ecoTreasuryEl.textContent = fmtInt(Number(s.treasury_balance));
+      ecoEndsEl.textContent = fmtInt(Number(s.period_ends_in_seconds));
       ecoStatusEl.textContent = "Economy: live";
       updateDebugOverlay();
     } catch (_) {
@@ -946,6 +1075,11 @@
     attach50Btn.disabled = !isAuth;
     publicViewHintEl.style.display = isAuth ? "none" : "inline";
     viewControlsEl.style.opacity = isAuth ? "1" : "0.82";
+    ecoUserCardEl.open = isAuth;
+    ecoAuthNoteEl.style.display = isAuth ? "none" : "block";
+    if (!isAuth) {
+      setEconomyUserFallback();
+    }
     if (!isAuth) {
       myBalanceEl.textContent = "—";
       myDeployedEl.textContent = "—";
@@ -1253,11 +1387,16 @@
     }
 
     if (msg.type === "economy_world") {
+      ecoYEl.textContent = fmtInt(Number(msg.Y));
+      ecoKEl.textContent = fmtInt(Number(msg.K));
+      ecoLEl.textContent = fmtInt(Number(msg.L));
+      ecoAlphaEl.textContent = Number.isFinite(Number(msg.alpha)) ? Number(msg.alpha).toFixed(4) : "—";
+      ecoAEl.textContent = Number.isFinite(Number(msg.A)) ? Number(msg.A).toFixed(4) : "—";
       ecoMEl.textContent = fmtInt(Number(msg.M));
       ecoPEl.textContent = Number.isFinite(Number(msg.P)) ? Number(msg.P).toFixed(3) : "—";
       ecoPiEl.textContent = Number.isFinite(Number(msg.pi)) ? Number(msg.pi).toFixed(4) : "—";
-      ecoAWorldEl.textContent = fmtInt(Number(msg.A_world));
-      ecoMWhiteEl.textContent = fmtInt(Number(msg.M_white));
+      ecoTreasuryEl.textContent = fmtInt(Number(msg.treasury_balance));
+      ecoEndsEl.textContent = fmtInt(Number(msg.period_ends_in_seconds));
       ecoStatusEl.textContent = "Economy: live";
       return;
     }
@@ -1272,6 +1411,17 @@
       }
       if (Number.isFinite(Number(msg.snake_count))) {
         mySnakeCountEl.textContent = fmtInt(Number(msg.snake_count));
+      }
+      if (msg.economy_user && typeof msg.economy_user === "object") {
+        ecoUYEl.textContent = fmtInt(Number(msg.economy_user.Y_u));
+        ecoUKEl.textContent = fmtInt(Number(msg.economy_user.K_u));
+        ecoULEl.textContent = fmtInt(Number(msg.economy_user.L_u));
+        ecoUAEl.textContent = Number.isFinite(Number(msg.economy_user.A_u)) ? Number(msg.economy_user.A_u).toFixed(4) : "—";
+        ecoUAlphaEl.textContent = Number.isFinite(Number(msg.economy_user.alpha_u)) ? Number(msg.economy_user.alpha_u).toFixed(4) : "—";
+        ecoStorageEl.textContent = fmtInt(Number(msg.economy_user.storage_balance));
+        ecoMarketEl.textContent = Number.isFinite(Number(msg.economy_user.market_share))
+          ? `${(Number(msg.economy_user.market_share) * 100).toFixed(2)}%`
+          : "—";
       }
       updateActionButtons();
       return;
@@ -1473,8 +1623,38 @@
   canvas.addEventListener("pointermove", onPointerMove);
   canvas.addEventListener("pointerup", onPointerUp);
   canvas.addEventListener("pointercancel", onPointerUp);
+  document.querySelectorAll(".eco-help-btn").forEach((btn) => {
+    btn.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      const tip = btn.getAttribute("data-tip") || "";
+      if (!tip) return;
+      ecoTipPopEl.textContent = tip;
+      ecoTipPopEl.style.display = "block";
+      const rect = btn.getBoundingClientRect();
+      const top = Math.min(window.innerHeight - 12, rect.bottom + 8);
+      const left = Math.min(window.innerWidth - 12, rect.left);
+      ecoTipPopEl.style.top = `${top}px`;
+      ecoTipPopEl.style.left = `${left}px`;
+      ecoTipPopEl.style.transform = "translate(0, 0)";
+      const popRect = ecoTipPopEl.getBoundingClientRect();
+      if (popRect.right > window.innerWidth - 8) {
+        ecoTipPopEl.style.left = `${Math.max(8, window.innerWidth - popRect.width - 8)}px`;
+      }
+      if (popRect.bottom > window.innerHeight - 8) {
+        ecoTipPopEl.style.top = `${Math.max(8, rect.top - popRect.height - 8)}px`;
+      }
+    });
+  });
+  document.addEventListener("click", (ev) => {
+    if (ecoTipPopEl.style.display !== "block") return;
+    if (ev.target && ev.target.classList && ev.target.classList.contains("eco-help-btn")) return;
+    if (ecoTipPopEl.contains(ev.target)) return;
+    ecoTipPopEl.style.display = "none";
+  });
   window.addEventListener("resize", () => {
     renderCurrentState();
+    ecoTipPopEl.style.display = "none";
   });
 
   applyViewControlAuthState();
@@ -1490,7 +1670,6 @@
   loadRuntimeSpeed();
   loadEconomyState();
   runtimeSpeedPollTimer = setInterval(loadRuntimeSpeed, 10000);
-  setInterval(loadEconomyState, 10000);
   cameraPollTimer = setInterval(() => {
     if (token) postCamera();
   }, 250);

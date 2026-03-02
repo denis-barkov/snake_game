@@ -28,6 +28,9 @@ struct RuntimeConfig {
   std::string world_mask_mode = "none";
   int world_mask_seed = 1337;
   std::string world_mask_style = "jagged";
+  int econ_period_seconds = 300;
+  std::string econ_period_tz = "America/New_York";
+  std::string econ_period_align = "rolling";
 
   static RuntimeConfig FromEnv();
   int TickIntervalMs() const;

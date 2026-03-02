@@ -21,6 +21,7 @@ struct DynamoConfig {
   std::string settings_table;
   std::string economy_params_table;
   std::string economy_period_table;
+  std::string economy_period_user_table;
 };
 
 class DynamoStorage : public IStorage {
@@ -63,6 +64,17 @@ class DynamoStorage : public IStorage {
   std::optional<EconomyPeriod> GetEconomyPeriod(const std::string& period_key) override;
   bool PutEconomyPeriod(const EconomyPeriod& p) override;
   bool IncrementEconomyPeriodDeltaMBuy(const std::string& period_key, int64_t delta_m_buy) override;
+  bool IncrementEconomyPeriodRaw(const std::string& period_key,
+                                 int64_t harvested_food_delta,
+                                 int64_t movement_ticks_delta) override;
+  std::optional<EconomyPeriodUser> GetEconomyPeriodUser(const std::string& period_key,
+                                                        const std::string& user_id) override;
+  bool PutEconomyPeriodUser(const EconomyPeriodUser& p) override;
+  bool IncrementEconomyPeriodUserRaw(const std::string& period_key,
+                                     const std::string& user_id,
+                                     int64_t harvested_food_delta,
+                                     int64_t movement_ticks_delta) override;
+  std::vector<EconomyPeriodUser> ListEconomyPeriodUsers(const std::string& period_key) override;
   bool IncrementSystemReserve(int64_t delta_cells) override;
 
   bool HealthCheck() override;

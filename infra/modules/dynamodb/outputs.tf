@@ -5,3 +5,4 @@ output "snake_events_table_arn" { value = aws_dynamodb_table.snake_events.arn }
 output "settings_table_arn" { value = aws_dynamodb_table.settings.arn }
 output "economy_params_table_arn" { value = aws_dynamodb_table.economy_params.arn }
 output "economy_period_table_arn" { value = aws_dynamodb_table.economy_period.arn }
+output "economy_period_user_table_arn" { value = aws_dynamodb_table.economy_period_user.arn }

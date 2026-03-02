@@ -84,6 +84,21 @@ struct EconomyParams {
 
 struct EconomyPeriod {
   std::string period_key;
+  int64_t harvested_food = 0;
+  int64_t movement_ticks = 0;
+  int64_t total_output = 0;
+  int64_t total_capital = 0;
+  int64_t total_labor = 0;
+  double capital_share = 0.5;
+  double productivity_index = 0.0;
+  int64_t money_supply = 0;
+  double price_index = 0.0;
+  double inflation_rate = 0.0;
+  int64_t treasury_balance = 0;
+  bool alpha_bootstrap = false;
+  std::string snapshot_status = "live_unfinalized";
+  int64_t period_ends_in_seconds = 0;
+  // Legacy fields kept for backward compatibility.
   int64_t delta_m_buy = 0;
   int64_t computed_m = 0;
   int64_t computed_k = 0;
@@ -92,6 +107,22 @@ struct EconomyPeriod {
   int64_t computed_pi = 0;
   int64_t computed_world_area = 0;
   int64_t computed_white = 0;
+  int64_t computed_at = 0;
+};
+
+struct EconomyPeriodUser {
+  std::string period_key;
+  std::string user_id;
+  int64_t user_harvested_food = 0;
+  int64_t user_movement_ticks = 0;
+  int64_t user_output = 0;
+  int64_t user_capital = 0;
+  int64_t user_labor = 0;
+  double user_capital_share = 0.5;
+  double user_productivity = 0.0;
+  double user_market_share = 0.0;
+  int64_t user_storage_balance = 0;
+  bool alpha_bootstrap = false;
   int64_t computed_at = 0;
 };
 

@@ -49,19 +49,6 @@ static uint64_t now_ms() {
   return duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
 }
 
-static string utc_period_key_yyyymmddhh() {
-  time_t t = time(nullptr);
-  tm tm_utc{};
-#if defined(_WIN32)
-  gmtime_s(&tm_utc, &t);
-#else
-  gmtime_r(&t, &tm_utc);
-#endif
-  char buf[16];
-  if (strftime(buf, sizeof(buf), "%Y%m%d%H", &tm_utc) == 0) return "1970010100";
-  return buf;
-}
-
 static pair<int, int> dims_from_area(int64_t area, double aspect_ratio) {
   const int64_t safe_area = max<int64_t>(100, area);
   const double safe_aspect = (aspect_ratio > 0.1) ? aspect_ratio : 16.0 / 9.0;
@@ -72,6 +59,24 @@ static pair<int, int> dims_from_area(int64_t area, double aspect_ratio) {
   }
   return {width, height};
 }
+
+static int64_t economy_world_area(const storage::EconomyParams& params,
+                                  const economy::EconomySnapshot& global) {
+  const int64_t k_land = std::max<int64_t>(1, params.k_land);
+  return std::max<int64_t>(100, k_land * global.m);
+}
+
+struct EconomyActivityDelta {
+  int64_t harvested_food = 0;
+  int64_t movement_ticks = 0;
+  std::unordered_map<int, int64_t> harvested_food_by_user;
+  std::unordered_map<int, int64_t> movement_ticks_by_user;
+
+  bool empty() const {
+    return harvested_food == 0 && movement_ticks == 0 && harvested_food_by_user.empty() &&
+           movement_ticks_by_user.empty();
+  }
+};
 
 static string json_escape(const string& s) {
   ostringstream o;
@@ -257,9 +262,14 @@ class GameService {
   }
 
   // Writes only event-driven deltas. No per-tick checkpoint persistence.
-  int64_t flush_persistence_delta_and_credit_food(int64_t food_reward_cells) {
+  EconomyActivityDelta flush_persistence_delta_and_credit_food(int64_t food_reward_cells) {
+    EconomyActivityDelta out_activity;
     const auto delta = world_.DrainPersistenceDelta(static_cast<int64_t>(now_ms()));
-    if (delta.empty()) return 0;
+    if (delta.empty()) return out_activity;
+    out_activity.harvested_food = delta.harvested_food;
+    out_activity.movement_ticks = delta.movement_ticks;
+    out_activity.harvested_food_by_user = delta.harvested_food_by_user;
+    out_activity.movement_ticks_by_user = delta.movement_ticks_by_user;
 
     int64_t credited_food_events = 0;
     if (food_reward_cells > 0) {
@@ -284,7 +294,8 @@ class GameService {
     for (const auto& sid : delta.delete_snake_ids) storage_.DeleteSnake(sid);
     if (delta.upsert_world_chunk.has_value()) storage_.PutWorldChunk(*delta.upsert_world_chunk);
     for (const auto& e : delta.snake_events) storage_.AppendSnakeEvent(e);
-    return credited_food_events;
+    (void)credited_food_events;
+    return out_activity;
   }
 
   void flush_persistence_delta() {
@@ -313,56 +324,80 @@ class GameService {
 
 class EconomyService {
  public:
-  explicit EconomyService(storage::IStorage& storage)
+  explicit EconomyService(storage::IStorage& storage, const RuntimeConfig& runtime_cfg)
       : storage_(storage),
+        period_cfg_{std::max(60, runtime_cfg.econ_period_seconds), runtime_cfg.econ_period_align},
         cache_ttl_ms_([] {
           const char* env = getenv("ECONOMY_CACHE_MS");
           if (!env) return 2000;
           const int parsed = atoi(env);
           return max(500, min(10000, parsed));
-        }()) {}
+        }()) {
+    if (!runtime_cfg.econ_period_tz.empty()) {
+#if !defined(_WIN32)
+      setenv("TZ", runtime_cfg.econ_period_tz.c_str(), 1);
+      tzset();
+#endif
+    }
+  }
 
   struct Snapshot {
-    economy::EconomyState state;
     storage::EconomyParams params;
-    int64_t delta_m_buy = 0;
+    economy::EconomySnapshot global;
+    std::optional<economy::EconomyUserSnapshot> user;
     int64_t k_snakes = 0;
+    std::string period_id;
+    int64_t period_ends_in_seconds = 0;
   };
 
-  Snapshot GetState() {
+  void OnActivity(const EconomyActivityDelta& d) {
+    if (d.empty()) {
+      return;
+    }
+    lock_guard<mutex> lock(mu_);
+    EnsurePeriodLocked();
+    pending_harvested_food_ += d.harvested_food;
+    pending_movement_ticks_ += d.movement_ticks;
+    for (const auto& kv : d.harvested_food_by_user) {
+      if (kv.first <= 0 || kv.second == 0) continue;
+      pending_user_harvested_[kv.first] += kv.second;
+    }
+    for (const auto& kv : d.movement_ticks_by_user) {
+      if (kv.first <= 0 || kv.second == 0) continue;
+      pending_user_movement_[kv.first] += kv.second;
+    }
+    cache_valid_ = false;
+  }
+
+  Snapshot GetState(std::optional<int> user_id = std::nullopt) {
     using clock = chrono::steady_clock;
     const auto now = clock::now();
 
     {
       lock_guard<mutex> lock(mu_);
-      if (cache_valid_ && now < cache_expire_at_) return cache_;
+      EnsurePeriodLocked();
+      if (cache_valid_ && now < cache_expire_at_ && cache_user_id_ == user_id) return cache_;
+      FlushPendingLocked();
     }
 
-    Snapshot fresh = ComputeFresh();
+    Snapshot fresh = ComputeFresh(user_id);
     {
       lock_guard<mutex> lock(mu_);
       cache_ = fresh;
+      cache_user_id_ = user_id;
       cache_valid_ = true;
       cache_expire_at_ = now + chrono::milliseconds(cache_ttl_ms_);
       return cache_;
     }
   }
 
-  Snapshot RecomputeAndPersist(const string& period_key) {
-    Snapshot fresh = ComputeFresh(period_key);
-    storage::EconomyPeriod period;
-    period.period_key = period_key;
-    period.delta_m_buy = fresh.delta_m_buy;
-    period.computed_m = fresh.state.m;
-    period.computed_k = fresh.state.k;
-    period.computed_y = static_cast<int64_t>(fresh.state.y);
-    period.computed_p = static_cast<int64_t>(fresh.state.p * 1000000.0);
-    period.computed_pi = static_cast<int64_t>(fresh.state.pi * 1000000.0);
-    period.computed_world_area = fresh.state.a_world;
-    period.computed_white = fresh.state.m_white;
-    period.computed_at = static_cast<int64_t>(time(nullptr));
-    storage_.PutEconomyPeriod(period);
-    return fresh;
+  Snapshot RecomputeAndPersist(const string& period_id, std::optional<int> user_id = std::nullopt) {
+    lock_guard<mutex> lock(mu_);
+    EnsurePeriodLocked();
+    FlushPendingLocked();
+    FinalizePeriodLocked(period_id);
+    cache_valid_ = false;
+    return ComputeFresh(user_id);
   }
 
   void InvalidateCache() {
@@ -371,11 +406,131 @@ class EconomyService {
   }
 
  private:
-  Snapshot ComputeFresh(const string& period_key) {
+  void EnsurePeriodLocked() {
+    const auto ps = economy::CurrentPeriodState(std::time(nullptr), period_cfg_);
+    if (current_period_id_.empty()) {
+      current_period_id_ = ps.period_id;
+      current_period_ends_in_seconds_ = ps.ends_in_seconds;
+      return;
+    }
+    current_period_ends_in_seconds_ = ps.ends_in_seconds;
+    if (ps.period_id == current_period_id_) return;
+
+    FlushPendingLocked();
+    FinalizePeriodLocked(current_period_id_);
+    current_period_id_ = ps.period_id;
+    pending_harvested_food_ = 0;
+    pending_movement_ticks_ = 0;
+    pending_user_harvested_.clear();
+    pending_user_movement_.clear();
+  }
+
+  void FlushPendingLocked() {
+    if (current_period_id_.empty()) return;
+    if (pending_harvested_food_ != 0 || pending_movement_ticks_ != 0) {
+      (void)storage_.IncrementEconomyPeriodRaw(current_period_id_, pending_harvested_food_, pending_movement_ticks_);
+      pending_harvested_food_ = 0;
+      pending_movement_ticks_ = 0;
+    }
+    std::unordered_set<int> users;
+    for (const auto& kv : pending_user_harvested_) users.insert(kv.first);
+    for (const auto& kv : pending_user_movement_) users.insert(kv.first);
+    for (int uid : users) {
+      const int64_t h = pending_user_harvested_[uid];
+      const int64_t m = pending_user_movement_[uid];
+      if (h == 0 && m == 0) continue;
+      (void)storage_.IncrementEconomyPeriodUserRaw(current_period_id_, std::to_string(uid), h, m);
+    }
+    pending_user_harvested_.clear();
+    pending_user_movement_.clear();
+  }
+
+  void FinalizePeriodLocked(const std::string& period_id) {
+    if (period_id.empty()) return;
+    auto period = storage_.GetEconomyPeriod(period_id).value_or(storage::EconomyPeriod{});
+    period.period_key = period_id;
+    const auto params = storage_.GetEconomyParamsActive().value_or(storage::EconomyParams{});
+    const auto users = storage_.ListUsers();
+    const auto snakes = storage_.ListSnakes();
+
+    int64_t sum_mi = 0;
+    for (const auto& u : users) sum_mi += u.balance_mi;
+    int64_t k = 0;
+    std::unordered_map<std::string, int64_t> user_k;
+    for (const auto& s : snakes) {
+      if (!s.alive || !s.is_on_field) continue;
+      k += std::max<int64_t>(0, s.length_k);
+      user_k[s.owner_user_id] += std::max<int64_t>(0, s.length_k);
+    }
+
+    economy::EconomyPeriodRaw raw;
+    raw.harvested_food = period.harvested_food;
+    raw.movement_ticks = period.movement_ticks;
+    raw.deployed_cells = k + params.delta_k_obs;
+    auto global = economy::ComputeGlobal(raw, last_closed_global_.has_value() ? &*last_closed_global_ : nullptr,
+                                         sum_mi, params.m_gov_reserve);
+    global.period_id = period_id;
+    global.snapshot_status = "cached";
+
+    period.total_output = global.y;
+    period.total_capital = global.k;
+    period.total_labor = global.l;
+    period.capital_share = global.alpha;
+    period.productivity_index = global.a;
+    period.money_supply = global.m;
+    period.price_index = global.p;
+    period.inflation_rate = global.pi;
+    period.treasury_balance = global.treasury_balance;
+    period.alpha_bootstrap = global.alpha_bootstrap;
+    period.snapshot_status = "cached";
+    period.computed_at = static_cast<int64_t>(time(nullptr));
+    period.computed_m = period.money_supply;
+    period.computed_k = period.total_capital;
+    period.computed_y = period.total_output;
+    period.computed_p = static_cast<int64_t>(period.price_index * 1000000.0);
+    period.computed_pi = static_cast<int64_t>(period.inflation_rate * 1000000.0);
+    period.computed_world_area = global.m;  // legacy unused by v1 core
+    period.computed_white = 0;
+    (void)storage_.PutEconomyPeriod(period);
+
+    auto user_raw_rows = storage_.ListEconomyPeriodUsers(period_id);
+    std::unordered_map<std::string, storage::EconomyPeriodUser> user_rows;
+    for (const auto& row : user_raw_rows) user_rows[row.user_id] = row;
+
+    for (const auto& u : users) {
+      auto row = user_rows.count(u.user_id) ? user_rows[u.user_id] : storage::EconomyPeriodUser{};
+      row.period_key = period_id;
+      row.user_id = u.user_id;
+      economy::EconomyPeriodRaw user_raw;
+      user_raw.harvested_food = row.user_harvested_food;
+      user_raw.movement_ticks = row.user_movement_ticks;
+      user_raw.deployed_cells = user_k[u.user_id];
+      std::optional<economy::EconomyUserSnapshot> prev_user;
+      auto it_prev = last_closed_users_.find(u.user_id);
+      if (it_prev != last_closed_users_.end()) prev_user = it_prev->second;
+      auto us = economy::ComputeUser(user_raw, prev_user ? &*prev_user : nullptr, u.balance_mi, global.y, period_id, u.user_id);
+      row.user_output = us.y_u;
+      row.user_capital = us.k_u;
+      row.user_labor = us.l_u;
+      row.user_capital_share = us.alpha_u;
+      row.user_productivity = us.a_u;
+      row.user_market_share = us.market_share;
+      row.user_storage_balance = us.storage_balance;
+      row.alpha_bootstrap = us.alpha_bootstrap;
+      row.computed_at = period.computed_at;
+      (void)storage_.PutEconomyPeriodUser(row);
+      last_closed_users_[u.user_id] = us;
+    }
+    last_closed_global_ = global;
+  }
+
+  Snapshot ComputeFresh(std::optional<int> user_id) {
     Snapshot out;
     out.params = storage_.GetEconomyParamsActive().value_or(storage::EconomyParams{});
-    const auto period = storage_.GetEconomyPeriod(period_key);
-    out.delta_m_buy = period ? period->delta_m_buy : 0;
+    out.period_id = current_period_id_;
+    out.period_ends_in_seconds = current_period_ends_in_seconds_;
+    auto period = storage_.GetEconomyPeriod(current_period_id_).value_or(storage::EconomyPeriod{});
+    period.period_key = current_period_id_;
 
     const auto users = storage_.ListUsers();
     int64_t sum_mi = 0;
@@ -383,33 +538,61 @@ class EconomyService {
 
     const auto snakes = storage_.ListSnakes();
     out.k_snakes = 0;
+    std::unordered_map<std::string, int64_t> user_k;
     for (const auto& s : snakes) {
-      if (s.alive && s.is_on_field) out.k_snakes += max<int64_t>(0, s.length_k);
+      if (s.alive && s.is_on_field) {
+        out.k_snakes += max<int64_t>(0, s.length_k);
+        user_k[s.owner_user_id] += max<int64_t>(0, s.length_k);
+      }
     }
 
-    economy::EconomyInputs in;
-    in.params = out.params;
-    in.sum_mi = sum_mi;
-    in.m_g = out.params.m_gov_reserve;
-    in.delta_m_buy = out.delta_m_buy;
-    in.delta_m_issue = out.params.delta_m_issue;
-    in.cap_delta_m = out.params.cap_delta_m;
-    in.k_snakes = out.k_snakes;
-    in.delta_k_obs = out.params.delta_k_obs;
-    out.state = economy::ComputeEconomyV1(in, period_key);
+    economy::EconomyPeriodRaw raw;
+    raw.harvested_food = period.harvested_food;
+    raw.movement_ticks = period.movement_ticks;
+    raw.deployed_cells = out.k_snakes + out.params.delta_k_obs;
+    out.global = economy::ComputeGlobal(raw, last_closed_global_.has_value() ? &*last_closed_global_ : nullptr,
+                                        sum_mi, out.params.m_gov_reserve);
+    out.global.period_id = current_period_id_;
+    out.global.period_ends_in_seconds = current_period_ends_in_seconds_;
+    out.global.snapshot_status = period.computed_at > 0 ? "cached" : "live_unfinalized";
+
+    if (user_id.has_value()) {
+      const std::string uid = std::to_string(*user_id);
+      auto user = storage_.GetUserById(uid);
+      if (user.has_value()) {
+        auto row = storage_.GetEconomyPeriodUser(current_period_id_, uid).value_or(storage::EconomyPeriodUser{});
+        row.period_key = current_period_id_;
+        row.user_id = uid;
+        economy::EconomyPeriodRaw uraw;
+        uraw.harvested_food = row.user_harvested_food;
+        uraw.movement_ticks = row.user_movement_ticks;
+        uraw.deployed_cells = user_k[uid];
+        std::optional<economy::EconomyUserSnapshot> prev_u;
+        auto it_prev = last_closed_users_.find(uid);
+        if (it_prev != last_closed_users_.end()) prev_u = it_prev->second;
+        out.user = economy::ComputeUser(uraw, prev_u ? &*prev_u : nullptr, user->balance_mi, out.global.y,
+                                        current_period_id_, uid);
+      }
+    }
     return out;
   }
 
-  Snapshot ComputeFresh() {
-    return ComputeFresh(utc_period_key_yyyymmddhh());
-  }
-
   storage::IStorage& storage_;
+  economy::PeriodConfig period_cfg_;
   int cache_ttl_ms_ = 2000;
   mutex mu_;
   bool cache_valid_ = false;
   chrono::steady_clock::time_point cache_expire_at_{};
+  std::optional<int> cache_user_id_{};
   Snapshot cache_{};
+  std::string current_period_id_;
+  int64_t current_period_ends_in_seconds_ = 0;
+  int64_t pending_harvested_food_ = 0;
+  int64_t pending_movement_ticks_ = 0;
+  std::unordered_map<int, int64_t> pending_user_harvested_;
+  std::unordered_map<int, int64_t> pending_user_movement_;
+  std::optional<economy::EconomySnapshot> last_closed_global_;
+  std::unordered_map<std::string, economy::EconomyUserSnapshot> last_closed_users_;
 };
 
 static optional<string> get_json_string_field(const string& body, const string& key) {
@@ -640,6 +823,9 @@ int main(int argc, char** argv) {
        << ", WORLD_MASK_MODE=" << runtime_cfg.world_mask_mode
        << ", WORLD_MASK_SEED=" << runtime_cfg.world_mask_seed
        << ", WORLD_MASK_STYLE=" << runtime_cfg.world_mask_style
+       << ", ECON_PERIOD_SECONDS=" << runtime_cfg.econ_period_seconds
+       << ", ECON_PERIOD_TZ=" << runtime_cfg.econ_period_tz
+       << ", ECON_PERIOD_ALIGN=" << runtime_cfg.econ_period_align
        << "\n";
 
   unique_ptr<storage::IStorage> storage;
@@ -675,18 +861,18 @@ int main(int argc, char** argv) {
   game.set_duel_delay_ticks(runtime_cfg.tick_hz);
   game.set_aoi_pad_chunks(runtime_cfg.aoi_pad_chunks);
   game.configure_mask(runtime_cfg.world_mask_mode, runtime_cfg.world_mask_seed, runtime_cfg.world_mask_style);
-  EconomyService economy(*storage);
+  EconomyService economy(*storage, runtime_cfg);
   game.load_from_storage_or_seed_positions();
   {
     const auto eco = economy.GetState();
-    game.set_playable_cell_target(std::max<int64_t>(100, eco.state.a_world));
+    game.set_playable_cell_target(economy_world_area(eco.params, eco.global));
   }
   game.flush_persistence_delta();
 
   auto maybe_resize_world_from_economy = [&](const EconomyService::Snapshot& eco) {
     const auto current = game.snapshot();
     const int64_t current_area = static_cast<int64_t>(current.w) * static_cast<int64_t>(current.h);
-    const int64_t target_area = max<int64_t>(100, eco.state.a_world);
+    const int64_t target_area = economy_world_area(eco.params, eco.global);
     game.set_playable_cell_target(target_area);
     if (current_area <= 0) return;
     const double rel_diff = std::abs(static_cast<double>(target_area - current_area) / static_cast<double>(current_area));
@@ -769,8 +955,8 @@ int main(int argc, char** argv) {
       int catch_up_ticks = 0;
       while (now >= next_tick && catch_up_ticks < max_catch_up_ticks) {
         game.tick();
-        const auto food_credits = game.flush_persistence_delta_and_credit_food(runtime_cfg.food_reward_cells);
-        if (food_credits > 0) economy.InvalidateCache();
+        const auto activity = game.flush_persistence_delta_and_credit_food(runtime_cfg.food_reward_cells);
+        economy.OnActivity(activity);
         ++ticks_since_log;
         ++catch_up_ticks;
         if (runtime_cfg.public_view_enabled) {
@@ -1089,11 +1275,19 @@ int main(int argc, char** argv) {
         out << "{"
             << "\"type\":\"economy_world\","
             << "\"channel\":\"public\","
-            << "\"M\":" << eco.state.m << ","
-            << "\"P\":" << json_number(eco.state.p) << ","
-            << "\"pi\":" << json_number(eco.state.pi) << ","
-            << "\"A_world\":" << eco.state.a_world << ","
-            << "\"M_white\":" << eco.state.m_white
+            << "\"period_id\":\"" << json_escape(eco.period_id) << "\","
+            << "\"Y\":" << eco.global.y << ","
+            << "\"K\":" << eco.global.k << ","
+            << "\"L\":" << eco.global.l << ","
+            << "\"alpha\":" << json_number(eco.global.alpha) << ","
+            << "\"A\":" << json_number(eco.global.a) << ","
+            << "\"M\":" << eco.global.m << ","
+            << "\"P\":" << json_number(eco.global.p) << ","
+            << "\"pi\":" << json_number(eco.global.pi) << ","
+            << "\"treasury_balance\":" << eco.global.treasury_balance << ","
+            << "\"period_ends_in_seconds\":" << eco.period_ends_in_seconds << ","
+            << "\"snapshot_status\":\"" << json_escape(eco.global.snapshot_status) << "\","
+            << "\"A_world\":" << economy_world_area(eco.params, eco.global)
             << "}";
         if (!ws.send(out.str())) break;
         next_economy_send = now + chrono::seconds(1);
@@ -1101,6 +1295,7 @@ int main(int argc, char** argv) {
 
       if (is_auth && now >= next_private_send) {
         const auto user = storage->GetUserById(std::to_string(*session.auth_user_id));
+        const auto eco_user = economy.GetState(*session.auth_user_id);
         if (user.has_value()) {
           const auto snakes = game.list_user_snakes(*session.auth_user_id);
           int64_t deployed = 0;
@@ -1112,11 +1307,23 @@ int main(int argc, char** argv) {
               << "\"user_id\":" << *session.auth_user_id << ","
               << "\"balance_mi\":" << user->balance_mi << ","
               << "\"deployed_k\":" << deployed << ","
-              << "\"snake_count\":" << snakes.size()
+              << "\"snake_count\":" << snakes.size();
+          if (eco_user.user.has_value()) {
+            out << ",\"economy_user\":{"
+                << "\"Y_u\":" << eco_user.user->y_u << ","
+                << "\"K_u\":" << eco_user.user->k_u << ","
+                << "\"L_u\":" << eco_user.user->l_u << ","
+                << "\"alpha_u\":" << json_number(eco_user.user->alpha_u) << ","
+                << "\"A_u\":" << json_number(eco_user.user->a_u) << ","
+                << "\"market_share\":" << json_number(eco_user.user->market_share) << ","
+                << "\"storage_balance\":" << eco_user.user->storage_balance
+                << "}";
+          }
+          out
               << "}";
           if (!ws.send(out.str())) break;
         }
-        next_private_send = now + chrono::seconds(5);
+        next_private_send = now + chrono::seconds(1);
       }
 
       this_thread::sleep_for(chrono::milliseconds(10));
@@ -1164,47 +1371,69 @@ int main(int argc, char** argv) {
 
   srv.Get("/economy/state", [&](const httplib::Request&, httplib::Response& res) {
     add_cors(res);
-    EconomyService::Snapshot s;
-    try {
-      s = economy.GetState();
-    } catch (...) {
-      // Endpoint must remain stable even when backing reads fail.
-      s.params = storage::EconomyParams{};
-      s.delta_m_buy = 0;
-      s.k_snakes = 0;
-      economy::EconomyInputs in;
-      in.params = s.params;
-      in.sum_mi = 0;
-      in.m_g = s.params.m_gov_reserve;
-      in.delta_m_buy = 0;
-      in.delta_m_issue = s.params.delta_m_issue;
-      in.cap_delta_m = s.params.cap_delta_m;
-      in.k_snakes = 0;
-      in.delta_k_obs = s.params.delta_k_obs;
-      s.state = economy::ComputeEconomyV1(in, utc_period_key_yyyymmddhh());
+    EconomyService::Snapshot s = economy.GetState();
+    const int64_t a_world = economy_world_area(s.params, s.global);
+    const int64_t m_white = std::max<int64_t>(0, a_world - s.global.k);
+    ostringstream o;
+    o << "{"
+      << "\"period_id\":\"" << json_escape(s.period_id) << "\","
+      << "\"period_key\":\"" << json_escape(s.period_id) << "\","
+      << "\"period_ends_in_seconds\":" << s.period_ends_in_seconds << ","
+      << "\"snapshot_status\":\"" << json_escape(s.global.snapshot_status) << "\","
+      << "\"Y\":" << s.global.y << ","
+      << "\"K\":" << s.global.k << ","
+      << "\"L\":" << s.global.l << ","
+      << "\"alpha\":" << json_number(s.global.alpha) << ","
+      << "\"A\":" << json_number(s.global.a) << ","
+      << "\"M\":" << s.global.m << ","
+      << "\"P\":" << json_number(s.global.p) << ","
+      << "\"pi\":" << json_number(s.global.pi) << ","
+      << "\"A_world\":" << a_world << ","
+      << "\"M_white\":" << m_white << ","
+      << "\"treasury_balance\":" << s.global.treasury_balance << ","
+      << "\"alpha_bootstrap\":" << (s.global.alpha_bootstrap ? "true" : "false") << ","
+      << "\"inputs\":{"
+      << "\"k_land\":" << s.params.k_land << ","
+      << "\"a_productivity\":" << json_number(s.params.a_productivity) << ","
+      << "\"v_velocity\":" << json_number(s.params.v_velocity) << ","
+      << "\"m_gov_reserve\":" << s.params.m_gov_reserve << ","
+      << "\"cap_delta_m\":" << s.params.cap_delta_m << ","
+      << "\"delta_m_issue\":" << s.params.delta_m_issue << ","
+      << "\"delta_k_obs\":" << s.params.delta_k_obs
+      << "},"
+      // Backward-compatible aliases for existing consumers.
+      << "\"legacy\":{"
+      << "\"k_snakes\":" << s.k_snakes
+      << "}"
+      << "}";
+    res.set_content(o.str(), "application/json");
+  });
+
+  srv.Get("/economy/user", [&](const httplib::Request& req, httplib::Response& res) {
+    add_cors(res);
+    auto uid = require_auth_user(auth, req);
+    if (!uid) {
+      res.status = 401;
+      res.set_content("{\"error\":\"unauthorized\"}", "application/json");
+      return;
+    }
+    const auto s = economy.GetState(*uid);
+    if (!s.user.has_value()) {
+      res.status = 404;
+      res.set_content("{\"error\":\"economy_user_not_found\"}", "application/json");
+      return;
     }
     ostringstream o;
     o << "{"
-      << "\"period_key\":\"" << json_escape(s.state.period_key) << "\","
-      << "\"M\":" << s.state.m << ","
-      << "\"K\":" << s.state.k << ","
-      << "\"Y\":" << json_number(s.state.y) << ","
-      << "\"P\":" << json_number(s.state.p) << ","
-      << "\"pi\":" << json_number(s.state.pi) << ","
-      << "\"A_world\":" << s.state.a_world << ","
-      << "\"M_white\":" << s.state.m_white << ","
-      << "\"inputs\":{"
-      << "\"k_land\":" << s.params.k_land << ","
-      << "\"A\":" << json_number(s.params.a_productivity) << ","
-      << "\"V\":" << json_number(s.params.v_velocity) << ","
-      << "\"M_G\":" << s.params.m_gov_reserve << ","
-      << "\"cap_delta_m\":" << s.params.cap_delta_m << ","
-      << "\"delta_m_issue\":" << s.params.delta_m_issue << ","
-      << "\"delta_m_buy\":" << s.delta_m_buy << ","
-      << "\"delta_k_obs\":" << s.params.delta_k_obs << ","
-      << "\"sum_mi\":" << s.state.sum_mi << ","
-      << "\"k_snakes\":" << s.k_snakes
-      << "}"
+      << "\"period_id\":\"" << json_escape(s.period_id) << "\","
+      << "\"Y_u\":" << s.user->y_u << ","
+      << "\"K_u\":" << s.user->k_u << ","
+      << "\"L_u\":" << s.user->l_u << ","
+      << "\"alpha_u\":" << json_number(s.user->alpha_u) << ","
+      << "\"A_u\":" << json_number(s.user->a_u) << ","
+      << "\"market_share\":" << json_number(s.user->market_share) << ","
+      << "\"storage_balance\":" << s.user->storage_balance << ","
+      << "\"alpha_bootstrap\":" << (s.user->alpha_bootstrap ? "true" : "false")
       << "}";
     res.set_content(o.str(), "application/json");
   });
@@ -1258,7 +1487,7 @@ int main(int argc, char** argv) {
 
     int64_t balance_after = 0;
     const string user_id = std::to_string(*uid);
-    const string period_key = utc_period_key_yyyymmddhh();
+    const string period_key = economy.GetState().period_id;
     if (!storage->BorrowCellsAndTrackPeriod(user_id, *amount, period_key, balance_after)) {
       res.status = 500;
       res.set_content("{\"error\":\"borrow_failed\"}", "application/json");
@@ -1268,20 +1497,22 @@ int main(int argc, char** argv) {
     economy.InvalidateCache();
     const auto eco = economy.GetState();
     maybe_resize_world_from_economy(eco);
+    const int64_t a_world = economy_world_area(eco.params, eco.global);
+    const int64_t m_white = std::max<int64_t>(0, a_world - eco.global.k);
 
     ostringstream o;
     o << "{"
       << "\"ok\":true,"
       << "\"amount\":" << *amount << ","
       << "\"balance_mi\":" << balance_after << ","
-      << "\"period_key\":\"" << json_escape(period_key) << "\","
+      << "\"period_key\":\"" << json_escape(eco.period_id) << "\","
       << "\"economy\":{"
-      << "\"M\":" << eco.state.m << ","
-      << "\"K\":" << eco.state.k << ","
-      << "\"A_world\":" << eco.state.a_world << ","
-      << "\"M_white\":" << eco.state.m_white << ","
-      << "\"P\":" << json_number(eco.state.p) << ","
-      << "\"pi\":" << json_number(eco.state.pi)
+      << "\"M\":" << eco.global.m << ","
+      << "\"K\":" << eco.global.k << ","
+      << "\"A_world\":" << a_world << ","
+      << "\"M_white\":" << m_white << ","
+      << "\"P\":" << json_number(eco.global.p) << ","
+      << "\"pi\":" << json_number(eco.global.pi)
       << "}"
       << "}";
     res.set_content(o.str(), "application/json");

@@ -52,6 +52,8 @@ std::unique_ptr<IStorage> CreateStorageFromEnv() {
   cfg.settings_table = RequireEnvAny("TABLE_SETTINGS", "DYNAMO_TABLE_SETTINGS");
   cfg.economy_params_table = RequireEnvAny("TABLE_ECONOMY_PARAMS", "DYNAMO_TABLE_ECONOMY_PARAMS");
   cfg.economy_period_table = RequireEnvAny("TABLE_ECONOMY_PERIOD", "DYNAMO_TABLE_ECONOMY_PERIOD");
+  cfg.economy_period_user_table =
+      RequireEnvAny("TABLE_ECONOMY_PERIOD_USER", "DYNAMO_TABLE_ECONOMY_PERIOD_USER");
   return std::make_unique<DynamoStorage>(cfg);
 }
 

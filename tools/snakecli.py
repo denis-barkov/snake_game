@@ -10,6 +10,11 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+try:
+    from zoneinfo import ZoneInfo
+except Exception:  # pragma: no cover
+    ZoneInfo = None
+
 
 def env(name: str, default: Optional[str] = None) -> Optional[str]:
     return os.environ.get(name, default)
@@ -20,7 +25,18 @@ def now_unix() -> int:
 
 
 def current_period_key() -> str:
-    return dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d%H")
+    period_seconds = int(env("ECON_PERIOD_SECONDS", "300") or "300")
+    align = (env("ECON_PERIOD_ALIGN", "rolling") or "rolling").strip().lower()
+    tz_name = env("ECON_PERIOD_TZ", "America/New_York") or "America/New_York"
+    if align == "midnight":
+        if ZoneInfo is not None:
+            now_local = dt.datetime.now(ZoneInfo(tz_name))
+        else:
+            now_local = dt.datetime.now()
+        return now_local.strftime("%Y%m%d")
+    now_utc = dt.datetime.now(dt.timezone.utc)
+    idx = int(now_utc.timestamp()) // max(60, period_seconds)
+    return f"p{idx}"
 
 
 def table_env(name_suffix: str) -> str:
@@ -235,6 +251,20 @@ def get_period(table: str, period_key: str) -> Dict:
     if not item:
         return {
             "period_key": period_key,
+            "harvested_food": 0,
+            "movement_ticks": 0,
+            "total_output": 0,
+            "total_capital": 0,
+            "total_labor": 0,
+            "capital_share": 0.5,
+            "productivity_index": 0.0,
+            "money_supply": 0,
+            "price_index": 0.0,
+            "inflation_rate": 0.0,
+            "treasury_balance": 0,
+            "alpha_bootstrap": True,
+            "snapshot_status": "live_unfinalized",
+            "period_ends_in_seconds": 0,
             "delta_m_buy": 0,
             "computed_m": 0,
             "computed_k": 0,
@@ -247,6 +277,20 @@ def get_period(table: str, period_key: str) -> Dict:
         }
     return {
         "period_key": period_key,
+        "harvested_food": av_n(item, "harvested_food", 0),
+        "movement_ticks": av_n(item, "movement_ticks", 0),
+        "total_output": av_n(item, "total_output", 0),
+        "total_capital": av_n(item, "total_capital", 0),
+        "total_labor": av_n(item, "total_labor", 0),
+        "capital_share": float(item.get("capital_share", {}).get("N", "0.5")),
+        "productivity_index": float(item.get("productivity_index", {}).get("N", "0.0")),
+        "money_supply": av_n(item, "money_supply", 0),
+        "price_index": float(item.get("price_index", {}).get("N", "0.0")),
+        "inflation_rate": float(item.get("inflation_rate", {}).get("N", "0.0")),
+        "treasury_balance": av_n(item, "treasury_balance", 0),
+        "alpha_bootstrap": av_bool(item, "alpha_bootstrap", False),
+        "snapshot_status": av_s(item, "snapshot_status", "live_unfinalized"),
+        "period_ends_in_seconds": av_n(item, "period_ends_in_seconds", 0),
         "delta_m_buy": av_n(item, "delta_m_buy", 0),
         "computed_m": av_n(item, "computed_m", 0),
         "computed_k": av_n(item, "computed_k", 0),
@@ -264,6 +308,20 @@ def put_period(table: str, period: Dict) -> None:
         table,
         {
             "period_key": {"S": period["period_key"]},
+            "harvested_food": {"N": str(int(period.get("harvested_food", 0)))},
+            "movement_ticks": {"N": str(int(period.get("movement_ticks", 0)))},
+            "total_output": {"N": str(int(period.get("total_output", 0)))},
+            "total_capital": {"N": str(int(period.get("total_capital", 0)))},
+            "total_labor": {"N": str(int(period.get("total_labor", 0)))},
+            "capital_share": {"N": str(float(period.get("capital_share", 0.5)))},
+            "productivity_index": {"N": str(float(period.get("productivity_index", 0.0)))},
+            "money_supply": {"N": str(int(period.get("money_supply", 0)))},
+            "price_index": {"N": str(float(period.get("price_index", 0.0)))},
+            "inflation_rate": {"N": str(float(period.get("inflation_rate", 0.0)))},
+            "treasury_balance": {"N": str(int(period.get("treasury_balance", 0)))},
+            "alpha_bootstrap": {"BOOL": bool(period.get("alpha_bootstrap", False))},
+            "snapshot_status": {"S": str(period.get("snapshot_status", "live_unfinalized"))},
+            "period_ends_in_seconds": {"N": str(int(period.get("period_ends_in_seconds", 0)))},
             "delta_m_buy": {"N": str(int(period["delta_m_buy"]))},
             "computed_m": {"N": str(int(period["computed_m"]))},
             "computed_k": {"N": str(int(period["computed_k"]))},
@@ -291,23 +349,53 @@ def aggregate_inputs(users_table: str, snakes_table: str) -> Tuple[int, int]:
     return sum_mi, k_snakes
 
 
-def compute_economy_state(params: Dict, sum_mi: int, delta_m_buy: int, k_snakes: int) -> Dict:
-    m = sum_mi + int(params["m_gov_reserve"])
-    delta_m = min(int(params["cap_delta_m"]), int(params["delta_m_issue"])) + int(delta_m_buy)
-    k = k_snakes + int(params["delta_k_obs"])
-    y = float(params["a_productivity"]) * float(k)
-    p = (float(m) * float(params["v_velocity"])) / max(y, 1.0)
-    pi = float(delta_m) / float(max(m, 1))
+def compute_economy_state(
+    params: Dict,
+    sum_mi: int,
+    delta_m_buy: int,
+    k_snakes: int,
+    harvested_food: int = 0,
+    movement_ticks: int = 0,
+    prev_snapshot: Optional[Dict] = None,
+) -> Dict:
+    m = int(sum_mi) + int(params["m_gov_reserve"])
+    k = max(0, int(k_snakes) + int(params["delta_k_obs"]))
+    y = max(0, int(harvested_food))
+    l = max(0, int(movement_ticks))
+    p = float(m) / float(max(y, 1))
+    alpha_bootstrap = False
+    if prev_snapshot is None:
+        alpha = 0.5
+        pi = 0.0
+        alpha_bootstrap = True
+    else:
+        prev_y = int(prev_snapshot.get("total_output", 0))
+        prev_k = int(prev_snapshot.get("total_capital", 0))
+        prev_p = float(prev_snapshot.get("price_index", 0.0))
+        d_y = y - prev_y
+        d_k = k - prev_k
+        mpk = (float(d_y) / float(d_k)) if d_k > 0 else 0.0
+        alpha = max(0.0, min(1.0, (mpk * float(k)) / float(max(y, 1))))
+        pi = (p - prev_p) / max(prev_p, 1e-9)
+    k_term = float(max(k, 1)) ** alpha if k > 0 else 1.0
+    l_term = float(max(l, 1)) ** (1.0 - alpha) if l > 0 else 1.0
+    A = float(y) / max(1e-9, k_term * l_term)
     a_world = int(params["k_land"]) * int(m)
     m_white = max(0, a_world - k)
     return {
         "M": m,
         "K": k,
+        "L": l,
         "Y": y,
+        "alpha": alpha,
+        "A": A,
         "P": p,
         "pi": pi,
         "A_world": a_world,
         "M_white": m_white,
+        "treasury_balance": int(params["m_gov_reserve"]),
+        "alpha_bootstrap": alpha_bootstrap,
+        "delta_m_buy": int(delta_m_buy),
     }
 
 
@@ -317,6 +405,24 @@ def clamp_int(value: int, min_v: int, max_v: int) -> int:
 
 def ceil_div(a: int, b: int) -> int:
     return (a + b - 1) // b
+
+
+def previous_period_key(period_key: str) -> Optional[str]:
+    if period_key.startswith("p"):
+        try:
+            idx = int(period_key[1:])
+        except Exception:
+            return None
+        if idx <= 0:
+            return None
+        return f"p{idx - 1}"
+    if len(period_key) == 8 and period_key.isdigit():
+        try:
+            d = dt.datetime.strptime(period_key, "%Y%m%d").date()
+        except Exception:
+            return None
+        return (d - dt.timedelta(days=1)).strftime("%Y%m%d")
+    return None
 
 
 def encode_body(body: List[Tuple[int, int]]) -> str:
@@ -763,7 +869,29 @@ def cmd_economy_status(_args) -> int:
     for k in ["version", "k_land", "a_productivity", "v_velocity", "m_gov_reserve", "cap_delta_m", "delta_m_issue", "delta_k_obs", "updated_at", "updated_by"]:
         print(f"  {k}: {params[k]}")
     print("period:")
-    for k in ["delta_m_buy", "computed_m", "computed_k", "computed_y", "computed_p", "computed_pi", "computed_world_area", "computed_white", "computed_at"]:
+    for k in [
+        "harvested_food",
+        "movement_ticks",
+        "total_output",
+        "total_capital",
+        "total_labor",
+        "capital_share",
+        "productivity_index",
+        "money_supply",
+        "price_index",
+        "inflation_rate",
+        "treasury_balance",
+        "snapshot_status",
+        "delta_m_buy",
+        "computed_m",
+        "computed_k",
+        "computed_y",
+        "computed_p",
+        "computed_pi",
+        "computed_world_area",
+        "computed_white",
+        "computed_at",
+    ]:
         print(f"  {k}: {period[k]}")
     return 0
 
@@ -799,7 +927,14 @@ def cmd_economy_set(args) -> int:
     period_table = table_env("ECONOMY_PERIOD")
     period = get_period(period_table, current_period_key())
     sum_mi, k_snakes = aggregate_inputs(users_table, snakes_table)
-    state = compute_economy_state(params, sum_mi, period["delta_m_buy"], k_snakes)
+    state = compute_economy_state(
+        params,
+        sum_mi,
+        period["delta_m_buy"],
+        k_snakes,
+        harvested_food=period.get("harvested_food", 0),
+        movement_ticks=period.get("movement_ticks", 0),
+    )
     w, h = resize_world_chunk_to_area(world_chunks_table, int(state["A_world"]))
     print(f"Updated {args.param}={new_value}; new version={params['version']}")
     print(f"World resized to {w}x{h} (A_world={state['A_world']})")
@@ -822,7 +957,31 @@ def cmd_economy_recompute(_args) -> int:
     params = load_active_params(params_table)
     period = get_period(period_table, period_key)
     sum_mi, k_snakes = aggregate_inputs(users_table, snakes_table)
-    state = compute_economy_state(params, sum_mi, period["delta_m_buy"], k_snakes)
+    prev_key = previous_period_key(period_key)
+    prev_snapshot = get_period(period_table, prev_key) if prev_key else None
+    if prev_snapshot and int(prev_snapshot.get("computed_at", 0)) <= 0:
+        prev_snapshot = None
+    state = compute_economy_state(
+        params,
+        sum_mi,
+        period["delta_m_buy"],
+        k_snakes,
+        harvested_food=period.get("harvested_food", 0),
+        movement_ticks=period.get("movement_ticks", 0),
+        prev_snapshot=prev_snapshot,
+    )
+
+    period["total_output"] = int(state["Y"])
+    period["total_capital"] = int(state["K"])
+    period["total_labor"] = int(state["L"])
+    period["capital_share"] = float(state["alpha"])
+    period["productivity_index"] = float(state["A"])
+    period["money_supply"] = int(state["M"])
+    period["price_index"] = float(state["P"])
+    period["inflation_rate"] = float(state["pi"])
+    period["treasury_balance"] = int(state["treasury_balance"])
+    period["alpha_bootstrap"] = bool(state["alpha_bootstrap"])
+    period["snapshot_status"] = "cached"
 
     period["computed_m"] = state["M"]
     period["computed_k"] = state["K"]
@@ -836,13 +995,33 @@ def cmd_economy_recompute(_args) -> int:
     w, h = resize_world_chunk_to_area(world_chunks_table, int(state["A_world"]))
 
     print(f"Recomputed period {period_key}")
-    print(f"M={state['M']} K={state['K']} Y={state['Y']:.3f} P={state['P']:.6f} pi={state['pi']:.6f} A_world={state['A_world']} M_white={state['M_white']}")
+    print(
+        f"M={state['M']} K={state['K']} L={state['L']} Y={state['Y']} "
+        f"alpha={state['alpha']:.6f} A={state['A']:.6f} "
+        f"P={state['P']:.6f} pi={state['pi']:.6f} "
+        f"A_world={state['A_world']} M_white={state['M_white']}"
+    )
     print(f"World resized to {w}x{h}")
     try:
         send_reload_signal()
         print("runtime reload: requested")
     except Exception as e:
         print(f"runtime reload: skipped ({e})")
+    return 0
+
+
+def cmd_treasury_set(args) -> int:
+    amount = int(args.amount)
+    if amount < 0:
+        raise RuntimeError("treasury amount must be >= 0")
+    params_table = table_env("ECONOMY_PARAMS")
+    params = load_active_params(params_table)
+    params["m_gov_reserve"] = amount
+    params["version"] = int(params["version"]) + 1
+    params["updated_at"] = now_unix()
+    params["updated_by"] = env("USER", "snakecli")
+    upsert_active_and_history(params_table, params)
+    print(f"Updated treasury_balance (m_gov_reserve) to {amount}; version={params['version']}")
     return 0
 
 
@@ -1000,6 +1179,11 @@ def parse_args():
     eco_set.add_argument("value")
     eco_sub.add_parser("recompute")
 
+    treasury = sub.add_parser("treasury")
+    treasury_sub = treasury.add_subparsers(dest="cmd", required=True)
+    treasury_set = treasury_sub.add_parser("set")
+    treasury_set.add_argument("amount", type=int)
+
     firms = sub.add_parser("firms")
     firms_sub = firms.add_subparsers(dest="cmd", required=True)
     firms_top = firms_sub.add_parser("top")
@@ -1036,6 +1220,7 @@ def parse_args():
 def is_write_command(args) -> bool:
     return (
         (args.group == "economy" and args.cmd in {"set", "recompute"})
+        or (args.group == "treasury" and args.cmd in {"set"})
         or (args.group == "app" and args.cmd in {"seed", "reset", "reload", "seed-reload", "reset-seed", "reset-seed-reload"})
         or (args.group == "smartseed")
     )
@@ -1060,7 +1245,7 @@ def main() -> int:
         return 0
 
     verify_token(args)
-    if args.group in {"economy", "firms", "snakes"}:
+    if args.group in {"economy", "treasury", "firms", "snakes"}:
         # Shared storage config requirements for data commands.
         table_env("USERS")
         table_env("SNAKES")
@@ -1080,6 +1265,8 @@ def main() -> int:
         return cmd_economy_set(args)
     if args.group == "economy" and args.cmd == "recompute":
         return cmd_economy_recompute(args)
+    if args.group == "treasury" and args.cmd == "set":
+        return cmd_treasury_set(args)
     if args.group == "firms" and args.cmd == "top":
         return cmd_firms_top(args)
     if args.group == "snakes" and args.cmd == "list":

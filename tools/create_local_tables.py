@@ -109,6 +109,19 @@ def create_economy_period(name: str):
         "--billing-mode", "PAY_PER_REQUEST",
     ])
 
+def create_economy_period_user(name: str):
+    run(aws_base() + [
+        "create-table",
+        "--table-name", name,
+        "--attribute-definitions",
+        "AttributeName=period_key,AttributeType=S",
+        "AttributeName=user_id,AttributeType=S",
+        "--key-schema",
+        "AttributeName=period_key,KeyType=HASH",
+        "AttributeName=user_id,KeyType=RANGE",
+        "--billing-mode", "PAY_PER_REQUEST",
+    ])
+
 
 def main():
     users = env_table("USERS", "snake-local-users")
@@ -118,6 +131,7 @@ def main():
     settings = env_table("SETTINGS", "snake-local-settings")
     economy_params = env_table("ECONOMY_PARAMS", "snake-local-economy_params")
     economy_period = env_table("ECONOMY_PERIOD", "snake-local-economy_period")
+    economy_period_user = env_table("ECONOMY_PERIOD_USER", "snake-local-economy_period_user")
 
     creators = [
         (users, create_users),
@@ -127,6 +141,7 @@ def main():
         (settings, create_settings),
         (economy_params, create_economy_params),
         (economy_period, create_economy_period),
+        (economy_period_user, create_economy_period_user),
     ]
 
     for table_name, creator in creators:

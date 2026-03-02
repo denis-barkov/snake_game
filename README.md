@@ -41,6 +41,9 @@ Simulation internals are structured in `api/world`:
 - `FOOD_REWARD_CELLS` (default `1`)
 - `RESIZE_THRESHOLD` (default `0.05`)
 - `WORLD_ASPECT_RATIO` (default `1.7777777778`)
+- `ECON_PERIOD_SECONDS` (default `300` local, `86400` prod)
+- `ECON_PERIOD_TZ` (default `America/New_York`)
+- `ECON_PERIOD_ALIGN` (`rolling` local, `midnight` prod)
 - `ECONOMY_CACHE_MS` (default `2000`, min `500`, max `10000`) for `/economy/state` read cache
 
 Default run values in Make:
@@ -66,10 +69,12 @@ Notes:
 - With default rollout flags (`SINGLE_CHUNK_MODE=true`, `AOI_ENABLED=false`) behavior stays equivalent to previous full-world snapshots.
 - AOI can be enabled later without changing frontend payload schema.
 
-### Economy v1 (read-only)
+### Economy core v1
 
-- Backend endpoint: `GET /economy/state`
-- Frontend HUD polls this endpoint every 2 seconds.
+- Backend endpoints:
+  - `GET /economy/state` (global macro metrics + countdown)
+  - `GET /economy/user` (auth, personal metrics)
+- Frontend economy panels are WS-driven (`economy_world` and `user_state.economy_user`) with no periodic `/economy/state` polling.
 
 ### Economy/game write paths (Step 10)
 
@@ -154,6 +159,7 @@ export DYNAMO_TABLE_SNAKE_EVENTS=snake-local-snake_events
 export DYNAMO_TABLE_SETTINGS=snake-local-settings
 export DYNAMO_TABLE_ECONOMY_PARAMS=snake-local-economy_params
 export DYNAMO_TABLE_ECONOMY_PERIOD=snake-local-economy_period
+export DYNAMO_TABLE_ECONOMY_PERIOD_USER=snake-local-economy_period_user
 
 python3 tools/create_local_tables.py
 python3 tools/seed_local.py
@@ -175,6 +181,7 @@ export DYNAMO_TABLE_SNAKE_EVENTS=snake-mvp-snake_events
 export DYNAMO_TABLE_SETTINGS=snake-mvp-settings
 export DYNAMO_TABLE_ECONOMY_PARAMS=snake-mvp-economy_params
 export DYNAMO_TABLE_ECONOMY_PERIOD=snake-mvp-economy_period
+export DYNAMO_TABLE_ECONOMY_PERIOD_USER=snake-mvp-economy_period_user
 
 ./snake_server serve
 ```
@@ -202,6 +209,7 @@ export ADMIN_TOKEN=your-secret-token
 snakecli economy status
 snakecli --token "$ADMIN_TOKEN" economy set cap_delta_m 6000
 snakecli --token "$ADMIN_TOKEN" economy recompute
+snakecli --token "$ADMIN_TOKEN" treasury set 1200
 snakecli firms top --by balance --limit 10
 snakecli snakes list --onfield --limit 25
 
@@ -223,7 +231,7 @@ snakecli --token "$ADMIN_TOKEN" smartseed --worldsize <A_world> [--usersnum N] [
 Rules:
 - `--worldsize` is required (area in tiles).
 - `ADMIN_TOKEN` is required (write command).
-- `--wipe` deletes game-content tables (`users`, `snakes`, `snake_events`, `world_chunks`, `economy_params`, `economy_period`).
+- `--wipe` deletes game-content tables (`users`, `snakes`, `snake_events`, `world_chunks`, `economy_params`, `economy_period`, `economy_period_user`).
 - `--wipe` requires confirmation unless `--force` is present.
 - Existing `app seed` command is unchanged.
 - Smartseed users are login-ready immediately (`seeduser...` / `passN` shown in output).
@@ -245,7 +253,7 @@ curl -sS https://terrariumsnake.com/economy/state
 
 Expected:
 - `/health` -> `{"ok":true}`
-- `/economy/state` -> JSON with numeric `M`, `P`, `pi`, `A_world`, `M_white`
+- `/economy/state` -> JSON with numeric `Y`, `K`, `L`, `alpha`, `A`, `M`, `P`, `pi`, `treasury_balance`, `period_ends_in_seconds`
 
 ## Watch camera / AOI-ready behavior
 

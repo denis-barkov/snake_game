@@ -49,6 +49,17 @@ class IStorage {
   virtual std::optional<EconomyPeriod> GetEconomyPeriod(const std::string& period_key) = 0;
   virtual bool PutEconomyPeriod(const EconomyPeriod& p) = 0;
   virtual bool IncrementEconomyPeriodDeltaMBuy(const std::string& period_key, int64_t delta_m_buy) = 0;
+  virtual bool IncrementEconomyPeriodRaw(const std::string& period_key,
+                                         int64_t harvested_food_delta,
+                                         int64_t movement_ticks_delta) = 0;
+  virtual std::optional<EconomyPeriodUser> GetEconomyPeriodUser(const std::string& period_key,
+                                                                const std::string& user_id) = 0;
+  virtual bool PutEconomyPeriodUser(const EconomyPeriodUser& p) = 0;
+  virtual bool IncrementEconomyPeriodUserRaw(const std::string& period_key,
+                                             const std::string& user_id,
+                                             int64_t harvested_food_delta,
+                                             int64_t movement_ticks_delta) = 0;
+  virtual std::vector<EconomyPeriodUser> ListEconomyPeriodUsers(const std::string& period_key) = 0;
   virtual bool IncrementSystemReserve(int64_t delta_cells) = 0;
 
   virtual bool HealthCheck() = 0;

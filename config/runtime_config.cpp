@@ -91,6 +91,9 @@ RuntimeConfig RuntimeConfig::FromEnv() {
   cfg.world_mask_mode = getenv_string("WORLD_MASK_MODE", cfg.world_mask_mode);
   cfg.world_mask_seed = getenv_int("WORLD_MASK_SEED", cfg.world_mask_seed);
   cfg.world_mask_style = getenv_string("WORLD_MASK_STYLE", cfg.world_mask_style);
+  cfg.econ_period_seconds = clamp_int(getenv_int("ECON_PERIOD_SECONDS", cfg.econ_period_seconds), 60, 86400 * 7);
+  cfg.econ_period_tz = getenv_string("ECON_PERIOD_TZ", cfg.econ_period_tz);
+  cfg.econ_period_align = getenv_string("ECON_PERIOD_ALIGN", cfg.econ_period_align);
   if (!has_env("DEBUG_TPS")) {
     // Backward compatibility for older deployments that used LOG_HZ.
     cfg.debug_tps = getenv_bool("LOG_HZ", cfg.debug_tps);

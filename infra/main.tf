@@ -47,7 +47,8 @@ module "iam" {
     module.dynamodb.snake_events_table_arn,
     module.dynamodb.settings_table_arn,
     module.dynamodb.economy_params_table_arn,
-    module.dynamodb.economy_period_table_arn
+    module.dynamodb.economy_period_table_arn,
+    module.dynamodb.economy_period_user_table_arn
   ]
 
   cloudwatch_log_group_arn = module.observability.log_group_arn
@@ -108,6 +109,8 @@ module "compute" {
     TABLE_ECONOMY_PARAMS       = "${var.project}-${var.environment}-economy_params"
     DYNAMO_TABLE_ECONOMY_PERIOD = "${var.project}-${var.environment}-economy_period"
     TABLE_ECONOMY_PERIOD       = "${var.project}-${var.environment}-economy_period"
+    DYNAMO_TABLE_ECONOMY_PERIOD_USER = "${var.project}-${var.environment}-economy_period_user"
+    TABLE_ECONOMY_PERIOD_USER       = "${var.project}-${var.environment}-economy_period_user"
     PUBLIC_VIEW_ENABLED        = "true"
     SINGLE_CHUNK_MODE          = "false"
     AOI_ENABLED                = "true"
@@ -122,6 +125,9 @@ module "compute" {
     WORLD_MASK_MODE            = "none"
     WORLD_MASK_SEED            = "1337"
     WORLD_MASK_STYLE           = "jagged"
+    ECON_PERIOD_SECONDS        = "86400"
+    ECON_PERIOD_TZ             = "America/New_York"
+    ECON_PERIOD_ALIGN          = "midnight"
     MAX_BORROW_PER_CALL        = "1000000"
     FOOD_REWARD_CELLS          = "1"
     RESIZE_THRESHOLD           = "0.05"

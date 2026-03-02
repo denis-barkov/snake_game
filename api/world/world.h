@@ -37,6 +37,10 @@ struct PersistenceDelta {
   std::vector<std::string> delete_snake_ids;
   std::optional<storage::WorldChunk> upsert_world_chunk;
   std::vector<storage::SnakeEvent> snake_events;
+  int64_t movement_ticks = 0;
+  std::unordered_map<int, int64_t> movement_ticks_by_user;
+  int64_t harvested_food = 0;
+  std::unordered_map<int, int64_t> harvested_food_by_user;
   std::vector<std::pair<std::string, int64_t>> user_balance_deltas;
   int64_t system_balance_delta = 0;
 
@@ -131,6 +135,10 @@ class World {
   std::unordered_set<int> dirty_snake_ids_;
   std::unordered_set<int> deleted_snake_ids_;
   std::vector<storage::SnakeEvent> pending_snake_events_;
+  int64_t pending_movement_ticks_ = 0;
+  std::unordered_map<int, int64_t> pending_movement_ticks_by_user_;
+  int64_t pending_harvested_food_ = 0;
+  std::unordered_map<int, int64_t> pending_harvested_food_by_user_;
   std::unordered_map<int, int64_t> pending_user_balance_deltas_;
   int64_t pending_system_balance_delta_ = 0;
   bool world_chunk_dirty_ = false;

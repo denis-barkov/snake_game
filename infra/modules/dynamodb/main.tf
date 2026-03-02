@@ -108,3 +108,21 @@ resource "aws_dynamodb_table" "economy_period" {
 
   tags = merge(var.tags, { Name = "${var.name_prefix}-economy_period" })
 }
+
+resource "aws_dynamodb_table" "economy_period_user" {
+  name         = "${var.name_prefix}-economy_period_user"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "period_key"
+  range_key    = "user_id"
+
+  attribute {
+    name = "period_key"
+    type = "S"
+  }
+  attribute {
+    name = "user_id"
+    type = "S"
+  }
+
+  tags = merge(var.tags, { Name = "${var.name_prefix}-economy_period_user" })
+}
