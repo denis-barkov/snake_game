@@ -175,6 +175,7 @@ struct PublicViewState {
   int chunk_cx = 0;
   int chunk_cy = 0;
   uint64_t last_switch_tick = 0;
+  bool initialized = false;
 };
 
 class GameService {
@@ -921,6 +922,19 @@ int main(int argc, char** argv) {
     return {cx, cy};
   };
 
+  {
+    const auto snap = game.snapshot();
+    const int cx = std::max(0, snap.w / 2);
+    const int cy = std::max(0, snap.h / 2);
+    const auto chunk = game.coord_to_chunk(cx, cy);
+    lock_guard<mutex> lock(public_view_mu);
+    public_view.camera_x = cx;
+    public_view.camera_y = cy;
+    public_view.chunk_cx = chunk.cx;
+    public_view.chunk_cy = chunk.cy;
+    public_view.initialized = true;
+  }
+
   signal(SIGUSR1, on_reload_signal);
   signal(SIGHUP, on_reload_signal);
 
@@ -990,6 +1004,7 @@ int main(int argc, char** argv) {
               public_view.camera_x = px;
               public_view.camera_y = py;
               public_view.last_switch_tick = snap.tick;
+              public_view.initialized = true;
               public_activity_scores.clear();
             }
           }
@@ -1163,6 +1178,29 @@ int main(int argc, char** argv) {
           lock_guard<mutex> lock(sessions_mu);
           sessions[sid] = session;
         }
+
+        if (*type == "public_camera_init") {
+          // Spectator one-shot init: accepts only from unauthenticated sessions.
+          if (session.auth_user_id.has_value()) continue;
+          auto x = get_json_int_field(msg, "x");
+          auto y = get_json_int_field(msg, "y");
+          if (!x || !y) continue;
+          const auto snap = game.snapshot();
+          const int cx = max(0, min(snap.w - 1, *x));
+          const int cy = max(0, min(snap.h - 1, *y));
+          const auto chunk = game.coord_to_chunk(cx, cy);
+          {
+            lock_guard<mutex> lock(public_view_mu);
+            if (!public_view.initialized) {
+              public_view.camera_x = cx;
+              public_view.camera_y = cy;
+              public_view.chunk_cx = chunk.cx;
+              public_view.chunk_cy = chunk.cy;
+              public_view.initialized = true;
+            }
+          }
+          continue;
+        }
       }
       alive.store(false);
     });
@@ -1202,6 +1240,21 @@ int main(int argc, char** argv) {
           {
             lock_guard<mutex> lock(public_view_mu);
             pv = public_view;
+          }
+          if (!pv.initialized) {
+            const auto world_snap = game.snapshot();
+            const int cx = std::max(0, world_snap.w / 2);
+            const int cy = std::max(0, world_snap.h / 2);
+            const auto chunk = game.coord_to_chunk(cx, cy);
+            {
+              lock_guard<mutex> lock(public_view_mu);
+              public_view.camera_x = cx;
+              public_view.camera_y = cy;
+              public_view.chunk_cx = chunk.cx;
+              public_view.chunk_cy = chunk.cy;
+              public_view.initialized = true;
+              pv = public_view;
+            }
           }
           cam_x = pv.camera_x;
           cam_y = pv.camera_y;

@@ -743,6 +743,7 @@
 
   const TOKEN_STORAGE_KEY = "snake_auth_token";
   const USER_ID_STORAGE_KEY = "snake_auth_user_id";
+  const LOGIN_RELOAD_FLAG = "snake_reload_after_login";
   const SELECTED_SNAKE_STORAGE_KEY = "snake_selected_snake_id";
   const WATCHED_SNAKE_STORAGE_KEY = "snake_watched_snake_id";
   const GRID_MODE_STORAGE_KEY = "snake_grid_mode";
@@ -814,6 +815,7 @@
   let lastTickSample = null;
   let expectedTickHz = null;
   const FALLBACK_EXPECTED_TICK_HZ = 10;
+  const SPECTATOR_DEFAULT_ZOOM = 0.25;
   let runtimeSpeedPollTimer = null;
   let cameraPollTimer = null;
   let latestSnapshotBytes = 0;
@@ -837,8 +839,41 @@
   if (!["off", "cells", "cells_chunks"].includes(gridMode)) gridMode = "cells_chunks";
   let showBounds = localStorage.getItem(BOUNDS_TOGGLE_STORAGE_KEY) !== "0";
   let showEdge = localStorage.getItem(EDGE_TOGGLE_STORAGE_KEY) !== "0";
+  let spectatorDefaultsApplied = false;
+  if (sessionStorage.getItem(LOGIN_RELOAD_FLAG) === "1") {
+    sessionStorage.removeItem(LOGIN_RELOAD_FLAG);
+  }
   const savedMyEcoOpen = localStorage.getItem(MY_ECON_OPEN_STORAGE_KEY);
   if (savedMyEcoOpen === "0") ecoUserCardEl.open = false;
+
+  function applySpectatorDefaults(worldW = gridW, worldH = gridH, force = false) {
+    if (token) return;
+    if (spectatorDefaultsApplied && !force) return;
+    const w = Math.max(1, Number(worldW) || gridW);
+    const h = Math.max(1, Number(worldH) || gridH);
+    camera.setCenter(Math.floor(w / 2), Math.floor(h / 2));
+    camera.setZoom(SPECTATOR_DEFAULT_ZOOM);
+    spectatorDefaultsApplied = true;
+  }
+
+  async function initSpectatorCameraBeforeStream() {
+    if (token) return;
+    try {
+      const res = await fetch(apiPath("/game/state"));
+      if (!res.ok) return;
+      const state = await res.json();
+      if (!state || typeof state !== "object") return;
+      if (!Number.isFinite(Number(state.w)) || !Number.isFinite(Number(state.h))) return;
+      gridW = Math.max(1, Number(state.w));
+      gridH = Math.max(1, Number(state.h));
+      applySpectatorDefaults(gridW, gridH, true);
+      latestServerState = state;
+      renderCurrentState();
+    } catch (_) {
+      // Keep deterministic local fallback if state bootstrap fails.
+      applySpectatorDefaults(gridW, gridH, true);
+    }
+  }
 
   function renderCurrentState() {
     if (!latestServerState) return;
@@ -1058,12 +1093,17 @@
     myUserId = data.user_id;
     localStorage.setItem(TOKEN_STORAGE_KEY, token);
     localStorage.setItem(USER_ID_STORAGE_KEY, String(myUserId));
+    spectatorDefaultsApplied = false;
 
     authStatus.textContent = `Logged in as user_id=${myUserId}`;
     createSnakeBtn.disabled = false;
+    if (sessionStorage.getItem(LOGIN_RELOAD_FLAG) !== "1") {
+      sessionStorage.setItem(LOGIN_RELOAD_FLAG, "1");
+      setTimeout(() => window.location.reload(), 120);
+      return;
+    }
     applyViewControlAuthState();
     restartStream();
-
     await loadMySnakes();
     await loadUserMe();
   }
@@ -1078,6 +1118,9 @@
     attach1Btn.disabled = !isAuth;
     attach10Btn.disabled = !isAuth;
     attach50Btn.disabled = !isAuth;
+    zoomInBtn.style.display = isAuth ? "" : "none";
+    zoomOutBtn.style.display = isAuth ? "" : "none";
+    zoomResetBtn.style.display = isAuth ? "" : "none";
     publicViewHintEl.style.display = isAuth ? "none" : "inline";
     viewControlsEl.style.opacity = isAuth ? "1" : "0.82";
     ecoAuthNoteEl.style.display = isAuth ? "none" : "block";
@@ -1087,6 +1130,7 @@
     if (!isAuth) {
       myBalanceEl.textContent = "—";
       mySnakeCountEl.textContent = "—";
+      applySpectatorDefaults(gridW, gridH, true);
     }
     updateActionButtons();
   }
@@ -1340,6 +1384,7 @@
 
     if (msg.type === "world_snapshot" && msg.snapshot) {
       const state = msg.snapshot;
+      if (!token) applySpectatorDefaults(state.w, state.h);
       latestSnapshotBytes = new TextEncoder().encode(raw).length;
       if (typeof msg.mode === "string") debugModeLabel = msg.mode;
       if (typeof msg.aoi_chunks === "number") serverAoiChunks = msg.aoi_chunks;
@@ -1444,6 +1489,14 @@
       wsBackoffMs = 1000;
       if (token) {
         ws.send(JSON.stringify({ type: "auth", channel: "private", token }));
+      } else {
+        ws.send(JSON.stringify({
+          type: "public_camera_init",
+          channel: "public",
+          x: Math.round(camera.x),
+          y: Math.round(camera.y),
+          zoom: Number(camera.zoom.toFixed(3))
+        }));
       }
     };
     ws.onmessage = (ev) => handleWsMessage(ev.data);
@@ -1665,24 +1718,31 @@
     ecoTipPopEl.style.display = "none";
   });
 
-  applyViewControlAuthState();
-  if (token && myUserId) {
-    authStatus.textContent = `Logged in as user_id=${myUserId}`;
-    createSnakeBtn.disabled = false;
-    loadMySnakes();
-    loadUserMe();
-  }
-  startStream();
-  ensureStateFallbackRunning();
-  loadStateFallbackOnce();
-  loadRuntimeSpeed();
-  loadEconomyState();
-  runtimeSpeedPollTimer = setInterval(loadRuntimeSpeed, 10000);
-  cameraPollTimer = setInterval(() => {
+  async function bootApp() {
+    applyViewControlAuthState();
+    if (token && myUserId) {
+      authStatus.textContent = `Logged in as user_id=${myUserId}`;
+      createSnakeBtn.disabled = false;
+      loadMySnakes();
+      loadUserMe();
+    }
+    if (!token) {
+      await initSpectatorCameraBeforeStream();
+    }
+    startStream();
+    ensureStateFallbackRunning();
+    loadStateFallbackOnce();
+    loadRuntimeSpeed();
+    loadEconomyState();
+    runtimeSpeedPollTimer = setInterval(loadRuntimeSpeed, 10000);
+    cameraPollTimer = setInterval(() => {
+      if (token) postCamera();
+    }, 250);
     if (token) postCamera();
-  }, 250);
-  if (token) postCamera();
-  updateDebugOverlay();
+    updateDebugOverlay();
+  }
+
+  bootApp();
 </script>
 </body>
 </html>
