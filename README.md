@@ -202,6 +202,39 @@ ssh -i <your-key>.pem ec2-user@<ec2-ip>
 snakecli help
 ```
 
+### Prod server start/restart (AWS EC2)
+
+From an EC2 shell:
+```bash
+ssh -i <your-key>.pem ec2-user@<ec2-ip>
+```
+
+Check status:
+```bash
+sudo systemctl status snake --no-pager
+```
+
+Start server:
+```bash
+sudo systemctl start snake
+```
+
+Restart server:
+```bash
+sudo systemctl restart snake
+```
+
+Tail server logs:
+```bash
+sudo journalctl -u snake -f
+```
+
+If public HTTPS is not reachable, also check proxy services:
+```bash
+sudo systemctl status caddy --no-pager || true
+sudo systemctl status nginx --no-pager || true
+```
+
 `snakecli` command cheat sheet (same in local/prod):
 ```bash
 export ADMIN_TOKEN=your-secret-token
