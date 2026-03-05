@@ -9,9 +9,11 @@
 namespace economy {
 
 struct EconomyPeriodRaw {
-  int64_t harvested_food = 0;   // Y
+  int64_t harvested_food = 0;   // legacy V1 source
+  int64_t real_output = 0;      // abstract Y source
   int64_t movement_ticks = 0;   // L
   int64_t deployed_cells = 0;   // K
+  double alpha_bootstrap_default = 0.5;
 };
 
 struct EconomySnapshot {

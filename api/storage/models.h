@@ -13,6 +13,10 @@ struct User {
   std::string username;
   std::string password_hash;
   int64_t balance_mi = 0;
+  // V2/V3 placeholder fields (not used by V1 compute yet).
+  int64_t debt_principal = 0;
+  double debt_interest_rate = 0.0;
+  int64_t debt_accrued_interest = 0;
   std::string role = "player";
   int64_t created_at = 0;
   std::string company_name;
@@ -74,6 +78,8 @@ struct EconomyParams {
   int k_land = 24;
   double a_productivity = 1.0;
   double v_velocity = 2.0;
+  int food_spawn_target = 1;
+  double alpha_bootstrap_default = 0.5;
   int64_t m_gov_reserve = 400;
   int64_t cap_delta_m = 5000;
   int64_t delta_m_issue = 0;
@@ -85,6 +91,8 @@ struct EconomyParams {
 struct EconomyPeriod {
   std::string period_key;
   int64_t harvested_food = 0;
+  // Abstract production counter (V1 maps this to harvested_food).
+  int64_t real_output = 0;
   int64_t movement_ticks = 0;
   int64_t total_output = 0;
   int64_t total_capital = 0;
@@ -96,6 +104,8 @@ struct EconomyPeriod {
   double inflation_rate = 0.0;
   int64_t treasury_balance = 0;
   bool alpha_bootstrap = false;
+  bool is_finalized = false;
+  int64_t finalized_at = 0;
   std::string snapshot_status = "live_unfinalized";
   int64_t period_ends_in_seconds = 0;
   // Legacy fields kept for backward compatibility.
@@ -114,6 +124,8 @@ struct EconomyPeriodUser {
   std::string period_key;
   std::string user_id;
   int64_t user_harvested_food = 0;
+  // Abstract production counter (V1 maps this to user_harvested_food).
+  int64_t user_real_output = 0;
   int64_t user_movement_ticks = 0;
   int64_t user_output = 0;
   int64_t user_capital = 0;

@@ -31,6 +31,8 @@ struct RuntimeConfig {
   int econ_period_seconds = 300;
   std::string econ_period_tz = "America/New_York";
   std::string econ_period_align = "rolling";
+  int economy_flush_seconds = 10;
+  int economy_period_history_days = 90;
 
   static RuntimeConfig FromEnv();
   int TickIntervalMs() const;

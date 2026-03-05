@@ -95,6 +95,8 @@ EconomyParams LoadEconomyParamsFromItem(const Map<String, AttributeValue>& item)
   p.k_land = static_cast<int>(GetInt64(item, "k_land", 24));
   p.a_productivity = GetDouble(item, "a_productivity", 1.0);
   p.v_velocity = GetDouble(item, "v_velocity", 2.0);
+  p.food_spawn_target = static_cast<int>(GetInt64(item, "food_spawn_target", 1));
+  p.alpha_bootstrap_default = GetDouble(item, "alpha_bootstrap_default", 0.5);
   p.m_gov_reserve = GetInt64(item, "m_gov_reserve", 400);
   p.cap_delta_m = GetInt64(item, "cap_delta_m", 5000);
   p.delta_m_issue = GetInt64(item, "delta_m_issue", 0);
@@ -190,6 +192,9 @@ std::vector<User> DynamoStorage::ListUsers() {
       u.username = GetString(item, "username");
       u.password_hash = GetString(item, "password_hash");
       u.balance_mi = GetInt64(item, "balance_mi");
+      u.debt_principal = GetInt64(item, "debt_principal", 0);
+      u.debt_interest_rate = GetDouble(item, "debt_interest_rate", 0.0);
+      u.debt_accrued_interest = GetInt64(item, "debt_accrued_interest", 0);
       u.role = GetString(item, "role", "player");
       u.created_at = GetInt64(item, "created_at");
       u.company_name = GetString(item, "company_name");
@@ -222,6 +227,9 @@ std::optional<User> DynamoStorage::GetUserByUsername(const std::string& username
   u.username = GetString(items[0], "username");
   u.password_hash = GetString(items[0], "password_hash");
   u.balance_mi = GetInt64(items[0], "balance_mi");
+  u.debt_principal = GetInt64(items[0], "debt_principal", 0);
+  u.debt_interest_rate = GetDouble(items[0], "debt_interest_rate", 0.0);
+  u.debt_accrued_interest = GetInt64(items[0], "debt_accrued_interest", 0);
   u.role = GetString(items[0], "role", "player");
   u.created_at = GetInt64(items[0], "created_at");
   u.company_name = GetString(items[0], "company_name");
@@ -243,6 +251,9 @@ std::optional<User> DynamoStorage::GetUserById(const std::string& user_id) {
   u.username = GetString(item, "username");
   u.password_hash = GetString(item, "password_hash");
   u.balance_mi = GetInt64(item, "balance_mi");
+  u.debt_principal = GetInt64(item, "debt_principal", 0);
+  u.debt_interest_rate = GetDouble(item, "debt_interest_rate", 0.0);
+  u.debt_accrued_interest = GetInt64(item, "debt_accrued_interest", 0);
   u.role = GetString(item, "role", "player");
   u.created_at = GetInt64(item, "created_at");
   u.company_name = GetString(item, "company_name");
@@ -256,6 +267,9 @@ bool DynamoStorage::PutUser(const User& u) {
   req.AddItem("username", S(u.username));
   req.AddItem("password_hash", S(u.password_hash));
   req.AddItem("balance_mi", N(u.balance_mi));
+  req.AddItem("debt_principal", N(std::max<int64_t>(0, u.debt_principal)));
+  req.AddItem("debt_interest_rate", D(std::max(0.0, std::min(1.0, u.debt_interest_rate))));
+  req.AddItem("debt_accrued_interest", N(std::max<int64_t>(0, u.debt_accrued_interest)));
   req.AddItem("role", S(u.role.empty() ? "player" : u.role));
   req.AddItem("created_at", N(u.created_at));
   if (!u.company_name.empty()) req.AddItem("company_name", S(u.company_name));
@@ -634,6 +648,8 @@ bool DynamoStorage::PutEconomyParamsActiveAndVersioned(const EconomyParams& p, c
   req.AddItem("k_land", N(p.k_land));
   req.AddItem("a_productivity", D(p.a_productivity));
   req.AddItem("v_velocity", D(p.v_velocity));
+  req.AddItem("food_spawn_target", N(std::max(1, p.food_spawn_target)));
+  req.AddItem("alpha_bootstrap_default", D(std::max(0.05, std::min(0.95, p.alpha_bootstrap_default))));
   req.AddItem("m_gov_reserve", N(p.m_gov_reserve));
   req.AddItem("cap_delta_m", N(p.cap_delta_m));
   req.AddItem("delta_m_issue", N(p.delta_m_issue));
@@ -650,6 +666,8 @@ bool DynamoStorage::PutEconomyParamsActiveAndVersioned(const EconomyParams& p, c
   req.AddItem("k_land", N(p.k_land));
   req.AddItem("a_productivity", D(p.a_productivity));
   req.AddItem("v_velocity", D(p.v_velocity));
+  req.AddItem("food_spawn_target", N(std::max(1, p.food_spawn_target)));
+  req.AddItem("alpha_bootstrap_default", D(std::max(0.05, std::min(0.95, p.alpha_bootstrap_default))));
   req.AddItem("m_gov_reserve", N(p.m_gov_reserve));
   req.AddItem("cap_delta_m", N(p.cap_delta_m));
   req.AddItem("delta_m_issue", N(p.delta_m_issue));
@@ -672,6 +690,7 @@ std::optional<EconomyPeriod> DynamoStorage::GetEconomyPeriod(const std::string& 
   EconomyPeriod p;
   p.period_key = period_key;
   p.harvested_food = GetInt64(item, "harvested_food", 0);
+  p.real_output = GetInt64(item, "real_output", p.harvested_food);
   p.movement_ticks = GetInt64(item, "movement_ticks", 0);
   p.total_output = GetInt64(item, "total_output", 0);
   p.total_capital = GetInt64(item, "total_capital", 0);
@@ -683,6 +702,8 @@ std::optional<EconomyPeriod> DynamoStorage::GetEconomyPeriod(const std::string& 
   p.inflation_rate = GetDouble(item, "inflation_rate", 0.0);
   p.treasury_balance = GetInt64(item, "treasury_balance", 0);
   p.alpha_bootstrap = GetBool(item, "alpha_bootstrap", false);
+  p.is_finalized = GetBool(item, "is_finalized", false);
+  p.finalized_at = GetInt64(item, "finalized_at", 0);
   p.snapshot_status = GetString(item, "snapshot_status", "live_unfinalized");
   p.period_ends_in_seconds = GetInt64(item, "period_ends_in_seconds", 0);
   p.delta_m_buy = GetInt64(item, "delta_m_buy", 0);
@@ -702,6 +723,7 @@ bool DynamoStorage::PutEconomyPeriod(const EconomyPeriod& p) {
   req.SetTableName(cfg_.economy_period_table.c_str());
   req.AddItem("period_key", S(p.period_key));
   req.AddItem("harvested_food", N(p.harvested_food));
+  req.AddItem("real_output", N(p.real_output));
   req.AddItem("movement_ticks", N(p.movement_ticks));
   req.AddItem("total_output", N(p.total_output));
   req.AddItem("total_capital", N(p.total_capital));
@@ -713,6 +735,8 @@ bool DynamoStorage::PutEconomyPeriod(const EconomyPeriod& p) {
   req.AddItem("inflation_rate", D(p.inflation_rate));
   req.AddItem("treasury_balance", N(p.treasury_balance));
   req.AddItem("alpha_bootstrap", B(p.alpha_bootstrap));
+  req.AddItem("is_finalized", B(p.is_finalized));
+  req.AddItem("finalized_at", N(p.finalized_at));
   req.AddItem("snapshot_status", S(p.snapshot_status));
   req.AddItem("period_ends_in_seconds", N(p.period_ends_in_seconds));
   req.AddItem("delta_m_buy", N(p.delta_m_buy));
@@ -749,11 +773,13 @@ bool DynamoStorage::IncrementEconomyPeriodRaw(const std::string& period_key,
   req.SetTableName(cfg_.economy_period_table.c_str());
   req.AddKey("period_key", S(period_key));
   req.SetUpdateExpression(
-      "ADD harvested_food :h, movement_ticks :m "
-      "SET snapshot_status = :status");
+      "ADD harvested_food :h, real_output :h, movement_ticks :m "
+      "SET snapshot_status = :status, is_finalized = :f, finalized_at = :z");
   req.AddExpressionAttributeValues(":h", N(harvested_food_delta));
   req.AddExpressionAttributeValues(":m", N(movement_ticks_delta));
   req.AddExpressionAttributeValues(":status", S("live_unfinalized"));
+  req.AddExpressionAttributeValues(":f", B(false));
+  req.AddExpressionAttributeValues(":z", N(0));
   return client_->UpdateItem(req).IsSuccess();
 }
 
@@ -772,6 +798,7 @@ std::optional<EconomyPeriodUser> DynamoStorage::GetEconomyPeriodUser(const std::
   p.period_key = period_key;
   p.user_id = user_id;
   p.user_harvested_food = GetInt64(item, "user_harvested_food", 0);
+  p.user_real_output = GetInt64(item, "user_real_output", p.user_harvested_food);
   p.user_movement_ticks = GetInt64(item, "user_movement_ticks", 0);
   p.user_output = GetInt64(item, "user_output", 0);
   p.user_capital = GetInt64(item, "user_capital", 0);
@@ -791,6 +818,7 @@ bool DynamoStorage::PutEconomyPeriodUser(const EconomyPeriodUser& p) {
   req.AddItem("period_key", S(p.period_key));
   req.AddItem("user_id", S(p.user_id));
   req.AddItem("user_harvested_food", N(p.user_harvested_food));
+  req.AddItem("user_real_output", N(p.user_real_output));
   req.AddItem("user_movement_ticks", N(p.user_movement_ticks));
   req.AddItem("user_output", N(p.user_output));
   req.AddItem("user_capital", N(p.user_capital));
@@ -813,7 +841,7 @@ bool DynamoStorage::IncrementEconomyPeriodUserRaw(const std::string& period_key,
   req.SetTableName(cfg_.economy_period_user_table.c_str());
   req.AddKey("period_key", S(period_key));
   req.AddKey("user_id", S(user_id));
-  req.SetUpdateExpression("ADD user_harvested_food :h, user_movement_ticks :m");
+  req.SetUpdateExpression("ADD user_harvested_food :h, user_real_output :h, user_movement_ticks :m");
   req.AddExpressionAttributeValues(":h", N(harvested_food_delta));
   req.AddExpressionAttributeValues(":m", N(movement_ticks_delta));
   return client_->UpdateItem(req).IsSuccess();
@@ -833,6 +861,7 @@ std::vector<EconomyPeriodUser> DynamoStorage::ListEconomyPeriodUsers(const std::
       p.period_key = period_key;
       p.user_id = GetString(item, "user_id");
       p.user_harvested_food = GetInt64(item, "user_harvested_food", 0);
+      p.user_real_output = GetInt64(item, "user_real_output", p.user_harvested_food);
       p.user_movement_ticks = GetInt64(item, "user_movement_ticks", 0);
       p.user_output = GetInt64(item, "user_output", 0);
       p.user_capital = GetInt64(item, "user_capital", 0);

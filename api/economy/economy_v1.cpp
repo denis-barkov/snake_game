@@ -31,15 +31,17 @@ EconomySnapshot ComputeGlobal(const EconomyPeriodRaw& raw,
                               int64_t users_sum_balance,
                               int64_t treasury_balance) {
   EconomySnapshot out;
-  out.y = std::max<int64_t>(0, raw.harvested_food);
+  const int64_t effective_y = (raw.real_output > 0) ? raw.real_output : raw.harvested_food;
+  out.y = std::max<int64_t>(0, effective_y);
   out.k = std::max<int64_t>(0, raw.deployed_cells);
   out.l = std::max<int64_t>(0, raw.movement_ticks);
   out.m = std::max<int64_t>(0, users_sum_balance + treasury_balance);
   out.treasury_balance = treasury_balance;
   out.p = static_cast<double>(out.m) / static_cast<double>(std::max<int64_t>(out.y, 1));
 
+  const double alpha_bootstrap_default = Clamp(raw.alpha_bootstrap_default, 0.05, 0.95);
   if (!prev) {
-    out.alpha = 0.5;
+    out.alpha = alpha_bootstrap_default;
     out.alpha_bootstrap = true;
     out.pi = 0.0;
   } else {
@@ -68,14 +70,16 @@ EconomyUserSnapshot ComputeUser(const EconomyPeriodRaw& raw_user,
   EconomyUserSnapshot out;
   out.period_id = period_id;
   out.user_id = user_id;
-  out.y_u = std::max<int64_t>(0, raw_user.harvested_food);
+  const int64_t effective_y = (raw_user.real_output > 0) ? raw_user.real_output : raw_user.harvested_food;
+  out.y_u = std::max<int64_t>(0, effective_y);
   out.k_u = std::max<int64_t>(0, raw_user.deployed_cells);
   out.l_u = std::max<int64_t>(0, raw_user.movement_ticks);
   out.storage_balance = user_balance;
   out.market_share = static_cast<double>(out.y_u) / static_cast<double>(std::max<int64_t>(global_y, 1));
 
+  const double alpha_bootstrap_default = Clamp(raw_user.alpha_bootstrap_default, 0.05, 0.95);
   if (!prev_user) {
-    out.alpha_u = 0.5;
+    out.alpha_u = alpha_bootstrap_default;
     out.alpha_bootstrap = true;
   } else {
     const int64_t d_y = out.y_u - prev_user->y_u;
@@ -138,4 +142,3 @@ EconomyState ComputeEconomyV1(const EconomyInputs& in, const std::string& period
 }
 
 }  // namespace economy
-

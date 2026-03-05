@@ -36,6 +36,13 @@ WORLD_MASK_STYLE="${WORLD_MASK_STYLE:-jagged}"
 ECON_PERIOD_SECONDS="${ECON_PERIOD_SECONDS:-86400}"
 ECON_PERIOD_TZ="${ECON_PERIOD_TZ:-America/New_York}"
 ECON_PERIOD_ALIGN="${ECON_PERIOD_ALIGN:-midnight}"
+if [[ "${ECON_PERIOD_ALIGN}" == "midnight" ]]; then
+  ECONOMIC_PERIOD_MODE="${ECONOMIC_PERIOD_MODE:-prod_midnight_nyc}"
+else
+  ECONOMIC_PERIOD_MODE="${ECONOMIC_PERIOD_MODE:-fixed_seconds}"
+fi
+ECONOMY_FLUSH_SECONDS="${ECONOMY_FLUSH_SECONDS:-10}"
+ECONOMY_PERIOD_HISTORY_DAYS="${ECONOMY_PERIOD_HISTORY_DAYS:-90}"
 ADMIN_TOKEN="${ADMIN_TOKEN:-change-me}"
 POLL_ATTEMPTS="${POLL_ATTEMPTS:-20}"
 POLL_SLEEP_SECONDS="${POLL_SLEEP_SECONDS:-15}"
@@ -168,7 +175,7 @@ COMMAND_ID="$(
 \"chmod 755 /var/www/snake || true\",
 \"chmod 644 /var/www/snake/index.html || true\",
 \"if [ -d /var/www/snake/src ]; then find /var/www/snake/src -type d -exec chmod 755 {} \\;; find /var/www/snake/src -type f -exec chmod 644 {} \\;; fi\",
-\"clang++ -std=c++17 -O2 -pthread ${BUILD_TARGET} api/protocol/encode_json.cpp api/storage/dynamo_storage.cpp api/storage/storage_factory.cpp api/economy/economy_v1.cpp config/runtime_config.cpp api/world/world.cpp api/world/chunk_manager.cpp api/world/entities/snake.cpp api/world/entities/food.cpp api/world/systems/movement_system.cpp api/world/systems/collision_system.cpp api/world/systems/spawn_system.cpp api/world/systems/replication_system.cpp -o /opt/snake/snake_server -lboost_system -laws-cpp-sdk-dynamodb -laws-cpp-sdk-core -L/usr/local/lib64 -L/usr/local/lib\",
+\"clang++ -std=c++17 -O2 -pthread ${BUILD_TARGET} api/protocol/encode_json.cpp api/storage/dynamo_storage.cpp api/storage/storage_factory.cpp api/economy/economy_v1.cpp api/economy_engine/compute.cpp config/runtime_config.cpp api/world/world.cpp api/world/chunk_manager.cpp api/world/entities/snake.cpp api/world/entities/food.cpp api/world/systems/movement_system.cpp api/world/systems/collision_system.cpp api/world/systems/spawn_system.cpp api/world/systems/replication_system.cpp -o /opt/snake/snake_server -lboost_system -laws-cpp-sdk-dynamodb -laws-cpp-sdk-core -L/usr/local/lib64 -L/usr/local/lib\",
 \"cat > /etc/snake.env <<'EOF_ENV'\",
 \"AWS_REGION=${REGION}\",
 \"DYNAMO_REGION=${REGION}\",
@@ -215,8 +222,12 @@ COMMAND_ID="$(
 \"WORLD_MASK_SEED=${WORLD_MASK_SEED}\",
 \"WORLD_MASK_STYLE=${WORLD_MASK_STYLE}\",
 \"ECON_PERIOD_SECONDS=${ECON_PERIOD_SECONDS}\",
+\"ECONOMIC_PERIOD_DURATION_SECONDS=${ECON_PERIOD_SECONDS}\",
 \"ECON_PERIOD_TZ=${ECON_PERIOD_TZ}\",
 \"ECON_PERIOD_ALIGN=${ECON_PERIOD_ALIGN}\",
+\"ECONOMIC_PERIOD_MODE=${ECONOMIC_PERIOD_MODE}\",
+\"ECONOMY_FLUSH_SECONDS=${ECONOMY_FLUSH_SECONDS}\",
+\"ECONOMY_PERIOD_HISTORY_DAYS=${ECONOMY_PERIOD_HISTORY_DAYS}\",
 \"ADMIN_TOKEN=${ADMIN_TOKEN}\",
 \"EOF_ENV\",
 \"chmod 0644 /etc/snake.env\",

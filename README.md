@@ -44,6 +44,10 @@ Simulation internals are structured in `api/world`:
 - `ECON_PERIOD_SECONDS` (default `300` local, `86400` prod)
 - `ECON_PERIOD_TZ` (default `America/New_York`)
 - `ECON_PERIOD_ALIGN` (`rolling` local, `midnight` prod)
+- `ECONOMIC_PERIOD_DURATION_SECONDS` (alias for period seconds)
+- `ECONOMIC_PERIOD_MODE` (`fixed_seconds` local, `prod_midnight_nyc` prod)
+- `ECONOMY_FLUSH_SECONDS` (default `10`, buffered raw economy flush interval)
+- `ECONOMY_PERIOD_HISTORY_DAYS` (default `90`, retention policy knob)
 - `ECONOMY_CACHE_MS` (default `2000`, min `500`, max `10000`) for `/economy/state` read cache
 
 Default run values in Make:
@@ -74,6 +78,7 @@ Notes:
 - Backend endpoints:
   - `GET /economy/state` (global macro metrics + countdown)
   - `GET /economy/user` (auth, personal metrics)
+  - `GET /economy/debug` (admin token required; raw counters + flush state)
 - Frontend economy panels are WS-driven (`economy_world` and `user_state.economy_user`) with no periodic `/economy/state` polling.
 
 ### Economy/game write paths (Step 10)
@@ -238,10 +243,12 @@ sudo systemctl status nginx --no-pager || true
 `snakecli` command cheat sheet (same in local/prod):
 ```bash
 export ADMIN_TOKEN=your-secret-token
+export SNAKECLI_API=http://127.0.0.1:8080
 
 snakecli economy status
 snakecli --token "$ADMIN_TOKEN" economy set cap_delta_m 6000
 snakecli --token "$ADMIN_TOKEN" economy recompute
+snakecli --token "$ADMIN_TOKEN" economy recompute --force-rewrite
 snakecli --token "$ADMIN_TOKEN" treasury set 1200
 snakecli firms top --by balance --limit 10
 snakecli snakes list --onfield --limit 25
@@ -253,6 +260,10 @@ snakecli --token "$ADMIN_TOKEN" app reset-seed-reload
 # smart progressed-world seed (Step 9.2)
 snakecli --token "$ADMIN_TOKEN" smartseed --worldsize 200000 --seed 123 --wipe --force
 ```
+
+Notes:
+- `snakecli economy ...` and `snakecli treasury ...` now call admin HTTP endpoints on the running server (`SNAKECLI_API`), so server must be running.
+- `firms top`, `snakes list`, and `smartseed` still access DynamoDB directly.
 
 ### Smartseed (Step 9.2)
 

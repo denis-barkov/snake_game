@@ -7,6 +7,8 @@ import random
 import signal
 import subprocess
 import sys
+import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -50,6 +52,34 @@ def table_env(name_suffix: str) -> str:
 
 def ddb_endpoint() -> str:
     return env("DDB_ENDPOINT") or env("DYNAMO_ENDPOINT") or ""
+
+
+def api_base_url() -> str:
+    return (env("SNAKECLI_API", "http://127.0.0.1:8080") or "http://127.0.0.1:8080").rstrip("/")
+
+
+def api_json(method: str, path: str, token: Optional[str], payload: Optional[Dict] = None) -> Dict:
+    url = f"{api_base_url()}{path}"
+    body = None if payload is None else json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(url, data=body, method=method.upper())
+    req.add_header("Accept", "application/json")
+    if payload is not None:
+        req.add_header("Content-Type", "application/json")
+    if token:
+        req.add_header("X-Admin-Token", token)
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            raw = resp.read().decode("utf-8") or "{}"
+            return json.loads(raw)
+    except urllib.error.HTTPError as e:
+        raw = e.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"HTTP {e.code}: {raw}")
+    except urllib.error.URLError as e:
+        raise RuntimeError(f"API unreachable at {url}: {e}")
+
+
+def effective_admin_token(args) -> str:
+    return args.token if getattr(args, "token", None) is not None else (env("ADMIN_TOKEN") or "")
 
 
 def aws_base() -> List[str]:
@@ -195,6 +225,8 @@ def to_params(item: Dict) -> Dict:
         "k_land": av_n(item, "k_land", 24),
         "a_productivity": float(item.get("a_productivity", {}).get("N", "1.0")),
         "v_velocity": float(item.get("v_velocity", {}).get("N", "2.0")),
+        "food_spawn_target": av_n(item, "food_spawn_target", 1),
+        "alpha_bootstrap_default": float(item.get("alpha_bootstrap_default", {}).get("N", "0.5")),
         "m_gov_reserve": av_n(item, "m_gov_reserve", 400),
         "cap_delta_m": av_n(item, "cap_delta_m", 5000),
         "delta_m_issue": av_n(item, "delta_m_issue", 0),
@@ -211,6 +243,8 @@ def params_item(params_id: str, params: Dict) -> Dict:
         "k_land": {"N": str(int(params["k_land"]))},
         "a_productivity": {"N": str(float(params["a_productivity"]))},
         "v_velocity": {"N": str(float(params["v_velocity"]))},
+        "food_spawn_target": {"N": str(int(params.get("food_spawn_target", 1)))},
+        "alpha_bootstrap_default": {"N": str(float(params.get("alpha_bootstrap_default", 0.5)))},
         "m_gov_reserve": {"N": str(int(params["m_gov_reserve"]))},
         "cap_delta_m": {"N": str(int(params["cap_delta_m"]))},
         "delta_m_issue": {"N": str(int(params["delta_m_issue"]))},
@@ -230,6 +264,8 @@ def load_active_params(table: str) -> Dict:
             "k_land": 24,
             "a_productivity": 1.0,
             "v_velocity": 2.0,
+            "food_spawn_target": 1,
+            "alpha_bootstrap_default": 0.5,
             "m_gov_reserve": 400,
             "cap_delta_m": 5000,
             "delta_m_issue": 0,
@@ -252,6 +288,7 @@ def get_period(table: str, period_key: str) -> Dict:
         return {
             "period_key": period_key,
             "harvested_food": 0,
+            "real_output": 0,
             "movement_ticks": 0,
             "total_output": 0,
             "total_capital": 0,
@@ -263,6 +300,8 @@ def get_period(table: str, period_key: str) -> Dict:
             "inflation_rate": 0.0,
             "treasury_balance": 0,
             "alpha_bootstrap": True,
+            "is_finalized": False,
+            "finalized_at": 0,
             "snapshot_status": "live_unfinalized",
             "period_ends_in_seconds": 0,
             "delta_m_buy": 0,
@@ -278,6 +317,7 @@ def get_period(table: str, period_key: str) -> Dict:
     return {
         "period_key": period_key,
         "harvested_food": av_n(item, "harvested_food", 0),
+        "real_output": av_n(item, "real_output", av_n(item, "harvested_food", 0)),
         "movement_ticks": av_n(item, "movement_ticks", 0),
         "total_output": av_n(item, "total_output", 0),
         "total_capital": av_n(item, "total_capital", 0),
@@ -289,6 +329,8 @@ def get_period(table: str, period_key: str) -> Dict:
         "inflation_rate": float(item.get("inflation_rate", {}).get("N", "0.0")),
         "treasury_balance": av_n(item, "treasury_balance", 0),
         "alpha_bootstrap": av_bool(item, "alpha_bootstrap", False),
+        "is_finalized": av_bool(item, "is_finalized", False),
+        "finalized_at": av_n(item, "finalized_at", 0),
         "snapshot_status": av_s(item, "snapshot_status", "live_unfinalized"),
         "period_ends_in_seconds": av_n(item, "period_ends_in_seconds", 0),
         "delta_m_buy": av_n(item, "delta_m_buy", 0),
@@ -309,6 +351,7 @@ def put_period(table: str, period: Dict) -> None:
         {
             "period_key": {"S": period["period_key"]},
             "harvested_food": {"N": str(int(period.get("harvested_food", 0)))},
+            "real_output": {"N": str(int(period.get("real_output", period.get("harvested_food", 0))))},
             "movement_ticks": {"N": str(int(period.get("movement_ticks", 0)))},
             "total_output": {"N": str(int(period.get("total_output", 0)))},
             "total_capital": {"N": str(int(period.get("total_capital", 0)))},
@@ -320,6 +363,8 @@ def put_period(table: str, period: Dict) -> None:
             "inflation_rate": {"N": str(float(period.get("inflation_rate", 0.0)))},
             "treasury_balance": {"N": str(int(period.get("treasury_balance", 0)))},
             "alpha_bootstrap": {"BOOL": bool(period.get("alpha_bootstrap", False))},
+            "is_finalized": {"BOOL": bool(period.get("is_finalized", False))},
+            "finalized_at": {"N": str(int(period.get("finalized_at", 0)))},
             "snapshot_status": {"S": str(period.get("snapshot_status", "live_unfinalized"))},
             "period_ends_in_seconds": {"N": str(int(period.get("period_ends_in_seconds", 0)))},
             "delta_m_buy": {"N": str(int(period["delta_m_buy"]))},
@@ -347,56 +392,6 @@ def aggregate_inputs(users_table: str, snakes_table: str) -> Tuple[int, int]:
         if alive and is_on_field:
             k_snakes += max(0, av_n(s, "length_k", 0))
     return sum_mi, k_snakes
-
-
-def compute_economy_state(
-    params: Dict,
-    sum_mi: int,
-    delta_m_buy: int,
-    k_snakes: int,
-    harvested_food: int = 0,
-    movement_ticks: int = 0,
-    prev_snapshot: Optional[Dict] = None,
-) -> Dict:
-    m = int(sum_mi) + int(params["m_gov_reserve"])
-    k = max(0, int(k_snakes) + int(params["delta_k_obs"]))
-    y = max(0, int(harvested_food))
-    l = max(0, int(movement_ticks))
-    p = float(m) / float(max(y, 1))
-    alpha_bootstrap = False
-    if prev_snapshot is None:
-        alpha = 0.5
-        pi = 0.0
-        alpha_bootstrap = True
-    else:
-        prev_y = int(prev_snapshot.get("total_output", 0))
-        prev_k = int(prev_snapshot.get("total_capital", 0))
-        prev_p = float(prev_snapshot.get("price_index", 0.0))
-        d_y = y - prev_y
-        d_k = k - prev_k
-        mpk = (float(d_y) / float(d_k)) if d_k > 0 else 0.0
-        alpha = max(0.0, min(1.0, (mpk * float(k)) / float(max(y, 1))))
-        pi = (p - prev_p) / max(prev_p, 1e-9)
-    k_term = float(max(k, 1)) ** alpha if k > 0 else 1.0
-    l_term = float(max(l, 1)) ** (1.0 - alpha) if l > 0 else 1.0
-    A = float(y) / max(1e-9, k_term * l_term)
-    a_world = int(params["k_land"]) * int(m)
-    m_white = max(0, a_world - k)
-    return {
-        "M": m,
-        "K": k,
-        "L": l,
-        "Y": y,
-        "alpha": alpha,
-        "A": A,
-        "P": p,
-        "pi": pi,
-        "A_world": a_world,
-        "M_white": m_white,
-        "treasury_balance": int(params["m_gov_reserve"]),
-        "alpha_bootstrap": alpha_bootstrap,
-        "delta_m_buy": int(delta_m_buy),
-    }
 
 
 def clamp_int(value: int, min_v: int, max_v: int) -> int:
@@ -559,6 +554,9 @@ def user_item(user: Dict) -> Dict:
         "username": {"S": user["username"]},
         "password_hash": {"S": user["password_hash"]},
         "balance_mi": {"N": str(user["balance_mi"])},
+        "debt_principal": {"N": "0"},
+        "debt_interest_rate": {"N": "0"},
+        "debt_accrued_interest": {"N": "0"},
         "role": {"S": "player"},
         "created_at": {"N": str(user["created_at"])},
         "company_name": {"S": user["company_name"]},
@@ -811,21 +809,20 @@ def cmd_smartseed(args) -> int:
     ddb_batch_put_items(snake_events_table, event_items)
     event_count = len(event_items)
 
-    # Economy recompute + period snapshot.
+    # Economy period raw update. Snapshot recompute is delegated to server-side
+    # canonical C++ economy engine via admin endpoint when available.
     sum_mi, k_snakes = aggregate_inputs(users_table, snakes_table)
     delta_m_buy = min(500, max(0, m_target // 100))
-    state = compute_economy_state(params, sum_mi, delta_m_buy, k_snakes)
     period = get_period(economy_period_table, period_key)
     period["delta_m_buy"] = delta_m_buy
-    period["computed_m"] = state["M"]
-    period["computed_k"] = state["K"]
-    period["computed_y"] = int(state["Y"])
-    period["computed_p"] = int(state["P"] * 1_000_000)
-    period["computed_pi"] = int(state["pi"] * 1_000_000)
-    period["computed_world_area"] = state["A_world"]
-    period["computed_white"] = state["M_white"]
-    period["computed_at"] = ts
     put_period(economy_period_table, period)
+    status = None
+    token = effective_admin_token(args)
+    try:
+        api_json("POST", "/admin/economy/recompute", token, {"force_rewrite": True, "period_id": period_key})
+        status = api_json("GET", "/admin/economy/status", token)
+    except Exception:
+        status = None
 
     lengths_actual = [s["length_k"] for s in snakes]
     min_len = min(lengths_actual) if lengths_actual else 0
@@ -840,10 +837,14 @@ def cmd_smartseed(args) -> int:
     print(f"  snakes created: {len(snakes)} min/avg/max len = {min_len}/{avg_len:.2f}/{max_len}")
     print(f"  ΣM_i: {sum_mi}")
     print(f"  M_G: {int(params['m_gov_reserve'])}")
-    print(
-        f"  economy: M={state['M']} K={state['K']} A_world={state['A_world']} M_white={state['M_white']} "
-        f"P={state['P']:.6f} pi={state['pi']:.6f}"
-    )
+    if status is not None:
+        print(
+            f"  economy: M={status.get('M', 0)} K={status.get('K', 0)} "
+            f"A_world={status.get('A_world', 0)} M_white={status.get('M_white', 0)} "
+            f"P={float(status.get('P', 0.0)):.6f} pi={float(status.get('pi', 0.0)):.6f}"
+        )
+    else:
+        print("  economy: recompute skipped (server admin endpoint unavailable)")
     print(f"  events written: {event_count}")
     print("  sample credentials:")
     for u in users[: min(10, len(users))]:
@@ -858,170 +859,51 @@ def cmd_smartseed(args) -> int:
     return 0
 
 
-def cmd_economy_status(_args) -> int:
-    params_table = table_env("ECONOMY_PARAMS")
-    period_table = table_env("ECONOMY_PERIOD")
-    period_key = current_period_key()
-    params = load_active_params(params_table)
-    period = get_period(period_table, period_key)
-    print(f"period_key: {period_key}")
-    print("active params:")
-    for k in ["version", "k_land", "a_productivity", "v_velocity", "m_gov_reserve", "cap_delta_m", "delta_m_issue", "delta_k_obs", "updated_at", "updated_by"]:
-        print(f"  {k}: {params[k]}")
-    print("period:")
-    for k in [
-        "harvested_food",
-        "movement_ticks",
-        "total_output",
-        "total_capital",
-        "total_labor",
-        "capital_share",
-        "productivity_index",
-        "money_supply",
-        "price_index",
-        "inflation_rate",
-        "treasury_balance",
-        "snapshot_status",
-        "delta_m_buy",
-        "computed_m",
-        "computed_k",
-        "computed_y",
-        "computed_p",
-        "computed_pi",
-        "computed_world_area",
-        "computed_white",
-        "computed_at",
-    ]:
-        print(f"  {k}: {period[k]}")
+def cmd_economy_status(args) -> int:
+    token = effective_admin_token(args)
+    status = api_json("GET", "/admin/economy/status", token)
+    debug = api_json("GET", "/economy/debug", token)
+    print(f"period_id: {status.get('period_id', '—')}")
+    print(f"is_finalized: {status.get('is_finalized', False)}")
+    print(f"finalized_at: {status.get('finalized_at', 0)}")
+    print("macro:")
+    for k in ["Y", "K", "L", "alpha", "A", "M", "P", "pi", "snapshot_status", "period_ends_in_seconds"]:
+        print(f"  {k}: {status.get(k)}")
+    print("debug:")
+    pending = debug.get("pending", {})
+    print(f"  harvested_food: {pending.get('harvested_food', 0)}")
+    print(f"  real_output: {pending.get('real_output', 0)}")
+    print(f"  movement_ticks: {pending.get('movement_ticks', 0)}")
+    print(f"  users: {pending.get('users', 0)}")
+    print(f"  flush_interval_sec: {debug.get('flush_interval_sec', 0)}")
+    print(f"  seconds_since_last_flush: {debug.get('seconds_since_last_flush', 0)}")
     return 0
 
 
 def cmd_economy_set(args) -> int:
-    valid_types = {
-        "k_land": int,
-        "a_productivity": float,
-        "v_velocity": float,
-        "m_gov_reserve": int,
-        "cap_delta_m": int,
-        "delta_m_issue": int,
-        "delta_k_obs": int,
-    }
-    if args.param not in valid_types:
-        raise RuntimeError(f"Unsupported param: {args.param}")
-
-    caster = valid_types[args.param]
-    new_value = caster(args.value)
-
-    params_table = table_env("ECONOMY_PARAMS")
-    params = load_active_params(params_table)
-    params[args.param] = new_value
-    params["version"] = int(params["version"]) + 1
-    params["updated_at"] = now_unix()
-    params["updated_by"] = env("USER", "snakecli")
-    upsert_active_and_history(params_table, params)
-
-    # Keep world dimensions aligned with economy policy on admin policy updates.
-    users_table = table_env("USERS")
-    snakes_table = table_env("SNAKES")
-    world_chunks_table = table_env("WORLD_CHUNKS")
-    period_table = table_env("ECONOMY_PERIOD")
-    period = get_period(period_table, current_period_key())
-    sum_mi, k_snakes = aggregate_inputs(users_table, snakes_table)
-    state = compute_economy_state(
-        params,
-        sum_mi,
-        period["delta_m_buy"],
-        k_snakes,
-        harvested_food=period.get("harvested_food", 0),
-        movement_ticks=period.get("movement_ticks", 0),
-    )
-    w, h = resize_world_chunk_to_area(world_chunks_table, int(state["A_world"]))
-    print(f"Updated {args.param}={new_value}; new version={params['version']}")
-    print(f"World resized to {w}x{h} (A_world={state['A_world']})")
-    try:
-        send_reload_signal()
-        print("runtime reload: requested")
-    except Exception as e:
-        print(f"runtime reload: skipped ({e})")
+    token = effective_admin_token(args)
+    resp = api_json("POST", "/admin/economy/set", token, {"param": args.param, "value": str(args.value)})
+    print("Updated economy parameter.")
+    print(json.dumps(resp, indent=2))
     return 0
 
 
-def cmd_economy_recompute(_args) -> int:
-    params_table = table_env("ECONOMY_PARAMS")
-    period_table = table_env("ECONOMY_PERIOD")
-    users_table = table_env("USERS")
-    snakes_table = table_env("SNAKES")
-    world_chunks_table = table_env("WORLD_CHUNKS")
-
-    period_key = current_period_key()
-    params = load_active_params(params_table)
-    period = get_period(period_table, period_key)
-    sum_mi, k_snakes = aggregate_inputs(users_table, snakes_table)
-    prev_key = previous_period_key(period_key)
-    prev_snapshot = get_period(period_table, prev_key) if prev_key else None
-    if prev_snapshot and int(prev_snapshot.get("computed_at", 0)) <= 0:
-        prev_snapshot = None
-    state = compute_economy_state(
-        params,
-        sum_mi,
-        period["delta_m_buy"],
-        k_snakes,
-        harvested_food=period.get("harvested_food", 0),
-        movement_ticks=period.get("movement_ticks", 0),
-        prev_snapshot=prev_snapshot,
-    )
-
-    period["total_output"] = int(state["Y"])
-    period["total_capital"] = int(state["K"])
-    period["total_labor"] = int(state["L"])
-    period["capital_share"] = float(state["alpha"])
-    period["productivity_index"] = float(state["A"])
-    period["money_supply"] = int(state["M"])
-    period["price_index"] = float(state["P"])
-    period["inflation_rate"] = float(state["pi"])
-    period["treasury_balance"] = int(state["treasury_balance"])
-    period["alpha_bootstrap"] = bool(state["alpha_bootstrap"])
-    period["snapshot_status"] = "cached"
-
-    period["computed_m"] = state["M"]
-    period["computed_k"] = state["K"]
-    period["computed_y"] = int(state["Y"])
-    period["computed_p"] = int(state["P"] * 1_000_000)
-    period["computed_pi"] = int(state["pi"] * 1_000_000)
-    period["computed_world_area"] = state["A_world"]
-    period["computed_white"] = state["M_white"]
-    period["computed_at"] = now_unix()
-    put_period(period_table, period)
-    w, h = resize_world_chunk_to_area(world_chunks_table, int(state["A_world"]))
-
-    print(f"Recomputed period {period_key}")
-    print(
-        f"M={state['M']} K={state['K']} L={state['L']} Y={state['Y']} "
-        f"alpha={state['alpha']:.6f} A={state['A']:.6f} "
-        f"P={state['P']:.6f} pi={state['pi']:.6f} "
-        f"A_world={state['A_world']} M_white={state['M_white']}"
-    )
-    print(f"World resized to {w}x{h}")
-    try:
-        send_reload_signal()
-        print("runtime reload: requested")
-    except Exception as e:
-        print(f"runtime reload: skipped ({e})")
+def cmd_economy_recompute(args) -> int:
+    token = effective_admin_token(args)
+    payload = {"force_rewrite": bool(getattr(args, "force_rewrite", False))}
+    if getattr(args, "period_id", None):
+        payload["period_id"] = args.period_id
+    resp = api_json("POST", "/admin/economy/recompute", token, payload)
+    print("Recompute requested.")
+    print(json.dumps(resp, indent=2))
     return 0
 
 
 def cmd_treasury_set(args) -> int:
-    amount = int(args.amount)
-    if amount < 0:
-        raise RuntimeError("treasury amount must be >= 0")
-    params_table = table_env("ECONOMY_PARAMS")
-    params = load_active_params(params_table)
-    params["m_gov_reserve"] = amount
-    params["version"] = int(params["version"]) + 1
-    params["updated_at"] = now_unix()
-    params["updated_by"] = env("USER", "snakecli")
-    upsert_active_and_history(params_table, params)
-    print(f"Updated treasury_balance (m_gov_reserve) to {amount}; version={params['version']}")
+    token = effective_admin_token(args)
+    resp = api_json("POST", "/admin/treasury/set", token, {"amount": int(args.amount)})
+    print("Updated treasury balance.")
+    print(json.dumps(resp, indent=2))
     return 0
 
 
@@ -1177,7 +1059,9 @@ def parse_args():
     eco_set = eco_sub.add_parser("set")
     eco_set.add_argument("param")
     eco_set.add_argument("value")
-    eco_sub.add_parser("recompute")
+    eco_recompute = eco_sub.add_parser("recompute")
+    eco_recompute.add_argument("--force-rewrite", action="store_true")
+    eco_recompute.add_argument("--period-id")
 
     treasury = sub.add_parser("treasury")
     treasury_sub = treasury.add_subparsers(dest="cmd", required=True)
@@ -1245,12 +1129,10 @@ def main() -> int:
         return 0
 
     verify_token(args)
-    if args.group in {"economy", "treasury", "firms", "snakes"}:
-        # Shared storage config requirements for data commands.
+    if args.group in {"firms", "snakes"}:
+        # Shared storage config requirements for direct DynamoDB data commands.
         table_env("USERS")
         table_env("SNAKES")
-        table_env("ECONOMY_PARAMS")
-        table_env("ECONOMY_PERIOD")
     if args.group == "smartseed":
         table_env("USERS")
         table_env("SNAKES")
