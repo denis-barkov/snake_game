@@ -80,13 +80,23 @@ Notes:
   - `GET /economy/user` (auth, personal metrics)
   - `GET /economy/debug` (admin token required; raw counters + flush state)
 - Frontend economy panels are WS-driven (`economy_world` and `user_state.economy_user`) with no periodic `/economy/state` polling.
+- Compatibility aliases in payloads:
+  - `liquid_assets` mirrors `balance_mi`
+  - `extracted_output` mirrors global `Y`
+  - `extracted_output_u` mirrors personal `Y_u`
+  - Legacy fields remain present for backward compatibility.
 
 ### Economy/game write paths (Step 10)
 
-- `GET /user/me` (auth) returns `balance_mi`, deployed capital, and snake count.
+- `GET /user/me` (auth) returns `balance_mi` (`liquid_assets` alias), deployed capital, and snake count.
 - `POST /user/borrow` (auth) with `{ "amount": <int> }` credits storage and economy period buys.
 - `POST /snake/{snake_id}/attach` (auth) with `{ "amount": <int> }` moves cells from storage to selected snake.
 - `POST /economy/purchase` remains as an alias of `/user/borrow` for compatibility.
+
+UI terminology:
+- User-facing label `Storage/Balance` is shown as `Liquid Assets`.
+- Snake cards show `Deployed Capital: <cells>` as the per-snake capital proxy.
+- Economy panels use `Extracted Output (Y)` naming while gameplay still uses food mechanics.
 
 Gameplay update:
 - Food events credit owner storage (`FOOD_REWARD_CELLS`) instead of auto-growing snake length.

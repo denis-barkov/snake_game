@@ -1424,6 +1424,7 @@ int main(int argc, char** argv) {
             << "\"channel\":\"public\","
             << "\"period_id\":\"" << json_escape(eco.period_id) << "\","
             << "\"Y\":" << eco.global.y << ","
+            << "\"extracted_output\":" << eco.global.y << ","
             << "\"K\":" << eco.global.k << ","
             << "\"L\":" << eco.global.l << ","
             << "\"alpha\":" << json_number(eco.global.alpha) << ","
@@ -1453,11 +1454,13 @@ int main(int argc, char** argv) {
               << "\"channel\":\"private\","
               << "\"user_id\":" << *session.auth_user_id << ","
               << "\"balance_mi\":" << user->balance_mi << ","
+              << "\"liquid_assets\":" << user->balance_mi << ","
               << "\"deployed_k\":" << deployed << ","
               << "\"snake_count\":" << snakes.size();
           if (eco_user.user.has_value()) {
             out << ",\"economy_user\":{"
                 << "\"Y_u\":" << eco_user.user->y_u << ","
+                << "\"extracted_output_u\":" << eco_user.user->y_u << ","
                 << "\"K_u\":" << eco_user.user->k_u << ","
                 << "\"L_u\":" << eco_user.user->l_u << ","
                 << "\"alpha_u\":" << json_number(eco_user.user->alpha_u) << ","
@@ -1531,6 +1534,7 @@ int main(int argc, char** argv) {
       << "\"is_finalized\":" << (period_row.is_finalized ? "true" : "false") << ","
       << "\"finalized_at\":" << period_row.finalized_at << ","
       << "\"Y\":" << s.global.y << ","
+      << "\"extracted_output\":" << s.global.y << ","
       << "\"K\":" << s.global.k << ","
       << "\"L\":" << s.global.l << ","
       << "\"alpha\":" << json_number(s.global.alpha) << ","
@@ -1577,6 +1581,7 @@ int main(int argc, char** argv) {
     o << "{"
       << "\"period_id\":\"" << json_escape(s.period_id) << "\","
       << "\"Y_u\":" << s.user->y_u << ","
+      << "\"extracted_output_u\":" << s.user->y_u << ","
       << "\"K_u\":" << s.user->k_u << ","
       << "\"L_u\":" << s.user->l_u << ","
       << "\"alpha_u\":" << json_number(s.user->alpha_u) << ","
@@ -1786,6 +1791,7 @@ int main(int argc, char** argv) {
     o << "{"
       << "\"user_id\":" << *uid << ","
       << "\"balance_mi\":" << user->balance_mi << ","
+      << "\"liquid_assets\":" << user->balance_mi << ","
       << "\"deployed_k\":" << deployed << ","
       << "\"snake_count\":" << snakes.size()
       << "}";
@@ -1829,12 +1835,14 @@ int main(int argc, char** argv) {
       << "\"ok\":true,"
       << "\"amount\":" << *amount << ","
       << "\"balance_mi\":" << balance_after << ","
+      << "\"liquid_assets\":" << balance_after << ","
       << "\"period_key\":\"" << json_escape(eco.period_id) << "\","
       << "\"economy\":{"
       << "\"M\":" << eco.global.m << ","
       << "\"K\":" << eco.global.k << ","
       << "\"A_world\":" << a_world << ","
       << "\"M_white\":" << m_white << ","
+      << "\"extracted_output\":" << eco.global.y << ","
       << "\"P\":" << json_number(eco.global.p) << ","
       << "\"pi\":" << json_number(eco.global.pi)
       << "}"
@@ -1914,6 +1922,7 @@ int main(int argc, char** argv) {
     o << "{"
       << "\"ok\":true,"
       << "\"balance_mi\":" << balance_after << ","
+      << "\"liquid_assets\":" << balance_after << ","
       << "\"snake_length_k\":" << *world_len_after
       << "}";
     res.set_content(o.str(), "application/json");
@@ -2242,7 +2251,8 @@ int main(int argc, char** argv) {
     ostringstream o;
     o << "{"
       << "\"id\":" << *id << ","
-      << "\"balance_mi\":" << balance_after
+      << "\"balance_mi\":" << balance_after << ","
+      << "\"liquid_assets\":" << balance_after
       << "}";
     res.set_content(o.str(), "application/json");
   });

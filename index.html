@@ -196,6 +196,39 @@
       display: none;
       white-space: pre-line;
     }
+    #period-summary-pop {
+      position: fixed;
+      z-index: 1001;
+      max-width: min(92vw, 420px);
+      background: #ffffff;
+      border: 1px solid #cad7c7;
+      border-radius: 8px;
+      box-shadow: 0 8px 18px rgba(0, 0, 0, 0.18);
+      padding: 10px;
+      font-size: 13px;
+      color: #21301f;
+      display: none;
+      top: 18px;
+      right: 18px;
+      white-space: normal;
+    }
+    #period-summary-pop h4 {
+      margin: 0 0 8px 0;
+      font-size: 14px;
+    }
+    #period-summary-pop .line {
+      margin: 3px 0;
+    }
+    #attach-hint {
+      display: none;
+      margin-top: 6px;
+      color: #4d5f47;
+      font-size: 12px;
+      border: 1px solid #d7dfd5;
+      border-radius: 6px;
+      padding: 6px;
+      background: #f7fbf5;
+    }
     #eco-auth-note {
       color: #5c6e5a;
       font-size: 12px;
@@ -287,7 +320,7 @@
       <div class="row"><strong>My Snakes</strong></div>
       <div id="mySnakes"></div>
       <div class="row"><button id="createSnakeBtn" disabled>Create Snake</button></div>
-      <div class="row"><strong>Storage</strong></div>
+      <div class="row"><strong>Liquid Assets</strong></div>
       <div class="row"><small>My Cells: <span id="myBalance">—</span></small></div>
       <div class="row"><small>Snakes count: <span id="mySnakeCount">—</span></small></div>
       <div class="row">
@@ -303,6 +336,9 @@
         <button id="attach50Btn" disabled>+50</button>
         <button id="attachBtn" disabled>Attach</button>
       </div>
+      <div class="row" id="attach-hint">
+        You are converting liquid assets into productive capital. This may increase potential output, but increases exposure to risk.
+      </div>
       <div class="row"><small>Controls: W/A/S/D move selected snake, P pause selected snake</small></div>
     </div>
 
@@ -310,12 +346,19 @@
       <details class="eco-card" id="eco-user-card" open>
         <summary>My Economy</summary>
         <div class="eco-grid">
-          <div class="eco-row"><span class="label">Personal Output (Yᵤ)</span><button class="eco-help-btn" data-tip="Real Economy: Your firm’s production during a period.&#10;Real-World Impact: Higher production usually strengthens profitability and resilience.&#10;In This Game: Food harvested by your snakes during the current period.&#10;How to Use It: Raise Yᵤ by harvesting more food to improve your market share and your productivity metrics.">i</button><span class="value" id="ecoUY">—</span></div>
+          <div class="eco-row"><span class="label">Extracted Output (Yᵤ)</span><button class="eco-help-btn" data-tip="Real Economy: Your firm’s production during a period.&#10;Real-World Impact: Higher production usually strengthens profitability and resilience.&#10;In This Game: Food harvested by your snakes during the current period.&#10;How to Use It: Raise Yᵤ by harvesting more food to improve your market share and your productivity metrics.">i</button><span class="value" id="ecoUY">—</span></div>
           <div class="eco-row"><span class="label">Personal Labor (Lᵤ)</span><button class="eco-help-btn" data-tip="Real Economy: Your firm’s effort during the period.&#10;Real-World Impact: Effort matters, but efficiency matters more than raw hours.&#10;In This Game: Your movement activity ticks during this period.&#10;How to Use It: If Lᵤ rises but Yᵤ doesn’t, you’re working hard but not producing—change strategy.">i</button><span class="value" id="ecoUL">—</span></div>
           <div class="eco-row"><span class="label">Personal Capital (Kᵤ)</span><button class="eco-help-btn" data-tip="Real Economy: Your deployed productive assets.&#10;Real-World Impact: More capital can scale output, but inefficient capital reduces productivity.&#10;In This Game: Your deployed snake cells currently on the field.&#10;How to Use It: Deploy cells to increase Kᵤ, but don’t overextend—capital without output reduces efficiency.">i</button><span class="value" id="ecoUK">—</span></div>
           <div class="eco-row"><span class="label">Personal Productivity (Aᵤ)</span><button class="eco-help-btn" data-tip="Real Economy: Your firm’s efficiency.&#10;Real-World Impact: High productivity means strong results with less waste.&#10;In This Game: How efficiently your capital (snake size) and labor (moves) produce food.&#10;How to Use It: Aim to increase Aᵤ by harvesting more with fewer moves or better deployment.">i</button><span class="value" id="ecoUA">—</span></div>
+          <div class="eco-row"><span class="label">Global Productivity (A)</span><button class="eco-help-btn" data-tip="Productivity measures how efficiently you turn effort and capital into output. High productivity means smarter management, not just bigger size.">i</button><span class="value" id="ecoGlobalA">—</span></div>
           <div class="eco-row"><span class="label">Personal Capital Share (αᵤ)</span><button class="eco-help-btn" data-tip="Real Economy: How much of your production comes from capital vs effort.&#10;Real-World Impact: Helps diagnose whether scaling assets or improving execution is better.&#10;In This Game: Shows whether your output is more size-driven or activity-driven.&#10;How to Use It: High αᵤ → scaling capital may help. Low αᵤ → improve movement/harvest efficiency.">i</button><span class="value" id="ecoUAlpha">—</span></div>
+          <div class="eco-row"><span class="label">Capital Intensity</span><button class="eco-help-btn" data-tip="Capital Intensity shows how much of your resources are invested in production rather than held as liquid assets. High capital intensity means higher risk but potentially higher output.">i</button><span class="value" id="ecoCapitalIntensity">—</span></div>
+          <div class="eco-row"><span class="label">Return on Capital</span><button class="eco-help-btn" data-tip="Return on Capital measures how much output your invested capital generates. Businesses monitor this to decide whether to expand or shrink.">i</button><span class="value" id="ecoReturnOnCapital">—</span></div>
+          <div class="eco-row"><span class="label">Labor Efficiency</span><button class="eco-help-btn" data-tip="Labor Efficiency shows how much output your effort produces. Higher efficiency means better movement and timing.">i</button><span class="value" id="ecoLaborEfficiency">—</span></div>
           <div class="eco-row"><span class="label">Market Share (Yᵤ / Y)</span><button class="eco-help-btn" data-tip="Real Economy: Your share of total production in the economy.&#10;Real-World Impact: Higher market share often means stronger influence and performance.&#10;In This Game: Your output divided by global output during the period.&#10;How to Use It: Increase market share by harvesting more food relative to others.">i</button><span class="value" id="ecoMarket">—</span></div>
+          <div class="eco-row"><span class="label">Liquid Assets</span><button class="eco-help-btn" data-tip="Liquid Assets are resources you can immediately use or invest. In real economy, this equals cash or available funds.">i</button><span class="value" id="ecoBsLiquid">—</span></div>
+          <div class="eco-row"><span class="label">Deployed Capital</span><button class="eco-help-btn" data-tip="Deployed Capital represents productive resources currently in use. In real business, this equals machines, factories, or infrastructure.">i</button><span class="value" id="ecoBsDeployed">—</span></div>
+          <div class="eco-row"><span class="label">Total Assets</span><button class="eco-help-btn" data-tip="Total Assets combine your liquid resources and deployed productive capital.">i</button><span class="value" id="ecoBsTotal">—</span></div>
         </div>
         <div id="eco-auth-note">Login to see your personal economy metrics.</div>
       </details>
@@ -328,7 +371,7 @@
         <div class="eco-card" id="eco-global-card">
           <div><strong>Global Economy</strong></div>
           <div class="eco-grid">
-            <div class="eco-row"><span class="label">Total Output (Y)</span><button class="eco-help-btn" data-tip="Real Economy: Total goods/services produced in a period (real output).&#10;Real-World Impact: More output supports stable prices and growth; weak output makes money less valuable.&#10;In This Game: Total food harvested by all players during this economic period.&#10;How to Use It: If Y is rising, the world is producing more; prices should stabilize. If Y is low, expect higher price pressure when money grows.">i</button><span class="value" id="ecoY">—</span></div>
+            <div class="eco-row"><span class="label">Extracted Output (Y)</span><button class="eco-help-btn" data-tip="Real Economy: Total goods/services produced in a period (real output).&#10;Real-World Impact: More output supports stable prices and growth; weak output makes money less valuable.&#10;In This Game: Total food harvested by all players during this economic period.&#10;How to Use It: If Y is rising, the world is producing more; prices should stabilize. If Y is low, expect higher price pressure when money grows.">i</button><span class="value" id="ecoY">—</span></div>
             <div class="eco-row"><span class="label">Total Capital (K)</span><button class="eco-help-btn" data-tip="Real Economy: Productive infrastructure used to produce output (machines, factories).&#10;Real-World Impact: Capital boosts output potential, but needs effective use to be productive.&#10;In This Game: Total deployed snake cells on the field (not storage).&#10;How to Use It: Higher K means more production capacity in the world—watch how efficiently it converts into Y.">i</button><span class="value" id="ecoK">—</span></div>
             <div class="eco-row"><span class="label">Total Labor (L)</span><button class="eco-help-btn" data-tip="Real Economy: Total work effort spent producing output during the period.&#10;Real-World Impact: Labor contributes to output, but too much effort with low output signals inefficiency.&#10;In This Game: Total movement activity ticks during this period (all snakes).&#10;How to Use It: Rising L with rising Y is healthy. Rising L with flat Y means efficiency is falling.">i</button><span class="value" id="ecoL">—</span></div>
             <div class="eco-row"><span class="label">Capital Share (α)</span><button class="eco-help-btn" data-tip="Real Economy: Portion of output attributed to capital rather than labor.&#10;Real-World Impact: High α means capital-driven growth; low α means effort/skill dominates production.&#10;In This Game: Indicates whether snake size (capital) or movement (labor) is driving output.&#10;How to Use It: If α rises, bigger deployed snakes matter more. If α falls, active movement dominates.">i</button><span class="value" id="ecoAlpha">—</span></div>
@@ -382,6 +425,7 @@
   </div>
   </div>
   <div id="eco-tip-pop"></div>
+  <div id="period-summary-pop"></div>
 
 <script>
   const API_BASE = window.location.protocol === "file:" ? "http://127.0.0.1:8080" : "";
@@ -784,11 +828,20 @@
   const ecoUKEl = document.getElementById("ecoUK");
   const ecoULEl = document.getElementById("ecoUL");
   const ecoUAEl = document.getElementById("ecoUA");
+  const ecoGlobalAEl = document.getElementById("ecoGlobalA");
   const ecoUAlphaEl = document.getElementById("ecoUAlpha");
+  const ecoCapitalIntensityEl = document.getElementById("ecoCapitalIntensity");
+  const ecoReturnOnCapitalEl = document.getElementById("ecoReturnOnCapital");
+  const ecoLaborEfficiencyEl = document.getElementById("ecoLaborEfficiency");
   const ecoMarketEl = document.getElementById("ecoMarket");
+  const ecoBsLiquidEl = document.getElementById("ecoBsLiquid");
+  const ecoBsDeployedEl = document.getElementById("ecoBsDeployed");
+  const ecoBsTotalEl = document.getElementById("ecoBsTotal");
   const ecoUserCardEl = document.getElementById("eco-user-card");
   const ecoAuthNoteEl = document.getElementById("eco-auth-note");
   const ecoTipPopEl = document.getElementById("eco-tip-pop");
+  const periodSummaryPopEl = document.getElementById("period-summary-pop");
+  const attachHintEl = document.getElementById("attach-hint");
   const ecoStatusEl = document.getElementById("ecoStatus");
   const authStatus = document.getElementById("authStatus");
   const mySnakesEl = document.getElementById("mySnakes");
@@ -833,6 +886,10 @@
   let dragLastX = 0;
   let dragLastY = 0;
   let myBalance = 0;
+  let currentGlobalA = 0;
+  let currentPeriodId = "";
+  let periodStartUserMetrics = null;
+  let latestUserMetrics = null;
   let lastCameraSendAt = 0;
   let lastCameraPayload = "";
   let gridMode = localStorage.getItem(GRID_MODE_STORAGE_KEY) || "cells_chunks";
@@ -993,8 +1050,15 @@
     ecoUKEl.textContent = "—";
     ecoULEl.textContent = "—";
     ecoUAEl.textContent = "—";
+    ecoGlobalAEl.textContent = "—";
     ecoUAlphaEl.textContent = "—";
+    ecoCapitalIntensityEl.textContent = "—";
+    ecoReturnOnCapitalEl.textContent = "—";
+    ecoLaborEfficiencyEl.textContent = "—";
     ecoMarketEl.textContent = "—";
+    ecoBsLiquidEl.textContent = "—";
+    ecoBsDeployedEl.textContent = "—";
+    ecoBsTotalEl.textContent = "—";
   }
 
   async function loadStateFallbackOnce() {
@@ -1030,23 +1094,107 @@
     return Math.trunc(v).toLocaleString();
   }
 
+  function fmtNum(v, digits = 4) {
+    if (!Number.isFinite(v)) return "—";
+    return Number(v).toFixed(digits);
+  }
+
+  function updateMicroEconomyFromMetrics(metrics) {
+    if (!metrics) {
+      setEconomyUserFallback();
+      return;
+    }
+    const y = Number(metrics.y || 0);
+    const k = Number(metrics.k || 0);
+    const l = Number(metrics.l || 0);
+    const a = Number(metrics.a || 0);
+    const alpha = Number(metrics.alpha || 0);
+    const marketShare = Number(metrics.market_share || 0);
+    const liquidAssets = Number(metrics.liquid_assets || 0);
+    const totalAssets = liquidAssets + k;
+    const capitalIntensity = totalAssets > 0 ? (k / totalAssets) : 0;
+    const roc = k > 0 ? (y / k) : 0;
+    const laborEff = l > 0 ? (y / l) : 0;
+
+    ecoUYEl.textContent = fmtInt(y);
+    ecoUKEl.textContent = fmtInt(k);
+    ecoULEl.textContent = fmtInt(l);
+    ecoUAEl.textContent = fmtNum(a, 4);
+    ecoGlobalAEl.textContent = fmtNum(currentGlobalA, 4);
+    ecoUAlphaEl.textContent = fmtNum(alpha, 4);
+    ecoCapitalIntensityEl.textContent = `${(capitalIntensity * 100).toFixed(2)}%`;
+    ecoReturnOnCapitalEl.textContent = fmtNum(roc, 4);
+    ecoLaborEfficiencyEl.textContent = fmtNum(laborEff, 4);
+    ecoMarketEl.textContent = Number.isFinite(marketShare) ? `${(marketShare * 100).toFixed(2)}%` : "—";
+    ecoBsLiquidEl.textContent = fmtInt(liquidAssets);
+    ecoBsDeployedEl.textContent = fmtInt(k);
+    ecoBsTotalEl.textContent = fmtInt(totalAssets);
+  }
+
+  function showAttachHint() {
+    if (!attachHintEl) return;
+    attachHintEl.style.display = "block";
+    setTimeout(() => {
+      attachHintEl.style.display = "none";
+    }, 3500);
+  }
+
+  function showPeriodSummaryIfNeeded(newPeriodId) {
+    if (!token || !newPeriodId) return;
+    if (!currentPeriodId) {
+      currentPeriodId = newPeriodId;
+      return;
+    }
+    if (newPeriodId === currentPeriodId) return;
+    const summary = latestUserMetrics;
+    if (!summary || !periodSummaryPopEl) {
+      currentPeriodId = newPeriodId;
+      periodStartUserMetrics = null;
+      return;
+    }
+    const lines = [];
+    lines.push(`<h4>Period Summary (${currentPeriodId})</h4>`);
+    lines.push(`<div class="line">Output produced (Yᵤ): ${fmtInt(summary.y)}</div>`);
+    lines.push(`<div class="line">Labor performed (Lᵤ): ${fmtInt(summary.l)}</div>`);
+    lines.push(`<div class="line">Productivity (Aᵤ): ${fmtNum(summary.a, 4)}</div>`);
+    if (periodStartUserMetrics) {
+      const dK = Number(summary.k || 0) - Number(periodStartUserMetrics.k || 0);
+      const dM = Number(summary.liquid_assets || 0) - Number(periodStartUserMetrics.liquid_assets || 0);
+      lines.push(`<div class="line">Deployed Capital change (ΔKᵤ): ${dK >= 0 ? "+" : ""}${fmtInt(dK)}</div>`);
+      lines.push(`<div class="line">Liquid Assets change (ΔMᵤ): ${dM >= 0 ? "+" : ""}${fmtInt(dM)}</div>`);
+      lines.push(`<div class="line">Total Assets change: ${(dK + dM) >= 0 ? "+" : ""}${fmtInt(dK + dM)}</div>`);
+    }
+    periodSummaryPopEl.innerHTML = lines.join("");
+    periodSummaryPopEl.style.display = "block";
+    setTimeout(() => {
+      periodSummaryPopEl.style.display = "none";
+    }, 7000);
+    currentPeriodId = newPeriodId;
+    periodStartUserMetrics = null;
+  }
+
   async function loadEconomyState() {
     try {
       const res = await fetch(apiPath("/economy/state"));
       if (!res.ok) throw new Error("economy endpoint unavailable");
       const s = await res.json();
-      ecoYEl.textContent = fmtInt(Number(s.Y));
+      const y = Number.isFinite(Number(s.extracted_output)) ? Number(s.extracted_output) : Number(s.Y);
+      ecoYEl.textContent = fmtInt(y);
       ecoKEl.textContent = fmtInt(Number(s.K));
       ecoLEl.textContent = fmtInt(Number(s.L));
       ecoAlphaEl.textContent = Number.isFinite(Number(s.alpha)) ? Number(s.alpha).toFixed(4) : "—";
       ecoAEl.textContent = Number.isFinite(Number(s.A)) ? Number(s.A).toFixed(4) : "—";
+      currentGlobalA = Number.isFinite(Number(s.A)) ? Number(s.A) : 0;
       ecoMEl.textContent = fmtInt(Number(s.M));
       ecoPEl.textContent = Number.isFinite(Number(s.P)) ? Number(s.P).toFixed(3) : "—";
       ecoPiEl.textContent = Number.isFinite(Number(s.pi)) ? Number(s.pi).toFixed(4) : "—";
       ecoTreasuryEl.textContent = fmtInt(Number(s.treasury_balance));
       ecoEndsEl.textContent = fmtInt(Number(s.period_ends_in_seconds));
-      ecoPeriodEl.textContent = typeof s.period_id === "string" && s.period_id ? s.period_id : "—";
+      const periodId = typeof s.period_id === "string" && s.period_id ? s.period_id : "—";
+      ecoPeriodEl.textContent = periodId;
+      showPeriodSummaryIfNeeded(periodId);
       ecoStatusEl.textContent = "Economy: live";
+      if (latestUserMetrics) updateMicroEconomyFromMetrics(latestUserMetrics);
       updateDebugOverlay();
     } catch (_) {
       setEconomyFallback();
@@ -1125,6 +1273,8 @@
     viewControlsEl.style.opacity = isAuth ? "1" : "0.82";
     ecoAuthNoteEl.style.display = isAuth ? "none" : "block";
     if (!isAuth) {
+      latestUserMetrics = null;
+      periodStartUserMetrics = null;
       setEconomyUserFallback();
     }
     if (!isAuth) {
@@ -1198,7 +1348,7 @@
             </label>
           </small>
         </span>
-        <small>${s.paused ? "paused" : "moving"} · len ${s.len}</small>
+        <small>${s.paused ? "paused" : "moving"} · Deployed Capital: ${s.len} cells</small>
       `;
       mySnakesEl.appendChild(div);
     }
@@ -1230,9 +1380,14 @@
     const res = await api("/user/me");
     if (!res.ok) return;
     const data = await res.json();
-    myBalance = Number.isFinite(Number(data.balance_mi)) ? Number(data.balance_mi) : 0;
+    const liquidAssets = Number.isFinite(Number(data.liquid_assets)) ? Number(data.liquid_assets) : Number(data.balance_mi);
+    myBalance = Number.isFinite(liquidAssets) ? liquidAssets : 0;
     myBalanceEl.textContent = fmtInt(myBalance);
     mySnakeCountEl.textContent = fmtInt(Number(data.snake_count));
+    if (latestUserMetrics) {
+      latestUserMetrics.liquid_assets = myBalance;
+      updateMicroEconomyFromMetrics(latestUserMetrics);
+    }
     updateActionButtons();
   }
 
@@ -1250,8 +1405,9 @@
       return;
     }
     const data = await res.json();
-    if (Number.isFinite(Number(data.balance_mi))) {
-      myBalance = Number(data.balance_mi);
+    const liquidAssets = Number.isFinite(Number(data.liquid_assets)) ? Number(data.liquid_assets) : Number(data.balance_mi);
+    if (Number.isFinite(liquidAssets)) {
+      myBalance = liquidAssets;
       myBalanceEl.textContent = fmtInt(myBalance);
     }
     await loadEconomyState();
@@ -1264,7 +1420,7 @@
     const amount = Math.floor(raw);
     if (!Number.isFinite(amount) || amount <= 0) return;
     if (amount > myBalance) {
-      alert("Not enough cells in storage.");
+      alert("Not enough liquid assets.");
       return;
     }
     const res = await api(`/snake/${selectedSnakeId}/attach`, {
@@ -1277,10 +1433,12 @@
       return;
     }
     const data = await res.json();
-    if (Number.isFinite(Number(data.balance_mi))) {
-      myBalance = Number(data.balance_mi);
+    const liquidAssets = Number.isFinite(Number(data.liquid_assets)) ? Number(data.liquid_assets) : Number(data.balance_mi);
+    if (Number.isFinite(liquidAssets)) {
+      myBalance = liquidAssets;
       myBalanceEl.textContent = fmtInt(myBalance);
     }
+    showAttachHint();
     await loadMySnakes();
     await loadUserMe();
   }
@@ -1296,8 +1454,9 @@
       return;
     }
     const data = await res.json().catch(() => ({}));
-    if (Number.isFinite(Number(data.balance_mi))) {
-      myBalance = Number(data.balance_mi);
+    const liquidAssets = Number.isFinite(Number(data.liquid_assets)) ? Number(data.liquid_assets) : Number(data.balance_mi);
+    if (Number.isFinite(liquidAssets)) {
+      myBalance = liquidAssets;
       myBalanceEl.textContent = fmtInt(myBalance);
     }
     await loadMySnakes();
@@ -1434,38 +1593,47 @@
     }
 
     if (msg.type === "economy_world") {
-      ecoYEl.textContent = fmtInt(Number(msg.Y));
+      const y = Number.isFinite(Number(msg.extracted_output)) ? Number(msg.extracted_output) : Number(msg.Y);
+      ecoYEl.textContent = fmtInt(y);
       ecoKEl.textContent = fmtInt(Number(msg.K));
       ecoLEl.textContent = fmtInt(Number(msg.L));
       ecoAlphaEl.textContent = Number.isFinite(Number(msg.alpha)) ? Number(msg.alpha).toFixed(4) : "—";
       ecoAEl.textContent = Number.isFinite(Number(msg.A)) ? Number(msg.A).toFixed(4) : "—";
+      currentGlobalA = Number.isFinite(Number(msg.A)) ? Number(msg.A) : 0;
       ecoMEl.textContent = fmtInt(Number(msg.M));
       ecoPEl.textContent = Number.isFinite(Number(msg.P)) ? Number(msg.P).toFixed(3) : "—";
       ecoPiEl.textContent = Number.isFinite(Number(msg.pi)) ? Number(msg.pi).toFixed(4) : "—";
       ecoTreasuryEl.textContent = fmtInt(Number(msg.treasury_balance));
       ecoEndsEl.textContent = fmtInt(Number(msg.period_ends_in_seconds));
-      ecoPeriodEl.textContent = typeof msg.period_id === "string" && msg.period_id ? msg.period_id : "—";
+      const periodId = typeof msg.period_id === "string" && msg.period_id ? msg.period_id : "—";
+      ecoPeriodEl.textContent = periodId;
+      showPeriodSummaryIfNeeded(periodId);
+      if (latestUserMetrics) updateMicroEconomyFromMetrics(latestUserMetrics);
       ecoStatusEl.textContent = "Economy: live";
       return;
     }
 
     if (msg.type === "user_state") {
-      if (Number.isFinite(Number(msg.balance_mi))) {
-        myBalance = Number(msg.balance_mi);
+      const liquidAssets = Number.isFinite(Number(msg.liquid_assets)) ? Number(msg.liquid_assets) : Number(msg.balance_mi);
+      if (Number.isFinite(liquidAssets)) {
+        myBalance = liquidAssets;
         myBalanceEl.textContent = fmtInt(myBalance);
       }
       if (Number.isFinite(Number(msg.snake_count))) {
         mySnakeCountEl.textContent = fmtInt(Number(msg.snake_count));
       }
       if (msg.economy_user && typeof msg.economy_user === "object") {
-        ecoUYEl.textContent = fmtInt(Number(msg.economy_user.Y_u));
-        ecoUKEl.textContent = fmtInt(Number(msg.economy_user.K_u));
-        ecoULEl.textContent = fmtInt(Number(msg.economy_user.L_u));
-        ecoUAEl.textContent = Number.isFinite(Number(msg.economy_user.A_u)) ? Number(msg.economy_user.A_u).toFixed(4) : "—";
-        ecoUAlphaEl.textContent = Number.isFinite(Number(msg.economy_user.alpha_u)) ? Number(msg.economy_user.alpha_u).toFixed(4) : "—";
-        ecoMarketEl.textContent = Number.isFinite(Number(msg.economy_user.market_share))
-          ? `${(Number(msg.economy_user.market_share) * 100).toFixed(2)}%`
-          : "—";
+        latestUserMetrics = {
+          y: Number.isFinite(Number(msg.economy_user.extracted_output_u)) ? Number(msg.economy_user.extracted_output_u) : Number(msg.economy_user.Y_u),
+          k: Number(msg.economy_user.K_u),
+          l: Number(msg.economy_user.L_u),
+          a: Number(msg.economy_user.A_u),
+          alpha: Number(msg.economy_user.alpha_u),
+          market_share: Number(msg.economy_user.market_share),
+          liquid_assets: myBalance
+        };
+        if (!periodStartUserMetrics) periodStartUserMetrics = { ...latestUserMetrics };
+        updateMicroEconomyFromMetrics(latestUserMetrics);
       }
       updateActionButtons();
       return;
@@ -1712,6 +1880,11 @@
     if (ev.target && ev.target.classList && ev.target.classList.contains("eco-help-btn")) return;
     if (ecoTipPopEl.contains(ev.target)) return;
     ecoTipPopEl.style.display = "none";
+  });
+  document.addEventListener("click", (ev) => {
+    if (periodSummaryPopEl.style.display !== "block") return;
+    if (periodSummaryPopEl.contains(ev.target)) return;
+    periodSummaryPopEl.style.display = "none";
   });
   window.addEventListener("resize", () => {
     renderCurrentState();
