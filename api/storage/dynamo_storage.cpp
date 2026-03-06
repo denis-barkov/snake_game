@@ -218,22 +218,44 @@ std::optional<User> DynamoStorage::GetUserByUsername(const std::string& username
   req.AddExpressionAttributeValues(":u", S(username));
 
   auto out = client_->Query(req);
-  if (!out.IsSuccess()) return std::nullopt;
-  const auto& items = out.GetResult().GetItems();
-  if (items.empty()) return std::nullopt;
+  const auto materialize_user = [&](const Aws::Map<Aws::String, Aws::DynamoDB::Model::AttributeValue>& item)
+      -> std::optional<User> {
+    if (item.empty()) return std::nullopt;
+    User u;
+    u.user_id = GetString(item, "user_id");
+    u.username = GetString(item, "username");
+    u.password_hash = GetString(item, "password_hash");
+    u.balance_mi = GetInt64(item, "balance_mi");
+    u.debt_principal = GetInt64(item, "debt_principal", 0);
+    u.debt_interest_rate = GetDouble(item, "debt_interest_rate", 0.0);
+    u.debt_accrued_interest = GetInt64(item, "debt_accrued_interest", 0);
+    u.role = GetString(item, "role", "player");
+    u.created_at = GetInt64(item, "created_at");
+    u.company_name = GetString(item, "company_name");
+    return u;
+  };
 
-  User u;
-  u.user_id = GetString(items[0], "user_id");
-  u.username = GetString(items[0], "username");
-  u.password_hash = GetString(items[0], "password_hash");
-  u.balance_mi = GetInt64(items[0], "balance_mi");
-  u.debt_principal = GetInt64(items[0], "debt_principal", 0);
-  u.debt_interest_rate = GetDouble(items[0], "debt_interest_rate", 0.0);
-  u.debt_accrued_interest = GetInt64(items[0], "debt_accrued_interest", 0);
-  u.role = GetString(items[0], "role", "player");
-  u.created_at = GetInt64(items[0], "created_at");
-  u.company_name = GetString(items[0], "company_name");
-  return u;
+  if (out.IsSuccess()) {
+    const auto& items = out.GetResult().GetItems();
+    if (!items.empty()) {
+      return materialize_user(items[0]);
+    }
+    return std::nullopt;
+  }
+
+  // Compatibility fallback: if the users table is missing gsi_username,
+  // login still works via scan-based lookup. This keeps local/prod usable
+  // across historical table definitions.
+  Aws::DynamoDB::Model::ScanRequest scan;
+  scan.SetTableName(cfg_.users_table.c_str());
+  scan.SetFilterExpression("username = :u");
+  scan.AddExpressionAttributeValues(":u", S(username));
+  scan.SetLimit(1);
+  auto scan_out = client_->Scan(scan);
+  if (!scan_out.IsSuccess()) return std::nullopt;
+  const auto& scanned = scan_out.GetResult().GetItems();
+  if (scanned.empty()) return std::nullopt;
+  return materialize_user(scanned[0]);
 }
 
 std::optional<User> DynamoStorage::GetUserById(const std::string& user_id) {

@@ -9,8 +9,10 @@
 #include <cstring>
 #include <ctime>
 #include <cmath>
+#include <functional>
 #include <iomanip>
 #include <iostream>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <random>
@@ -28,6 +30,12 @@
 #include "economy/economy_v1.h"
 #include "economy_engine/compute.h"
 #include "httplib.h"
+#include "persistence/coordinator/persistence_coordinator.h"
+#include "persistence/layers/dynamo/permanent_dynamo_store.h"
+#include "persistence/layers/runtime/runtime_state_store.h"
+#include "persistence/layers/sqlite/buffered_sqlite_store.h"
+#include "persistence/profiles/persistence_profiles.h"
+#include "persistence/router/persistence_router.h"
 #include "protocol/encode_json.h"
 #include "storage/storage_factory.h"
 #include "world/world.h"
@@ -181,8 +189,14 @@ struct PublicViewState {
 
 class GameService {
  public:
-  GameService(storage::IStorage& storage, int width, int height, int food_count, int max_snakes_per_user)
+  GameService(storage::IStorage& storage,
+              persistence::IPersistenceCoordinator& persistence_coordinator,
+              int width,
+              int height,
+              int food_count,
+              int max_snakes_per_user)
       : storage_(storage),
+        persistence_coordinator_(persistence_coordinator),
         world_(width, height, food_count, max_snakes_per_user) {}
 
   void configure_chunking(int chunk_size, bool single_chunk_mode) {
@@ -273,29 +287,87 @@ class GameService {
     out_activity.harvested_food_by_user = delta.harvested_food_by_user;
     out_activity.movement_ticks_by_user = delta.movement_ticks_by_user;
 
+    std::unordered_map<std::string, std::string> owner_by_snake_id;
+    owner_by_snake_id.reserve(delta.upsert_snakes.size());
+    for (const auto& s : delta.upsert_snakes) {
+      if (!s.snake_id.empty() && !s.owner_user_id.empty()) {
+        owner_by_snake_id[s.snake_id] = s.owner_user_id;
+      }
+    }
+
+    std::unique_ptr<std::unordered_map<std::string, std::string>> snapshot_owner_map;
+    auto resolve_owner_user_id = [&](const std::string& snake_id) -> std::string {
+      auto it = owner_by_snake_id.find(snake_id);
+      if (it != owner_by_snake_id.end()) return it->second;
+      if (!snapshot_owner_map) {
+        snapshot_owner_map = std::make_unique<std::unordered_map<std::string, std::string>>();
+        const auto snap = world_.Snapshot();
+        snapshot_owner_map->reserve(snap.snakes.size());
+        for (const auto& ws : snap.snakes) {
+          snapshot_owner_map->emplace(std::to_string(ws.id), std::to_string(ws.user_id));
+        }
+      }
+      auto sit = snapshot_owner_map->find(snake_id);
+      if (sit != snapshot_owner_map->end()) return sit->second;
+      return "";
+    };
+
     int64_t credited_food_events = 0;
     if (food_reward_cells > 0) {
       for (const auto& e : delta.snake_events) {
         if (e.event_type != "FOOD_EATEN") continue;
-        auto snake = storage_.GetSnakeById(e.snake_id);
-        if (!snake.has_value() || snake->owner_user_id.empty()) continue;
-        if (storage_.IncrementUserBalance(snake->owner_user_id, food_reward_cells)) {
+        const std::string owner_user_id = resolve_owner_user_id(e.snake_id);
+        if (owner_user_id.empty()) continue;
+        persistence::PersistenceIntent intent;
+        intent.type = persistence::IntentType::UserBalanceChanged;
+        intent.user_id = owner_user_id;
+        intent.delta_i64 = food_reward_cells;
+        if (persistence_coordinator_.Emit(intent)) {
           ++credited_food_events;
         }
       }
     }
     for (const auto& ud : delta.user_balance_deltas) {
       if (ud.first.empty() || ud.second == 0) continue;
-      (void)storage_.IncrementUserBalance(ud.first, ud.second);
+      persistence::PersistenceIntent intent;
+      intent.type = persistence::IntentType::UserBalanceChanged;
+      intent.user_id = ud.first;
+      intent.delta_i64 = ud.second;
+      (void)persistence_coordinator_.Emit(intent);
     }
     if (delta.system_balance_delta != 0) {
-      (void)storage_.IncrementSystemReserve(delta.system_balance_delta);
+      persistence::PersistenceIntent intent;
+      intent.type = persistence::IntentType::SnakeDeathSettled;
+      intent.delta_i64 = delta.system_balance_delta;
+      (void)persistence_coordinator_.Emit(intent);
     }
 
-    for (const auto& s : delta.upsert_snakes) storage_.PutSnake(s);
-    for (const auto& sid : delta.delete_snake_ids) storage_.DeleteSnake(sid);
-    if (delta.upsert_world_chunk.has_value()) storage_.PutWorldChunk(*delta.upsert_world_chunk);
-    for (const auto& e : delta.snake_events) storage_.AppendSnakeEvent(e);
+    for (const auto& s : delta.upsert_snakes) {
+      persistence::PersistenceIntent intent;
+      intent.type = persistence::IntentType::SnakeSnapshotUpdated;
+      intent.snake_snapshot = s;
+      (void)persistence_coordinator_.Emit(intent);
+    }
+    for (const auto& sid : delta.delete_snake_ids) {
+      persistence::PersistenceIntent intent;
+      intent.type = persistence::IntentType::SnakeSnapshotDeleted;
+      storage::Snake s;
+      s.snake_id = sid;
+      intent.snake_snapshot = s;
+      (void)persistence_coordinator_.Emit(intent);
+    }
+    if (delta.upsert_world_chunk.has_value()) {
+      persistence::PersistenceIntent intent;
+      intent.type = persistence::IntentType::WorldChunkDirty;
+      intent.world_chunk = *delta.upsert_world_chunk;
+      (void)persistence_coordinator_.Emit(intent);
+    }
+    for (const auto& e : delta.snake_events) {
+      persistence::PersistenceIntent intent;
+      intent.type = persistence::IntentType::SnakeEventLogged;
+      intent.snake_event = e;
+      (void)persistence_coordinator_.Emit(intent);
+    }
     (void)credited_food_events;
     return out_activity;
   }
@@ -303,6 +375,7 @@ class GameService {
   void flush_persistence_delta() {
     (void)flush_persistence_delta_and_credit_food(0);
   }
+
 
  private:
   void ensure_loaded_from_storage_if_empty() {
@@ -319,6 +392,7 @@ class GameService {
   }
 
   storage::IStorage& storage_;
+  persistence::IPersistenceCoordinator& persistence_coordinator_;
   world::World world_;
   int aoi_pad_chunks_ = 0;
   chrono::steady_clock::time_point last_empty_reload_attempt_{};
@@ -917,6 +991,8 @@ int main(int argc, char** argv) {
        << ", ECON_PERIOD_ALIGN=" << runtime_cfg.econ_period_align
        << ", ECONOMY_FLUSH_SECONDS=" << runtime_cfg.economy_flush_seconds
        << ", ECONOMY_PERIOD_HISTORY_DAYS=" << runtime_cfg.economy_period_history_days
+       << ", PERSISTENCE_PROFILE=" << runtime_cfg.persistence_profile
+       << ", PERSISTENCE_SQLITE_PATH=" << runtime_cfg.persistence_sqlite_path
        << "\n";
 
   unique_ptr<storage::IStorage> storage;
@@ -951,7 +1027,23 @@ int main(int argc, char** argv) {
 
   const auto active_params = storage->GetEconomyParamsActive().value_or(storage::EconomyParams{});
   const int food_spawn_target = std::max(1, active_params.food_spawn_target);
-  GameService game(*storage, grid_w, grid_h, food_spawn_target, max_snakes_per_user);
+  persistence::RuntimeStateStore runtime_store;
+  persistence::BufferedSqliteStore buffered_store(runtime_cfg.persistence_sqlite_path);
+  persistence::PermanentDynamoStore permanent_store(*storage);
+  persistence::ProfilePolicyRegistry policy_registry(runtime_cfg.persistence_profile,
+                                                     runtime_cfg.persistence_sqlite_retention_hours);
+  persistence::PersistenceRouter router(policy_registry);
+  persistence::CoordinatorConfig coordinator_cfg;
+  coordinator_cfg.sqlite_retention_hours = runtime_cfg.persistence_sqlite_retention_hours;
+  coordinator_cfg.sqlite_max_mb = runtime_cfg.persistence_sqlite_max_mb;
+  coordinator_cfg.flush_chunks_seconds = runtime_cfg.persistence_flush_chunks_seconds;
+  coordinator_cfg.flush_snapshots_seconds = runtime_cfg.persistence_flush_snapshots_seconds;
+  coordinator_cfg.flush_period_deltas_seconds = runtime_cfg.persistence_flush_period_deltas_seconds;
+  persistence::PersistenceCoordinator persistence_coordinator(
+      coordinator_cfg, runtime_store, buffered_store, permanent_store, policy_registry, router);
+  persistence_coordinator.Start();
+
+  GameService game(*storage, persistence_coordinator, grid_w, grid_h, food_spawn_target, max_snakes_per_user);
   game.configure_chunking(runtime_cfg.chunk_size, runtime_cfg.single_chunk_mode);
   game.set_duel_delay_ticks(runtime_cfg.tick_hz);
   game.set_aoi_pad_chunks(runtime_cfg.aoi_pad_chunks);
@@ -963,6 +1055,7 @@ int main(int argc, char** argv) {
     game.set_playable_cell_target(economy_world_area(eco.params, eco.global));
   }
   game.flush_persistence_delta();
+  persistence_coordinator.FlushNow();
 
   auto maybe_resize_world_from_economy = [&](const EconomyService::Snapshot& eco) {
     const auto current = game.snapshot();
@@ -976,25 +1069,30 @@ int main(int argc, char** argv) {
     game.resize_world(new_w, new_h);
     game.set_playable_cell_target(target_area);
     game.flush_persistence_delta();
+    persistence_coordinator.FlushNow();
   };
 
   if (mode == "reset") {
     if (!storage->ResetForDev()) {
       cerr << "Dynamo reset failed\n";
+      persistence_coordinator.Stop();
       Aws::ShutdownAPI(aws_options);
       return 1;
     }
     cout << "DynamoDB reset complete.\n";
+    persistence_coordinator.Stop();
     Aws::ShutdownAPI(aws_options);
     return 0;
   }
   if (mode == "seed") {
     seed(*storage, game);
+    persistence_coordinator.Stop();
     Aws::ShutdownAPI(aws_options);
     return 0;
   }
   if (mode != "serve") {
     cerr << "Usage: ./snake_server [serve|seed|reset]\n";
+    persistence_coordinator.Stop();
     Aws::ShutdownAPI(aws_options);
     return 1;
   }
@@ -2266,6 +2364,7 @@ int main(int argc, char** argv) {
 
   running.store(false);
   loop.join();
+  persistence_coordinator.Stop();
   game.flush_persistence_delta();
   Aws::ShutdownAPI(aws_options);
   return 0;

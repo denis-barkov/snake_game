@@ -10,6 +10,7 @@ RUN dnf -y update && \
       libcurl-devel \
       openssl-devel \
       zlib-devel \
+      sqlite-devel \
       python3 \
       awscli \
       make && \

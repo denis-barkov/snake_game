@@ -110,6 +110,21 @@ RuntimeConfig RuntimeConfig::FromEnv() {
   cfg.economy_flush_seconds = clamp_int(getenv_int("ECONOMY_FLUSH_SECONDS", cfg.economy_flush_seconds), 2, 60);
   cfg.economy_period_history_days =
       clamp_int(getenv_int("ECONOMY_PERIOD_HISTORY_DAYS", cfg.economy_period_history_days), 7, 3650);
+  cfg.persistence_profile = getenv_string("PERSISTENCE_PROFILE", cfg.persistence_profile);
+  cfg.persistence_sqlite_path = getenv_string("PERSISTENCE_SQLITE_PATH", cfg.persistence_sqlite_path);
+  cfg.persistence_sqlite_max_mb =
+      clamp_int(getenv_int("PERSISTENCE_SQLITE_MAX_MB", cfg.persistence_sqlite_max_mb), 16, 16384);
+  cfg.persistence_sqlite_retention_hours =
+      clamp_int(getenv_int("PERSISTENCE_SQLITE_RETENTION_HOURS", cfg.persistence_sqlite_retention_hours), 1, 24 * 365);
+  cfg.persistence_flush_chunks_seconds =
+      clamp_int(getenv_int("PERSISTENCE_FLUSH_CHUNKS_SECONDS", cfg.persistence_flush_chunks_seconds), 1, 120);
+  cfg.persistence_flush_snapshots_seconds =
+      clamp_int(getenv_int("PERSISTENCE_FLUSH_SNAPSHOTS_SECONDS", cfg.persistence_flush_snapshots_seconds), 1, 300);
+  cfg.persistence_flush_period_deltas_seconds =
+      clamp_int(getenv_int("PERSISTENCE_FLUSH_PERIOD_DELTAS_SECONDS", cfg.persistence_flush_period_deltas_seconds), 1, 300);
+  cfg.persistence_retry_backoff_ms =
+      clamp_int(getenv_int("PERSISTENCE_RETRY_BACKOFF_MS", cfg.persistence_retry_backoff_ms), 10, 60000);
+  cfg.persistence_debug_logging = getenv_bool("PERSISTENCE_DEBUG_LOGGING", cfg.persistence_debug_logging);
   if (!has_env("DEBUG_TPS")) {
     // Backward compatibility for older deployments that used LOG_HZ.
     cfg.debug_tps = getenv_bool("LOG_HZ", cfg.debug_tps);

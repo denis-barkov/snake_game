@@ -49,6 +49,15 @@ Simulation internals are structured in `api/world`:
 - `ECONOMY_FLUSH_SECONDS` (default `10`, buffered raw economy flush interval)
 - `ECONOMY_PERIOD_HISTORY_DAYS` (default `90`, retention policy knob)
 - `ECONOMY_CACHE_MS` (default `2000`, min `500`, max `10000`) for `/economy/state` read cache
+- `PERSISTENCE_PROFILE` (`minimal|standard|payments_safe|strict`, default `minimal`)
+- `PERSISTENCE_SQLITE_PATH` (default `/var/lib/snake/persistence.db`)
+- `PERSISTENCE_SQLITE_MAX_MB` (default `256`)
+- `PERSISTENCE_SQLITE_RETENTION_HOURS` (default `72`)
+- `PERSISTENCE_FLUSH_CHUNKS_SECONDS` (default `2`)
+- `PERSISTENCE_FLUSH_SNAPSHOTS_SECONDS` (default `10`)
+- `PERSISTENCE_FLUSH_PERIOD_DELTAS_SECONDS` (default `10`)
+- `PERSISTENCE_RETRY_BACKOFF_MS` (default `250`)
+- `PERSISTENCE_DEBUG_LOGGING` (`0|1`, default `0`)
 
 Default run values in Make:
 - `TICK_HZ=10`
@@ -72,6 +81,28 @@ Default run values in Make:
 Notes:
 - With default rollout flags (`SINGLE_CHUNK_MODE=true`, `AOI_ENABLED=false`) behavior stays equivalent to previous full-world snapshots.
 - AOI can be enabled later without changing frontend payload schema.
+
+### Persistence matrix
+
+Persistence is routed through `api/persistence` using typed intents and an active profile:
+
+- Layer 0: runtime in-memory (`RuntimeStateStore`)
+- Layer 1: buffered SQLite (`BufferedSqliteStore`)
+- Layer 2: permanent DynamoDB (`PermanentDynamoStore`)
+
+Routing is selected by `PERSISTENCE_PROFILE`:
+
+- `minimal`: strongest Dynamo cost reduction; non-critical data buffered in SQLite
+- `standard`: more frequent buffered flushes
+- `payments_safe`: critical economic mutations direct to Dynamo with tighter flushes
+- `strict`: highest durability (more direct+buffered writes)
+
+Current phase defaults:
+
+- hot-path/non-critical (`snake_events`, dirty world chunks, non-critical snake snapshots) -> SQLite buffered then async flush
+- critical value-transfer actions (`user balance`, `snake creation/extension/settlement`, finalized period aggregates) -> direct/near-immediate Dynamo by policy
+
+Gameplay code emits intents through `PersistenceCoordinator`; it does not write SQLite/Dynamo directly for migrated paths.
 
 ### Economy core v1
 
@@ -140,6 +171,11 @@ make local-run
 `make local-run` runs fully in Docker and talks to local DynamoDB.  
 It publishes app on `http://127.0.0.1:8080`.
 `make local-run` stays in foreground by design (it is the running server). Open the app in browser while it is running; stop with `Ctrl+C`.
+
+SQLite buffered persistence survives container restarts through a host-mounted path:
+- host: `.local/persistence`
+- container: `/var/lib/snake`
+- DB file: `/var/lib/snake/persistence.db`
 
 `make local-run-docker` remains available explicitly.
 

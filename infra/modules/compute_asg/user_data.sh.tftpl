@@ -12,7 +12,7 @@ LE_EMAIL="${letsencrypt_email}"
 dnf -y update
 
 # Build/runtime deps + AWS tools (avoid curl/curl-minimal conflicts on AL2023)
-dnf -y install git clang boost-devel cmake gcc-c++ libcurl-devel openssl-devel zlib-devel python3 \
+dnf -y install git clang boost-devel cmake gcc-c++ libcurl-devel openssl-devel zlib-devel sqlite-devel python3 \
   amazon-cloudwatch-agent amazon-ssm-agent awscli
 
 # Some AL2023 repos do not provide aws-sdk-cpp packages; build once from source.
@@ -81,6 +81,12 @@ clang++ -std=c++17 -O2 -pthread \
   api/storage/storage_factory.cpp \
   api/economy/economy_v1.cpp \
   api/economy_engine/compute.cpp \
+  api/persistence/profiles/persistence_profiles.cpp \
+  api/persistence/layers/runtime/runtime_state_store.cpp \
+  api/persistence/layers/sqlite/buffered_sqlite_store.cpp \
+  api/persistence/layers/dynamo/permanent_dynamo_store.cpp \
+  api/persistence/coordinator/persistence_coordinator.cpp \
+  api/persistence/flush/flush_scheduler.cpp \
   config/runtime_config.cpp \
   api/world/world.cpp \
   api/world/chunk_manager.cpp \
@@ -91,12 +97,14 @@ clang++ -std=c++17 -O2 -pthread \
   api/world/systems/spawn_system.cpp \
   api/world/systems/replication_system.cpp \
   -o /opt/snake/snake_server \
-  -lboost_system -laws-cpp-sdk-dynamodb -laws-cpp-sdk-core \
+  -lboost_system -lsqlite3 -laws-cpp-sdk-dynamodb -laws-cpp-sdk-core \
   -L/usr/local/lib64 -L/usr/local/lib
 
 cat >/etc/snake.env <<EOF
 ${env_lines}
 EOF
+
+mkdir -p /var/lib/snake
 
 cat >/etc/systemd/system/snake.service <<EOF
 [Unit]

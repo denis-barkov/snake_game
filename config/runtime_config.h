@@ -33,6 +33,15 @@ struct RuntimeConfig {
   std::string econ_period_align = "rolling";
   int economy_flush_seconds = 10;
   int economy_period_history_days = 90;
+  std::string persistence_profile = "minimal";
+  std::string persistence_sqlite_path = "/var/lib/snake/persistence.db";
+  int persistence_sqlite_max_mb = 256;
+  int persistence_sqlite_retention_hours = 72;
+  int persistence_flush_chunks_seconds = 2;
+  int persistence_flush_snapshots_seconds = 10;
+  int persistence_flush_period_deltas_seconds = 10;
+  int persistence_retry_backoff_ms = 250;
+  bool persistence_debug_logging = false;
 
   static RuntimeConfig FromEnv();
   int TickIntervalMs() const;

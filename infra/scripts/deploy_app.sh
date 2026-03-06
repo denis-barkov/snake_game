@@ -43,6 +43,15 @@ else
 fi
 ECONOMY_FLUSH_SECONDS="${ECONOMY_FLUSH_SECONDS:-10}"
 ECONOMY_PERIOD_HISTORY_DAYS="${ECONOMY_PERIOD_HISTORY_DAYS:-90}"
+PERSISTENCE_PROFILE="${PERSISTENCE_PROFILE:-minimal}"
+PERSISTENCE_SQLITE_PATH="${PERSISTENCE_SQLITE_PATH:-/var/lib/snake/persistence.db}"
+PERSISTENCE_SQLITE_MAX_MB="${PERSISTENCE_SQLITE_MAX_MB:-256}"
+PERSISTENCE_SQLITE_RETENTION_HOURS="${PERSISTENCE_SQLITE_RETENTION_HOURS:-72}"
+PERSISTENCE_FLUSH_CHUNKS_SECONDS="${PERSISTENCE_FLUSH_CHUNKS_SECONDS:-2}"
+PERSISTENCE_FLUSH_SNAPSHOTS_SECONDS="${PERSISTENCE_FLUSH_SNAPSHOTS_SECONDS:-10}"
+PERSISTENCE_FLUSH_PERIOD_DELTAS_SECONDS="${PERSISTENCE_FLUSH_PERIOD_DELTAS_SECONDS:-10}"
+PERSISTENCE_RETRY_BACKOFF_MS="${PERSISTENCE_RETRY_BACKOFF_MS:-250}"
+PERSISTENCE_DEBUG_LOGGING="${PERSISTENCE_DEBUG_LOGGING:-0}"
 ADMIN_TOKEN="${ADMIN_TOKEN:-change-me}"
 POLL_ATTEMPTS="${POLL_ATTEMPTS:-20}"
 POLL_SLEEP_SECONDS="${POLL_SLEEP_SECONDS:-15}"
@@ -160,7 +169,7 @@ COMMAND_ID="$(
     --comment "snake deploy from ${APP_REF}" \
     --parameters "commands=[
 \"set -euo pipefail\",
-\"dnf -y install git clang boost-devel cmake gcc-c++ libcurl-devel openssl-devel zlib-devel python3 >/dev/null\",
+\"dnf -y install git clang boost-devel cmake gcc-c++ libcurl-devel openssl-devel zlib-devel sqlite-devel python3 >/dev/null\",
 \"if [ ! -f /usr/local/lib64/libaws-cpp-sdk-dynamodb.so ] && [ ! -f /usr/local/lib/libaws-cpp-sdk-dynamodb.so ]; then if [ ! -d /opt/aws-sdk-cpp ]; then git clone --depth 1 --branch 1.11.676 --recurse-submodules https://github.com/aws/aws-sdk-cpp.git /opt/aws-sdk-cpp; else cd /opt/aws-sdk-cpp; git fetch --tags --force; git checkout 1.11.676; git submodule sync --recursive; git submodule update --init --recursive; fi; cmake -S /opt/aws-sdk-cpp -B /opt/aws-sdk-cpp/build -DBUILD_ONLY='dynamodb' -DCMAKE_BUILD_TYPE=Release -DENABLE_TESTING=OFF >/dev/null; cmake --build /opt/aws-sdk-cpp/build -j2 >/dev/null; cmake --install /opt/aws-sdk-cpp/build >/dev/null; echo -e '/usr/local/lib64\\n/usr/local/lib' >/etc/ld.so.conf.d/aws-sdk-cpp.conf; ldconfig || true; fi\",
 \"mkdir -p /opt/snake\",
 \"if [ ! -d /opt/snake/repo/.git ]; then rm -rf /opt/snake/repo; git clone '${APP_GIT_REPO}' /opt/snake/repo; fi\",
@@ -175,7 +184,8 @@ COMMAND_ID="$(
 \"chmod 755 /var/www/snake || true\",
 \"chmod 644 /var/www/snake/index.html || true\",
 \"if [ -d /var/www/snake/src ]; then find /var/www/snake/src -type d -exec chmod 755 {} \\;; find /var/www/snake/src -type f -exec chmod 644 {} \\;; fi\",
-\"clang++ -std=c++17 -O2 -pthread ${BUILD_TARGET} api/protocol/encode_json.cpp api/storage/dynamo_storage.cpp api/storage/storage_factory.cpp api/economy/economy_v1.cpp api/economy_engine/compute.cpp config/runtime_config.cpp api/world/world.cpp api/world/chunk_manager.cpp api/world/entities/snake.cpp api/world/entities/food.cpp api/world/systems/movement_system.cpp api/world/systems/collision_system.cpp api/world/systems/spawn_system.cpp api/world/systems/replication_system.cpp -o /opt/snake/snake_server -lboost_system -laws-cpp-sdk-dynamodb -laws-cpp-sdk-core -L/usr/local/lib64 -L/usr/local/lib\",
+\"clang++ -std=c++17 -O2 -pthread ${BUILD_TARGET} api/protocol/encode_json.cpp api/storage/dynamo_storage.cpp api/storage/storage_factory.cpp api/economy/economy_v1.cpp api/economy_engine/compute.cpp api/persistence/profiles/persistence_profiles.cpp api/persistence/layers/runtime/runtime_state_store.cpp api/persistence/layers/sqlite/buffered_sqlite_store.cpp api/persistence/layers/dynamo/permanent_dynamo_store.cpp api/persistence/coordinator/persistence_coordinator.cpp api/persistence/flush/flush_scheduler.cpp config/runtime_config.cpp api/world/world.cpp api/world/chunk_manager.cpp api/world/entities/snake.cpp api/world/entities/food.cpp api/world/systems/movement_system.cpp api/world/systems/collision_system.cpp api/world/systems/spawn_system.cpp api/world/systems/replication_system.cpp -o /opt/snake/snake_server -lboost_system -lsqlite3 -laws-cpp-sdk-dynamodb -laws-cpp-sdk-core -L/usr/local/lib64 -L/usr/local/lib\",
+\"mkdir -p $(dirname ${PERSISTENCE_SQLITE_PATH})\",
 \"cat > /etc/snake.env <<'EOF_ENV'\",
 \"AWS_REGION=${REGION}\",
 \"DYNAMO_REGION=${REGION}\",
@@ -228,6 +238,15 @@ COMMAND_ID="$(
 \"ECONOMIC_PERIOD_MODE=${ECONOMIC_PERIOD_MODE}\",
 \"ECONOMY_FLUSH_SECONDS=${ECONOMY_FLUSH_SECONDS}\",
 \"ECONOMY_PERIOD_HISTORY_DAYS=${ECONOMY_PERIOD_HISTORY_DAYS}\",
+\"PERSISTENCE_PROFILE=${PERSISTENCE_PROFILE}\",
+\"PERSISTENCE_SQLITE_PATH=${PERSISTENCE_SQLITE_PATH}\",
+\"PERSISTENCE_SQLITE_MAX_MB=${PERSISTENCE_SQLITE_MAX_MB}\",
+\"PERSISTENCE_SQLITE_RETENTION_HOURS=${PERSISTENCE_SQLITE_RETENTION_HOURS}\",
+\"PERSISTENCE_FLUSH_CHUNKS_SECONDS=${PERSISTENCE_FLUSH_CHUNKS_SECONDS}\",
+\"PERSISTENCE_FLUSH_SNAPSHOTS_SECONDS=${PERSISTENCE_FLUSH_SNAPSHOTS_SECONDS}\",
+\"PERSISTENCE_FLUSH_PERIOD_DELTAS_SECONDS=${PERSISTENCE_FLUSH_PERIOD_DELTAS_SECONDS}\",
+\"PERSISTENCE_RETRY_BACKOFF_MS=${PERSISTENCE_RETRY_BACKOFF_MS}\",
+\"PERSISTENCE_DEBUG_LOGGING=${PERSISTENCE_DEBUG_LOGGING}\",
 \"ADMIN_TOKEN=${ADMIN_TOKEN}\",
 \"EOF_ENV\",
 \"chmod 0644 /etc/snake.env\",
