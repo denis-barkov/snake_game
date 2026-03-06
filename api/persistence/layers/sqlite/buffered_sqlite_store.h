@@ -25,6 +25,7 @@ class BufferedSqliteStore final : public IBufferedStore {
 
  private:
   bool Open();
+  bool OpenLocked();
   bool EnsureSchema();
   bool Exec(const std::string& sql);
   bool UpsertSnakeSnapshot(const storage::Snake& s, bool deleted);

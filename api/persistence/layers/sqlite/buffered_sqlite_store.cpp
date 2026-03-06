@@ -36,6 +36,10 @@ BufferedSqliteStore::~BufferedSqliteStore() {
 
 bool BufferedSqliteStore::Open() {
   std::lock_guard<std::mutex> lock(mu_);
+  return OpenLocked();
+}
+
+bool BufferedSqliteStore::OpenLocked() {
   if (db_) return true;
   try {
     std::filesystem::path p(path_);
@@ -213,7 +217,7 @@ bool BufferedSqliteStore::UpsertPeriodUserDelta(const std::string& period_key,
 
 bool BufferedSqliteStore::BufferIntent(const PersistenceIntent& intent) {
   std::lock_guard<std::mutex> lock(mu_);
-  if (!db_ && !Open()) return false;
+  if (!db_ && !OpenLocked()) return false;
 
   switch (intent.type) {
     case IntentType::SnakeEventLogged: {
@@ -460,7 +464,7 @@ bool BufferedSqliteStore::FlushDue(IPermanentStore& permanent,
                                    int flush_snapshots_seconds,
                                    int flush_period_deltas_seconds) {
   std::lock_guard<std::mutex> lock(mu_);
-  if (!db_) return false;
+  if (!db_ && !OpenLocked()) return false;
 
   if (!FlushWorldChunks(permanent, flush_chunks_seconds)) return false;
   if (!FlushSnakeSnapshots(permanent, flush_snapshots_seconds)) return false;
@@ -472,7 +476,7 @@ bool BufferedSqliteStore::FlushDue(IPermanentStore& permanent,
 
 bool BufferedSqliteStore::Cleanup(int retention_hours, int max_mb) {
   std::lock_guard<std::mutex> lock(mu_);
-  if (!db_) return false;
+  if (!db_ && !OpenLocked()) return false;
 
   const int64_t cutoff_ms = now_ms() - (static_cast<int64_t>(retention_hours) * 3600LL * 1000LL);
   sqlite3_stmt* stmt = nullptr;
