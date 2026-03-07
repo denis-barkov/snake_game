@@ -30,9 +30,13 @@ class DynamoStorage : public IStorage {
 
   std::vector<User> ListUsers() override;
   std::optional<User> GetUserByUsername(const std::string& username) override;
+  std::optional<User> GetUserByGoogleSubject(const std::string& google_subject_id) override;
+  bool CompanyNameExistsNormalized(const std::string& company_name_normalized,
+                                   const std::string& exclude_user_id = "") override;
   std::optional<User> GetUserById(const std::string& user_id) override;
   bool PutUser(const User& u) override;
   bool UpdateUserLastSeenWorldVersion(const std::string& user_id, const std::string& version) override;
+  bool DeleteUserById(const std::string& user_id) override;
   bool UpdateUserBalance(const std::string& user_id, int64_t new_balance) override;
   bool IncrementUserBalance(const std::string& user_id, int64_t delta_balance) override;
   bool BorrowCellsAndTrackPeriod(const std::string& user_id,
@@ -42,8 +46,11 @@ class DynamoStorage : public IStorage {
 
   std::vector<Snake> ListSnakes() override;
   std::optional<Snake> GetSnakeById(const std::string& snake_id) override;
+  bool SnakeNameExistsNormalized(const std::string& snake_name_normalized,
+                                 const std::string& exclude_snake_id = "") override;
   bool PutSnake(const Snake& s) override;
   bool DeleteSnake(const std::string& snake_id) override;
+  bool DeleteSnakeEventsBySnakeId(const std::string& snake_id) override;
   bool AttachCellsToSnake(const std::string& user_id,
                           const std::string& snake_id,
                           int64_t amount,

@@ -42,6 +42,9 @@ struct RuntimeConfig {
   int persistence_flush_period_deltas_seconds = 10;
   int persistence_retry_backoff_ms = 250;
   bool persistence_debug_logging = false;
+  bool google_auth_enabled = false;
+  std::string google_client_id;
+  int64_t starter_liquid_assets = 25;
 
   static RuntimeConfig FromEnv();
   int TickIntervalMs() const;

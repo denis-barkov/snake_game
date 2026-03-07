@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.7.0 - 2026-03-07
+- Added Google Sign-In as the live player entry path.
+- Added first-time onboarding with company naming, starter snake naming, and starter liquid assets.
+- Added account deletion flow in Settings with exact company-name confirmation.
+- Improved returning-user login transition with short world tips before entering play.
+
 ## 2.6.0 - 2026-03-07
 - Added the World Evolution Log in-game panel with a full release archive.
 - Added a top-right version badge so players can quickly check update history.

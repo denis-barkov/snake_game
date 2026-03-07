@@ -197,8 +197,15 @@ std::vector<User> DynamoStorage::ListUsers() {
       u.debt_accrued_interest = GetInt64(item, "debt_accrued_interest", 0);
       u.role = GetString(item, "role", "player");
       u.created_at = GetInt64(item, "created_at");
+      u.updated_at = GetInt64(item, "updated_at", u.created_at);
       u.company_name = GetString(item, "company_name");
+      u.company_name_normalized = GetString(item, "company_name_normalized");
       u.last_seen_world_version = GetString(item, "last_seen_world_version");
+      u.auth_provider = GetString(item, "auth_provider", "local");
+      u.google_subject_id = GetString(item, "google_subject_id");
+      u.onboarding_completed = GetBool(item, "onboarding_completed", false);
+      u.starter_snake_id = GetString(item, "starter_snake_id");
+      u.account_status = GetString(item, "account_status", "active");
       out.push_back(std::move(u));
     }
 
@@ -232,8 +239,15 @@ std::optional<User> DynamoStorage::GetUserByUsername(const std::string& username
     u.debt_accrued_interest = GetInt64(item, "debt_accrued_interest", 0);
     u.role = GetString(item, "role", "player");
     u.created_at = GetInt64(item, "created_at");
+    u.updated_at = GetInt64(item, "updated_at", u.created_at);
     u.company_name = GetString(item, "company_name");
+    u.company_name_normalized = GetString(item, "company_name_normalized");
     u.last_seen_world_version = GetString(item, "last_seen_world_version");
+    u.auth_provider = GetString(item, "auth_provider", "local");
+    u.google_subject_id = GetString(item, "google_subject_id");
+    u.onboarding_completed = GetBool(item, "onboarding_completed", false);
+    u.starter_snake_id = GetString(item, "starter_snake_id");
+    u.account_status = GetString(item, "account_status", "active");
     return u;
   };
 
@@ -280,9 +294,67 @@ std::optional<User> DynamoStorage::GetUserById(const std::string& user_id) {
   u.debt_accrued_interest = GetInt64(item, "debt_accrued_interest", 0);
   u.role = GetString(item, "role", "player");
   u.created_at = GetInt64(item, "created_at");
+  u.updated_at = GetInt64(item, "updated_at", u.created_at);
   u.company_name = GetString(item, "company_name");
+  u.company_name_normalized = GetString(item, "company_name_normalized");
   u.last_seen_world_version = GetString(item, "last_seen_world_version");
+  u.auth_provider = GetString(item, "auth_provider", "local");
+  u.google_subject_id = GetString(item, "google_subject_id");
+  u.onboarding_completed = GetBool(item, "onboarding_completed", false);
+  u.starter_snake_id = GetString(item, "starter_snake_id");
+  u.account_status = GetString(item, "account_status", "active");
   return u;
+}
+
+std::optional<User> DynamoStorage::GetUserByGoogleSubject(const std::string& google_subject_id) {
+  if (google_subject_id.empty()) return std::nullopt;
+  Aws::DynamoDB::Model::ScanRequest scan;
+  scan.SetTableName(cfg_.users_table.c_str());
+  scan.SetFilterExpression("google_subject_id = :g");
+  scan.AddExpressionAttributeValues(":g", S(google_subject_id));
+  scan.SetLimit(1);
+  auto out = client_->Scan(scan);
+  if (!out.IsSuccess()) return std::nullopt;
+  const auto& items = out.GetResult().GetItems();
+  if (items.empty()) return std::nullopt;
+  const auto& item = items[0];
+  User u;
+  u.user_id = GetString(item, "user_id");
+  u.username = GetString(item, "username");
+  u.password_hash = GetString(item, "password_hash");
+  u.balance_mi = GetInt64(item, "balance_mi");
+  u.debt_principal = GetInt64(item, "debt_principal", 0);
+  u.debt_interest_rate = GetDouble(item, "debt_interest_rate", 0.0);
+  u.debt_accrued_interest = GetInt64(item, "debt_accrued_interest", 0);
+  u.role = GetString(item, "role", "player");
+  u.created_at = GetInt64(item, "created_at");
+  u.updated_at = GetInt64(item, "updated_at", u.created_at);
+  u.company_name = GetString(item, "company_name");
+  u.company_name_normalized = GetString(item, "company_name_normalized");
+  u.last_seen_world_version = GetString(item, "last_seen_world_version");
+  u.auth_provider = GetString(item, "auth_provider", "local");
+  u.google_subject_id = GetString(item, "google_subject_id");
+  u.onboarding_completed = GetBool(item, "onboarding_completed", false);
+  u.starter_snake_id = GetString(item, "starter_snake_id");
+  u.account_status = GetString(item, "account_status", "active");
+  return u;
+}
+
+bool DynamoStorage::CompanyNameExistsNormalized(const std::string& company_name_normalized,
+                                                const std::string& exclude_user_id) {
+  if (company_name_normalized.empty()) return false;
+  Aws::DynamoDB::Model::ScanRequest scan;
+  scan.SetTableName(cfg_.users_table.c_str());
+  scan.SetFilterExpression("company_name_normalized = :n");
+  scan.AddExpressionAttributeValues(":n", S(company_name_normalized));
+  auto out = client_->Scan(scan);
+  if (!out.IsSuccess()) return false;
+  for (const auto& item : out.GetResult().GetItems()) {
+    const auto uid = GetString(item, "user_id");
+    if (!exclude_user_id.empty() && uid == exclude_user_id) continue;
+    return true;
+  }
+  return false;
 }
 
 bool DynamoStorage::PutUser(const User& u) {
@@ -297,10 +369,17 @@ bool DynamoStorage::PutUser(const User& u) {
   req.AddItem("debt_accrued_interest", N(std::max<int64_t>(0, u.debt_accrued_interest)));
   req.AddItem("role", S(u.role.empty() ? "player" : u.role));
   req.AddItem("created_at", N(u.created_at));
+  req.AddItem("updated_at", N(u.updated_at > 0 ? u.updated_at : u.created_at));
   if (!u.company_name.empty()) req.AddItem("company_name", S(u.company_name));
+  if (!u.company_name_normalized.empty()) req.AddItem("company_name_normalized", S(u.company_name_normalized));
   if (!u.last_seen_world_version.empty()) {
     req.AddItem("last_seen_world_version", S(u.last_seen_world_version));
   }
+  if (!u.auth_provider.empty()) req.AddItem("auth_provider", S(u.auth_provider));
+  if (!u.google_subject_id.empty()) req.AddItem("google_subject_id", S(u.google_subject_id));
+  req.AddItem("onboarding_completed", B(u.onboarding_completed));
+  if (!u.starter_snake_id.empty()) req.AddItem("starter_snake_id", S(u.starter_snake_id));
+  if (!u.account_status.empty()) req.AddItem("account_status", S(u.account_status));
   return client_->PutItem(req).IsSuccess();
 }
 
@@ -312,6 +391,13 @@ bool DynamoStorage::UpdateUserLastSeenWorldVersion(const std::string& user_id, c
   req.SetConditionExpression("attribute_exists(user_id)");
   req.AddExpressionAttributeValues(":v", S(version));
   return client_->UpdateItem(req).IsSuccess();
+}
+
+bool DynamoStorage::DeleteUserById(const std::string& user_id) {
+  Aws::DynamoDB::Model::DeleteItemRequest req;
+  req.SetTableName(cfg_.users_table.c_str());
+  req.AddKey("user_id", S(user_id));
+  return client_->DeleteItem(req).IsSuccess();
 }
 
 bool DynamoStorage::UpdateUserBalance(const std::string& user_id, int64_t new_balance) {
@@ -388,6 +474,8 @@ std::vector<Snake> DynamoStorage::ListSnakes() {
       Snake s;
       s.snake_id = GetString(item, "snake_id");
       s.owner_user_id = GetString(item, "owner_user_id");
+      s.snake_name = GetString(item, "snake_name");
+      s.snake_name_normalized = GetString(item, "snake_name_normalized");
       s.alive = GetBool(item, "alive", true);
       s.is_on_field = GetBool(item, "is_on_field", s.alive);
       s.head_x = static_cast<int>(GetInt64(item, "head_x", 0));
@@ -424,6 +512,8 @@ std::optional<Snake> DynamoStorage::GetSnakeById(const std::string& snake_id) {
   Snake s;
   s.snake_id = GetString(item, "snake_id");
   s.owner_user_id = GetString(item, "owner_user_id");
+  s.snake_name = GetString(item, "snake_name");
+  s.snake_name_normalized = GetString(item, "snake_name_normalized");
   s.alive = GetBool(item, "alive", true);
   s.is_on_field = GetBool(item, "is_on_field", s.alive);
   s.head_x = static_cast<int>(GetInt64(item, "head_x", 0));
@@ -444,6 +534,8 @@ bool DynamoStorage::PutSnake(const Snake& s) {
   req.SetTableName(cfg_.snakes_table.c_str());
   req.AddItem("snake_id", S(s.snake_id));
   req.AddItem("owner_user_id", S(s.owner_user_id));
+  if (!s.snake_name.empty()) req.AddItem("snake_name", S(s.snake_name));
+  if (!s.snake_name_normalized.empty()) req.AddItem("snake_name_normalized", S(s.snake_name_normalized));
   req.AddItem("alive", B(s.alive));
   req.AddItem("is_on_field", B(s.is_on_field));
   req.AddItem("head_x", N(s.head_x));
@@ -459,11 +551,53 @@ bool DynamoStorage::PutSnake(const Snake& s) {
   return client_->PutItem(req).IsSuccess();
 }
 
+bool DynamoStorage::SnakeNameExistsNormalized(const std::string& snake_name_normalized,
+                                              const std::string& exclude_snake_id) {
+  if (snake_name_normalized.empty()) return false;
+  Aws::DynamoDB::Model::ScanRequest scan;
+  scan.SetTableName(cfg_.snakes_table.c_str());
+  scan.SetFilterExpression("snake_name_normalized = :n");
+  scan.AddExpressionAttributeValues(":n", S(snake_name_normalized));
+  auto out = client_->Scan(scan);
+  if (!out.IsSuccess()) return false;
+  for (const auto& item : out.GetResult().GetItems()) {
+    const auto sid = GetString(item, "snake_id");
+    if (!exclude_snake_id.empty() && sid == exclude_snake_id) continue;
+    return true;
+  }
+  return false;
+}
+
 bool DynamoStorage::DeleteSnake(const std::string& snake_id) {
   Aws::DynamoDB::Model::DeleteItemRequest req;
   req.SetTableName(cfg_.snakes_table.c_str());
   req.AddKey("snake_id", S(snake_id));
   return client_->DeleteItem(req).IsSuccess();
+}
+
+bool DynamoStorage::DeleteSnakeEventsBySnakeId(const std::string& snake_id) {
+  if (snake_id.empty()) return true;
+  Aws::DynamoDB::Model::QueryRequest q;
+  q.SetTableName(cfg_.snake_events_table.c_str());
+  q.SetKeyConditionExpression("snake_id = :s");
+  q.AddExpressionAttributeValues(":s", S(snake_id));
+  while (true) {
+    auto out = client_->Query(q);
+    if (!out.IsSuccess()) return false;
+    for (const auto& item : out.GetResult().GetItems()) {
+      const auto event_id = GetString(item, "event_id");
+      if (event_id.empty()) continue;
+      Aws::DynamoDB::Model::DeleteItemRequest del;
+      del.SetTableName(cfg_.snake_events_table.c_str());
+      del.AddKey("snake_id", S(snake_id));
+      del.AddKey("event_id", S(event_id));
+      if (!client_->DeleteItem(del).IsSuccess()) return false;
+    }
+    const auto& lek = out.GetResult().GetLastEvaluatedKey();
+    if (lek.empty()) break;
+    q.SetExclusiveStartKey(lek);
+  }
+  return true;
 }
 
 bool DynamoStorage::AttachCellsToSnake(const std::string& user_id,

@@ -19,13 +19,22 @@ struct User {
   int64_t debt_accrued_interest = 0;
   std::string role = "player";
   int64_t created_at = 0;
+  int64_t updated_at = 0;
   std::string company_name;
+  std::string company_name_normalized;
   std::string last_seen_world_version;
+  std::string auth_provider = "local";
+  std::string google_subject_id;
+  bool onboarding_completed = false;
+  std::string starter_snake_id;
+  std::string account_status = "active";
 };
 
 struct Snake {
   std::string snake_id;
   std::string owner_user_id;
+  std::string snake_name;
+  std::string snake_name_normalized;
   bool alive = true;
   // Explicit "on field" flag for economy aggregation (defaults to alive if missing in DB).
   bool is_on_field = true;

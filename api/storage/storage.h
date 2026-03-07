@@ -15,9 +15,13 @@ class IStorage {
   // Full user listing is used by low-frequency aggregated reads (economy endpoint).
   virtual std::vector<User> ListUsers() = 0;
   virtual std::optional<User> GetUserByUsername(const std::string& username) = 0;
+  virtual std::optional<User> GetUserByGoogleSubject(const std::string& google_subject_id) = 0;
+  virtual bool CompanyNameExistsNormalized(const std::string& company_name_normalized,
+                                           const std::string& exclude_user_id = "") = 0;
   virtual std::optional<User> GetUserById(const std::string& user_id) = 0;
   virtual bool PutUser(const User& u) = 0;
   virtual bool UpdateUserLastSeenWorldVersion(const std::string& user_id, const std::string& version) = 0;
+  virtual bool DeleteUserById(const std::string& user_id) = 0;
   virtual bool UpdateUserBalance(const std::string& user_id, int64_t new_balance) = 0;
   virtual bool IncrementUserBalance(const std::string& user_id, int64_t delta_balance) = 0;
   virtual bool BorrowCellsAndTrackPeriod(const std::string& user_id,
@@ -27,8 +31,11 @@ class IStorage {
 
   virtual std::vector<Snake> ListSnakes() = 0;
   virtual std::optional<Snake> GetSnakeById(const std::string& snake_id) = 0;
+  virtual bool SnakeNameExistsNormalized(const std::string& snake_name_normalized,
+                                         const std::string& exclude_snake_id = "") = 0;
   virtual bool PutSnake(const Snake& s) = 0;
   virtual bool DeleteSnake(const std::string& snake_id) = 0;
+  virtual bool DeleteSnakeEventsBySnakeId(const std::string& snake_id) = 0;
   virtual bool AttachCellsToSnake(const std::string& user_id,
                                   const std::string& snake_id,
                                   int64_t amount,

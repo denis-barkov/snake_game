@@ -125,6 +125,10 @@ RuntimeConfig RuntimeConfig::FromEnv() {
   cfg.persistence_retry_backoff_ms =
       clamp_int(getenv_int("PERSISTENCE_RETRY_BACKOFF_MS", cfg.persistence_retry_backoff_ms), 10, 60000);
   cfg.persistence_debug_logging = getenv_bool("PERSISTENCE_DEBUG_LOGGING", cfg.persistence_debug_logging);
+  cfg.google_auth_enabled = getenv_bool("GOOGLE_AUTH_ENABLED", cfg.google_auth_enabled);
+  cfg.google_client_id = getenv_string("GOOGLE_CLIENT_ID", cfg.google_client_id);
+  cfg.starter_liquid_assets = static_cast<int64_t>(
+      clamp_int(getenv_int("STARTER_LIQUID_ASSETS", static_cast<int>(cfg.starter_liquid_assets)), 1, 1000000));
   if (!has_env("DEBUG_TPS")) {
     // Backward compatibility for older deployments that used LOG_HZ.
     cfg.debug_tps = getenv_bool("LOG_HZ", cfg.debug_tps);

@@ -59,6 +59,9 @@ Simulation internals are structured in `api/world`:
 - `PERSISTENCE_FLUSH_PERIOD_DELTAS_SECONDS` (default `10`)
 - `PERSISTENCE_RETRY_BACKOFF_MS` (default `250`)
 - `PERSISTENCE_DEBUG_LOGGING` (`0|1`, default `0`)
+- `GOOGLE_AUTH_ENABLED` (`true`/`false`, default `false`)
+- `GOOGLE_CLIENT_ID` (Google Web OAuth client id, required when Google auth is enabled)
+- `STARTER_LIQUID_ASSETS` (default `25`)
 
 Default run values in Make:
 - `TICK_HZ=10`
@@ -78,6 +81,45 @@ Default run values in Make:
 - `FOOD_REWARD_CELLS=1`
 - `RESIZE_THRESHOLD=0.05`
 - `WORLD_ASPECT_RATIO=1.7777777778`
+
+### Google Sign-In Setup
+
+The v1 public auth flow is Google Sign-In only.
+
+1. In Google Cloud Console, create an OAuth client of type **Web application**.
+2. Configure **Authorized JavaScript origins**:
+   - Local: `http://127.0.0.1:8080` and/or `http://localhost:8080`
+   - Prod: `https://terrariumsnake.com`
+3. If your Google project setup asks for redirect URIs, add your deployed auth return URL(s) used by your environment.
+4. Set env vars:
+   - `GOOGLE_AUTH_ENABLED=true`
+   - `GOOGLE_CLIENT_ID=<your-google-web-client-id>`
+   - optional starter economy amount: `STARTER_LIQUID_ASSETS=25`
+5. Restart the server process (`snake` systemd on prod, or `make local-run` locally).
+
+Notes:
+- Backend verifies Google ID tokens and then issues the game’s own session token.
+- When Google auth is enabled, password login is disabled.
+- You can (and usually should) use separate OAuth clients for local and prod.
+
+Makefile split knobs:
+- Local runtime:
+  - `GAME_GOOGLE_AUTH_ENABLED_LOCAL`
+  - `GAME_GOOGLE_CLIENT_ID_LOCAL`
+- AWS deploy:
+  - `GAME_GOOGLE_AUTH_ENABLED_PROD`
+  - `GAME_GOOGLE_CLIENT_ID_PROD`
+
+Examples:
+```bash
+# local
+make local-run GAME_GOOGLE_AUTH_ENABLED_LOCAL=true GAME_GOOGLE_CLIENT_ID_LOCAL="<local-web-client-id>"
+
+# aws deploy
+make aws-code-deploy BRANCH=main \
+  GAME_GOOGLE_AUTH_ENABLED_PROD=true \
+  GAME_GOOGLE_CLIENT_ID_PROD="<prod-web-client-id>"
+```
 
 Notes:
 - With default rollout flags (`SINGLE_CHUNK_MODE=true`, `AOI_ENABLED=false`) behavior stays equivalent to previous full-world snapshots.

@@ -357,6 +357,34 @@
       gap: 8px;
       justify-content: flex-end;
     }
+    #login-transition-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(9, 16, 20, 0.56);
+      z-index: 68;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 12px;
+    }
+    #login-transition-card {
+      width: min(520px, calc(100vw - 24px));
+      border-radius: 12px;
+      border: 1px solid #30423b;
+      background: linear-gradient(140deg, #f2f8f1 0%, #e9f5f4 50%, #eef6ef 100%);
+      padding: 16px;
+      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.25);
+    }
+    #login-transition-title {
+      margin: 0 0 8px 0;
+      font-size: 18px;
+      color: #0f172a;
+    }
+    #login-transition-tip {
+      margin: 0;
+      color: #334155;
+      min-height: 20px;
+    }
 
     @media (max-width: 980px) {
       .layout {
@@ -395,6 +423,7 @@
       }
     }
   </style>
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
   <button id="version-badge" type="button">Version —</button>
@@ -419,21 +448,33 @@
       </div>
     </div>
   </div>
+  <div id="login-transition-backdrop">
+    <div id="login-transition-card" role="status" aria-live="polite">
+      <h3 id="login-transition-title">Entering The Economic Arena</h3>
+      <p id="login-transition-tip">Loading world activity…</p>
+    </div>
+  </div>
   <div class="hero">
     <img src="src/images/snake_logo.png" alt="Terrarium Snake Club logo" />
     <div>
       <h1>Terrarium Snake Club</h1>
-      <p>Welcome to the new world of gaming! We are currently testing the project, and it will be available very soon. Keep checking back!</p>
+      <p>Welcome to the Economic Arena — Build a Company. Raise Snakes. Shape the World.</p>
     </div>
   </div>
 
   <div class="layout">
   <div id="left">
     <div class="panel">
-      <div class="row"><strong>Login (optional)</strong></div>
-      <div class="row"><input id="username" placeholder="username (user1)" /></div>
-      <div class="row"><input id="password" type="password" placeholder="password (pass1)" /></div>
-      <div class="row"><button id="loginBtn">Login</button></div>
+      <div class="row"><strong>Sign In</strong></div>
+      <div id="legacy-login-fields">
+        <div class="row"><input id="username" placeholder="username (user1)" /></div>
+        <div class="row"><input id="password" type="password" placeholder="password (pass1)" /></div>
+        <div class="row"><button id="loginBtn">Login</button></div>
+      </div>
+      <div id="google-login-root" style="display:none;">
+        <div id="google-signin-button"></div>
+        <small>Continue with Google</small>
+      </div>
       <div class="row"><small id="authStatus">Not logged in (watch-only)</small></div>
     </div>
 
@@ -483,6 +524,11 @@
         </div>
         <div id="eco-auth-note">Login to see your personal economy metrics.</div>
       </details>
+    </div>
+    <div class="panel" id="settings-panel" style="display:none;">
+      <div class="row"><strong>Settings</strong></div>
+      <div class="row"><button id="deleteAccountBtn">Delete Account</button></div>
+      <div class="row"><small>This action is permanent and cannot be undone.</small></div>
     </div>
   </div>
 
@@ -547,6 +593,30 @@
   </div>
   <div id="eco-tip-pop"></div>
   <div id="period-summary-pop"></div>
+  <div id="onboarding-backdrop" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.45); z-index:70; align-items:center; justify-content:center; padding:12px;">
+    <div id="onboarding-card" style="width:min(520px, calc(100vw - 24px)); background:#fff; border-radius:12px; padding:16px;">
+      <h3 id="onboarding-title">The World Has Evolved</h3>
+      <p id="onboarding-copy">Welcome to the Economic Arena.</p>
+      <div id="onboarding-form" style="display:none;">
+        <div class="row"><input id="companyNameInput" placeholder="Company Name" /></div>
+        <div class="row"><small id="companyNameHint"></small></div>
+        <div class="row"><input id="starterSnakeNameInput" placeholder="First Snake Name" /></div>
+        <div class="row"><small id="snakeNameHint"></small></div>
+        <div class="row"><button id="completeOnboardingBtn">Enter World</button></div>
+      </div>
+    </div>
+  </div>
+  <div id="delete-account-backdrop" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.45); z-index:72; align-items:center; justify-content:center; padding:12px;">
+    <div style="width:min(520px, calc(100vw - 24px)); background:#fff; border-radius:12px; padding:16px;">
+      <h3>Delete Account</h3>
+      <p>This is irreversible. All snakes, company identity, and progress will be permanently removed.</p>
+      <div class="row"><input id="deleteCompanyConfirmInput" placeholder="Type your exact Company Name" /></div>
+      <div class="row" style="display:flex; gap:8px; justify-content:flex-end;">
+        <button id="deleteAccountCancelBtn">Cancel</button>
+        <button id="deleteAccountConfirmBtn">Delete Permanently</button>
+      </div>
+    </div>
+  </div>
 
 <script>
   const API_BASE = window.location.protocol === "file:" ? "http://127.0.0.1:8080" : "";
@@ -978,9 +1048,28 @@
   const worldEvolvedTextEl = document.getElementById("world-evolved-text");
   const worldEvolvedDismissEl = document.getElementById("world-evolved-dismiss");
   const worldEvolvedViewEl = document.getElementById("world-evolved-view");
+  const loginTransitionBackdropEl = document.getElementById("login-transition-backdrop");
+  const loginTransitionTipEl = document.getElementById("login-transition-tip");
   const ecoStatusEl = document.getElementById("ecoStatus");
   const authStatus = document.getElementById("authStatus");
   const mySnakesEl = document.getElementById("mySnakes");
+  const legacyLoginFieldsEl = document.getElementById("legacy-login-fields");
+  const googleLoginRootEl = document.getElementById("google-login-root");
+  const settingsPanelEl = document.getElementById("settings-panel");
+  const deleteAccountBtn = document.getElementById("deleteAccountBtn");
+  const deleteAccountBackdropEl = document.getElementById("delete-account-backdrop");
+  const deleteAccountCancelBtn = document.getElementById("deleteAccountCancelBtn");
+  const deleteAccountConfirmBtn = document.getElementById("deleteAccountConfirmBtn");
+  const deleteCompanyConfirmInputEl = document.getElementById("deleteCompanyConfirmInput");
+  const onboardingBackdropEl = document.getElementById("onboarding-backdrop");
+  const onboardingTitleEl = document.getElementById("onboarding-title");
+  const onboardingCopyEl = document.getElementById("onboarding-copy");
+  const onboardingFormEl = document.getElementById("onboarding-form");
+  const companyNameInputEl = document.getElementById("companyNameInput");
+  const companyNameHintEl = document.getElementById("companyNameHint");
+  const starterSnakeNameInputEl = document.getElementById("starterSnakeNameInput");
+  const snakeNameHintEl = document.getElementById("snakeNameHint");
+  const completeOnboardingBtn = document.getElementById("completeOnboardingBtn");
   const createSnakeBtn = document.getElementById("createSnakeBtn");
   const myBalanceEl = document.getElementById("myBalance");
   const mySnakeCountEl = document.getElementById("mySnakeCount");
@@ -1033,6 +1122,16 @@
   let showBounds = localStorage.getItem(BOUNDS_TOGGLE_STORAGE_KEY) !== "0";
   let showEdge = localStorage.getItem(EDGE_TOGGLE_STORAGE_KEY) !== "0";
   let spectatorDefaultsApplied = false;
+  let googleAuthEnabled = false;
+  let googleClientId = "";
+  let onboardingRequired = false;
+  let loginTipTimer = null;
+  const LOGIN_TIPS = [
+    "Extracted Output grows when your snakes harvest food efficiently.",
+    "Liquid Assets can be invested into Deployed Capital at any time.",
+    "Capital Intensity shows how much of your resources are currently invested.",
+    "Market Share rises when your personal output grows faster than the world."
+  ];
   if (sessionStorage.getItem(LOGIN_RELOAD_FLAG) === "1") {
     sessionStorage.removeItem(LOGIN_RELOAD_FLAG);
   }
@@ -1150,9 +1249,32 @@
       if (typeof data.tick_hz === "number" && data.tick_hz > 0) {
         expectedTickHz = data.tick_hz;
         expectedTickHzEl.textContent = String(expectedTickHz);
-        return;
+      } else {
+        throw new Error("runtime endpoint missing tick_hz");
       }
-      throw new Error("runtime endpoint missing tick_hz");
+      googleAuthEnabled = !!data.google_auth_enabled;
+      googleClientId = typeof data.google_client_id === "string" ? data.google_client_id : "";
+      if (googleAuthEnabled) {
+        legacyLoginFieldsEl.style.display = "none";
+        googleLoginRootEl.style.display = "block";
+        if (window.google && window.google.accounts && googleClientId) {
+          window.google.accounts.id.initialize({
+            client_id: googleClientId,
+            callback: (resp) => {
+              if (resp && resp.credential) loginWithGoogleIdToken(resp.credential);
+            }
+          });
+          const target = document.getElementById("google-signin-button");
+          target.innerHTML = "";
+          window.google.accounts.id.renderButton(target, { theme: "outline", size: "large", text: "continue_with", shape: "pill" });
+        } else {
+          authStatus.textContent = "Google Sign-In is not configured.";
+        }
+      } else {
+        legacyLoginFieldsEl.style.display = "";
+        googleLoginRootEl.style.display = "none";
+      }
+      return;
     } catch (_) {
       // Fallback keeps local/prod UI readable when talking to an older backend binary.
       expectedTickHz = FALLBACK_EXPECTED_TICK_HZ;
@@ -1233,6 +1355,63 @@
   function fmtNum(v, digits = 4) {
     if (!Number.isFinite(v)) return "—";
     return Number(v).toFixed(digits);
+  }
+
+  function isValidGameName(name) {
+    return /^[A-Za-z][A-Za-z0-9_-]{2,23}$/.test(String(name || ""));
+  }
+
+  let companyNameCheckTimer = null;
+  let snakeNameCheckTimer = null;
+
+  async function checkNameAvailability(kind, name) {
+    const path = kind === "company" ? `/names/check-company?name=${encodeURIComponent(name)}` : `/names/check-snake?name=${encodeURIComponent(name)}`;
+    const res = await fetch(apiPath(path));
+    if (!res.ok) return { valid: false, taken: false };
+    return await res.json();
+  }
+
+  function setNameHint(el, text, ok) {
+    if (!el) return;
+    el.textContent = text || "";
+    el.style.color = ok ? "#166534" : "#b91c1c";
+  }
+
+  function showOnboardingWelcomeThenForm() {
+    onboardingBackdropEl.style.display = "flex";
+    onboardingTitleEl.textContent = "Welcome";
+    onboardingCopyEl.innerHTML = [
+      "Welcome to the Economic Arena.",
+      "You are now the owner of a new Company.",
+      "Harvest. Grow. Compete. Influence the world."
+    ].join("<br />");
+    onboardingFormEl.style.display = "none";
+    setTimeout(() => {
+      onboardingTitleEl.textContent = "Set Your Company And First Snake";
+      onboardingCopyEl.textContent = "";
+      onboardingFormEl.style.display = "block";
+    }, 3500);
+  }
+
+  async function showLoginTransition(durationMs = 2600) {
+    if (!loginTransitionBackdropEl || !loginTransitionTipEl) return;
+    if (loginTipTimer) {
+      clearInterval(loginTipTimer);
+      loginTipTimer = null;
+    }
+    let idx = 0;
+    loginTransitionTipEl.textContent = LOGIN_TIPS[idx];
+    loginTransitionBackdropEl.style.display = "flex";
+    loginTipTimer = setInterval(() => {
+      idx = (idx + 1) % LOGIN_TIPS.length;
+      loginTransitionTipEl.textContent = LOGIN_TIPS[idx];
+    }, 1200);
+    await new Promise((resolve) => setTimeout(resolve, Math.max(1200, durationMs)));
+    if (loginTipTimer) {
+      clearInterval(loginTipTimer);
+      loginTipTimer = null;
+    }
+    loginTransitionBackdropEl.style.display = "none";
   }
 
   function renderWorldEvolutionLog() {
@@ -1424,6 +1603,7 @@
   }
 
   async function login() {
+    if (googleAuthEnabled) return;
     const username = document.getElementById("username").value.trim();
     const password = document.getElementById("password").value.trim();
 
@@ -1458,8 +1638,39 @@
     await maybeShowWorldEvolvedModal(me && typeof me.last_seen_world_version === "string" ? me.last_seen_world_version : "");
   }
 
+  async function loginWithGoogleIdToken(idToken) {
+    const res = await fetch(apiPath("/auth/google"), {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({ id_token: idToken })
+    });
+    if (!res.ok) {
+      authStatus.textContent = "Google login failed";
+      return;
+    }
+    const data = await res.json();
+    token = data.token;
+    myUserId = data.user_id;
+    onboardingRequired = !!data.onboarding_required;
+    localStorage.setItem(TOKEN_STORAGE_KEY, token);
+    localStorage.setItem(USER_ID_STORAGE_KEY, String(myUserId));
+    authStatus.textContent = `Logged in as user_id=${myUserId}`;
+    createSnakeBtn.disabled = onboardingRequired;
+    applyViewControlAuthState();
+    restartStream();
+    await loadMySnakes();
+    const me = await loadUserMe();
+    if (onboardingRequired || (me && me.onboarding_completed === false)) {
+      showOnboardingWelcomeThenForm();
+    } else {
+      await showLoginTransition();
+      await maybeShowWorldEvolvedModal(me && typeof me.last_seen_world_version === "string" ? me.last_seen_world_version : "");
+    }
+  }
+
   function applyViewControlAuthState() {
     const isAuth = !!token;
+    const canOperateWorld = isAuth && !onboardingRequired;
     zoomInBtn.disabled = !isAuth;
     zoomOutBtn.disabled = !isAuth;
     zoomResetBtn.disabled = !isAuth;
@@ -1474,6 +1685,8 @@
     publicViewHintEl.style.display = isAuth ? "none" : "inline";
     viewControlsEl.style.opacity = isAuth ? "1" : "0.82";
     ecoAuthNoteEl.style.display = isAuth ? "none" : "block";
+    settingsPanelEl.style.display = isAuth ? "block" : "none";
+    createSnakeBtn.disabled = !canOperateWorld;
     if (!isAuth) {
       latestUserMetrics = null;
       periodStartUserMetrics = null;
@@ -1488,7 +1701,7 @@
   }
 
   function updateActionButtons() {
-    const isAuth = !!token;
+    const isAuth = !!token && !onboardingRequired;
     const hasSnake = !!selectedSnakeId;
     const attachAmount = Math.floor(Number(attachAmountEl.value || "0"));
     const attachValid = isAuth && hasSnake && Number.isFinite(attachAmount) && attachAmount > 0 && attachAmount <= myBalance;
@@ -1734,6 +1947,105 @@
   attach50Btn.onclick = () => attachCells(50);
   borrowAmountEl.addEventListener("input", updateActionButtons);
   attachAmountEl.addEventListener("input", updateActionButtons);
+  companyNameInputEl.addEventListener("input", () => {
+    const name = companyNameInputEl.value.trim();
+    if (!isValidGameName(name)) {
+      setNameHint(companyNameHintEl, "3-24 chars, start with letter, letters/numbers/_/- only", false);
+      return;
+    }
+    setNameHint(companyNameHintEl, "Checking availability...", true);
+    if (companyNameCheckTimer) clearTimeout(companyNameCheckTimer);
+    companyNameCheckTimer = setTimeout(async () => {
+      const r = await checkNameAvailability("company", name);
+      if (!r.valid) setNameHint(companyNameHintEl, "Invalid name format", false);
+      else if (r.taken) setNameHint(companyNameHintEl, "Name already taken", false);
+      else setNameHint(companyNameHintEl, "Name available", true);
+    }, 250);
+  });
+  starterSnakeNameInputEl.addEventListener("input", () => {
+    const name = starterSnakeNameInputEl.value.trim();
+    if (!isValidGameName(name)) {
+      setNameHint(snakeNameHintEl, "3-24 chars, start with letter, letters/numbers/_/- only", false);
+      return;
+    }
+    setNameHint(snakeNameHintEl, "Checking availability...", true);
+    if (snakeNameCheckTimer) clearTimeout(snakeNameCheckTimer);
+    snakeNameCheckTimer = setTimeout(async () => {
+      const r = await checkNameAvailability("snake", name);
+      if (!r.valid) setNameHint(snakeNameHintEl, "Invalid name format", false);
+      else if (r.taken) setNameHint(snakeNameHintEl, "Name already taken", false);
+      else setNameHint(snakeNameHintEl, "Name available", true);
+    }, 250);
+  });
+  [companyNameInputEl, starterSnakeNameInputEl].forEach((el) => {
+    el.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") {
+        ev.preventDefault();
+        completeOnboardingBtn.click();
+      }
+    });
+  });
+  completeOnboardingBtn.addEventListener("click", async () => {
+    const companyName = companyNameInputEl.value.trim();
+    const snakeName = starterSnakeNameInputEl.value.trim();
+    if (!isValidGameName(companyName) || !isValidGameName(snakeName)) {
+      setNameHint(companyNameHintEl, "Please enter valid names first", false);
+      setNameHint(snakeNameHintEl, "Please enter valid names first", false);
+      return;
+    }
+    const c = await checkNameAvailability("company", companyName);
+    const s = await checkNameAvailability("snake", snakeName);
+    if (c.taken || s.taken) {
+      if (c.taken) setNameHint(companyNameHintEl, "Name already taken", false);
+      if (s.taken) setNameHint(snakeNameHintEl, "Name already taken", false);
+      return;
+    }
+    const res = await api("/onboarding/complete", {
+      method: "POST",
+      body: JSON.stringify({ company_name: companyName, snake_name: snakeName })
+    });
+    if (!res.ok) {
+      const t = await res.text();
+      setNameHint(companyNameHintEl, `Onboarding failed: ${t}`, false);
+      return;
+    }
+    onboardingBackdropEl.style.display = "none";
+    onboardingRequired = false;
+    applyViewControlAuthState();
+    await loadMySnakes();
+    const me = await loadUserMe();
+    await maybeShowWorldEvolvedModal(me && typeof me.last_seen_world_version === "string" ? me.last_seen_world_version : "");
+  });
+  deleteAccountBtn.addEventListener("click", () => {
+    deleteCompanyConfirmInputEl.value = "";
+    deleteAccountBackdropEl.style.display = "flex";
+  });
+  deleteAccountCancelBtn.addEventListener("click", () => {
+    deleteAccountBackdropEl.style.display = "none";
+  });
+  deleteAccountConfirmBtn.addEventListener("click", async () => {
+    const companyName = deleteCompanyConfirmInputEl.value.trim();
+    if (!companyName) return;
+    const res = await api("/settings/delete-account", {
+      method: "POST",
+      body: JSON.stringify({ company_name_confirmation: companyName })
+    });
+    if (!res.ok) {
+      const t = await res.text();
+      alert("Delete failed: " + t);
+      return;
+    }
+    deleteAccountBackdropEl.style.display = "none";
+    token = null;
+    myUserId = null;
+    localStorage.removeItem(TOKEN_STORAGE_KEY);
+    localStorage.removeItem(USER_ID_STORAGE_KEY);
+    localStorage.removeItem(SELECTED_SNAKE_STORAGE_KEY);
+    localStorage.removeItem(WATCHED_SNAKE_STORAGE_KEY);
+    applyViewControlAuthState();
+    authStatus.textContent = "Account deleted";
+    restartStream();
+  });
 
   function handleWsMessage(raw) {
     let msg = null;
@@ -2125,10 +2437,15 @@
     await loadWorldEvolutionLog().catch(() => null);
     if (token && myUserId) {
       authStatus.textContent = `Logged in as user_id=${myUserId}`;
-      createSnakeBtn.disabled = false;
       await loadMySnakes();
       const me = await loadUserMe();
-      await maybeShowWorldEvolvedModal(me && typeof me.last_seen_world_version === "string" ? me.last_seen_world_version : "");
+      onboardingRequired = !!(me && me.onboarding_completed === false);
+      applyViewControlAuthState();
+      if (onboardingRequired) {
+        showOnboardingWelcomeThenForm();
+      } else {
+        await maybeShowWorldEvolvedModal(me && typeof me.last_seen_world_version === "string" ? me.last_seen_world_version : "");
+      }
     }
     if (!token) {
       await initSpectatorCameraBeforeStream();

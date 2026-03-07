@@ -1,5 +1,6 @@
 // snake_server.cpp
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <csignal>
@@ -28,6 +29,12 @@
 #include <vector>
 
 #include <aws/core/Aws.h>
+#include <aws/core/client/ClientConfiguration.h>
+#include <aws/core/http/HttpClientFactory.h>
+#include <aws/core/http/HttpClient.h>
+#include <aws/core/http/HttpRequest.h>
+#include <aws/core/http/HttpTypes.h>
+#include <aws/core/utils/StringUtils.h>
 
 #include "economy/economy_v1.h"
 #include "economy_engine/compute.h"
@@ -827,6 +834,111 @@ static optional<bool> get_json_bool_field(const string& body, const string& key)
   return nullopt;
 }
 
+static string normalize_name(const string& in) {
+  string out;
+  out.reserve(in.size());
+  size_t start = 0;
+  while (start < in.size() && isspace(static_cast<unsigned char>(in[start]))) ++start;
+  size_t end = in.size();
+  while (end > start && isspace(static_cast<unsigned char>(in[end - 1]))) --end;
+  for (size_t i = start; i < end; ++i) {
+    out.push_back(static_cast<char>(tolower(static_cast<unsigned char>(in[i]))));
+  }
+  return out;
+}
+
+static bool is_valid_game_name(const string& in) {
+  static const std::regex re(R"(^[A-Za-z][A-Za-z0-9_-]{2,23}$)");
+  return std::regex_match(in, re);
+}
+
+struct GoogleIdentity {
+  string subject;
+  string email;
+  string issuer;
+  string audience;
+  int64_t exp = 0;
+};
+
+static optional<GoogleIdentity> parse_google_identity_claims(const string& payload) {
+  GoogleIdentity out;
+  out.subject = get_json_string_field(payload, "sub").value_or("");
+  out.email = get_json_string_field(payload, "email").value_or("");
+  out.issuer = get_json_string_field(payload, "iss").value_or("");
+  out.audience = get_json_string_field(payload, "aud").value_or("");
+  out.exp = static_cast<int64_t>(get_json_int_field(payload, "exp").value_or(0));
+  if (out.exp <= 0) {
+    const auto exp_str = get_json_string_field(payload, "exp");
+    if (exp_str.has_value()) {
+      try {
+        out.exp = std::stoll(*exp_str);
+      } catch (...) {
+        out.exp = 0;
+      }
+    }
+  }
+  if (out.subject.empty() || out.audience.empty() || out.issuer.empty() || out.exp <= 0) return nullopt;
+  return out;
+}
+
+static bool is_google_issuer_allowed(const string& iss) {
+  return iss == "https://accounts.google.com" || iss == "accounts.google.com";
+}
+
+static bool read_file_bytes(const std::string& path, std::string& out) {
+  std::ifstream f(path, std::ios::binary);
+  if (!f.is_open()) return false;
+  std::ostringstream ss;
+  ss << f.rdbuf();
+  out = ss.str();
+  return true;
+}
+
+static bool is_safe_static_subpath(const std::string& rel) {
+  if (rel.empty()) return false;
+  if (rel.find("..") != std::string::npos) return false;
+  if (rel.front() == '/' || rel.front() == '\\') return false;
+  return rel.find('\\') == std::string::npos;
+}
+
+static std::string content_type_for_path(const std::string& path) {
+  auto dot = path.find_last_of('.');
+  const std::string ext = (dot == std::string::npos) ? "" : path.substr(dot);
+  if (ext == ".html") return "text/html; charset=utf-8";
+  if (ext == ".css") return "text/css; charset=utf-8";
+  if (ext == ".js") return "application/javascript; charset=utf-8";
+  if (ext == ".json") return "application/json";
+  if (ext == ".png") return "image/png";
+  if (ext == ".jpg" || ext == ".jpeg") return "image/jpeg";
+  if (ext == ".svg") return "image/svg+xml";
+  if (ext == ".webp") return "image/webp";
+  if (ext == ".ico") return "image/x-icon";
+  return "application/octet-stream";
+}
+
+static optional<GoogleIdentity> verify_google_id_token_with_google(const string& id_token) {
+  Aws::Client::ClientConfiguration client_cfg;
+  client_cfg.scheme = Aws::Http::Scheme::HTTPS;
+  client_cfg.connectTimeoutMs = 2500;
+  client_cfg.requestTimeoutMs = 4000;
+  const Aws::String encoded = Aws::Utils::StringUtils::URLEncode(id_token.c_str());
+  Aws::Http::URI uri(Aws::String("https://oauth2.googleapis.com/tokeninfo?id_token=") + encoded);
+  auto request = Aws::Http::CreateHttpRequest(
+      uri,
+      Aws::Http::HttpMethod::HTTP_GET,
+      Aws::Utils::Stream::DefaultResponseStreamFactoryMethod);
+  if (!request) return nullopt;
+  auto client = Aws::Http::CreateHttpClient(client_cfg);
+  if (!client) return nullopt;
+  auto response = client->MakeRequest(request);
+  if (!response || response->GetResponseCode() != Aws::Http::HttpResponseCode::OK) return nullopt;
+
+  std::stringstream ss;
+  ss << response->GetResponseBody().rdbuf();
+  const string payload = ss.str();
+  return parse_google_identity_claims(payload);
+}
+
 static bool origin_allowed_for_ws(const string& origin) {
   if (origin.empty()) return false;
   auto starts_with = [](const string& s, const string& p) {
@@ -1000,6 +1112,8 @@ int main(int argc, char** argv) {
        << ", ECONOMY_PERIOD_HISTORY_DAYS=" << runtime_cfg.economy_period_history_days
        << ", PERSISTENCE_PROFILE=" << runtime_cfg.persistence_profile
        << ", PERSISTENCE_SQLITE_PATH=" << runtime_cfg.persistence_sqlite_path
+       << ", GOOGLE_AUTH_ENABLED=" << (runtime_cfg.google_auth_enabled ? "true" : "false")
+       << ", STARTER_LIQUID_ASSETS=" << runtime_cfg.starter_liquid_assets
        << "\n";
 
   unique_ptr<storage::IStorage> storage;
@@ -1614,7 +1728,9 @@ int main(int argc, char** argv) {
       << "\"aoi_radius\":" << runtime_cfg.aoi_radius << ","
       << "\"aoi_pad_chunks\":" << runtime_cfg.aoi_pad_chunks << ","
       << "\"single_chunk_mode\":" << (runtime_cfg.single_chunk_mode ? "true" : "false") << ","
-      << "\"aoi_enabled\":" << (runtime_cfg.aoi_enabled ? "true" : "false")
+      << "\"aoi_enabled\":" << (runtime_cfg.aoi_enabled ? "true" : "false") << ","
+      << "\"google_auth_enabled\":" << (runtime_cfg.google_auth_enabled ? "true" : "false") << ","
+      << "\"google_client_id\":\"" << json_escape(runtime_cfg.google_client_id) << "\""
       << "}";
     res.set_content(o.str(), "application/json");
   });
@@ -1624,23 +1740,80 @@ int main(int argc, char** argv) {
     res.set_content("{\"ok\":true}", "application/json");
   });
 
+  // Local/dev fallback static serving so http://127.0.0.1:8080 works without a reverse proxy.
+  // In prod, Caddy/Nginx static serving still takes precedence.
+  srv.Get("/", [&](const httplib::Request&, httplib::Response& res) {
+    add_cors(res);
+    std::string body;
+    if (!read_file_bytes("index.html", body)) {
+      res.status = 404;
+      res.set_content("{\"error\":\"index_not_found\"}", "application/json");
+      return;
+    }
+    res.set_content(body, "text/html; charset=utf-8");
+  });
+
+  srv.Get("/index.html", [&](const httplib::Request&, httplib::Response& res) {
+    add_cors(res);
+    std::string body;
+    if (!read_file_bytes("index.html", body)) {
+      res.status = 404;
+      res.set_content("{\"error\":\"index_not_found\"}", "application/json");
+      return;
+    }
+    res.set_content(body, "text/html; charset=utf-8");
+  });
+
   srv.Get("/assets/world_evolution_log.json", [&](const httplib::Request&, httplib::Response& res) {
     add_cors(res);
-    std::ifstream in("assets/world_evolution_log.json");
-    if (!in.is_open()) {
+    std::string body;
+    if (!read_file_bytes("assets/world_evolution_log.json", body)) {
       res.status = 404;
       res.set_content("{\"error\":\"world_evolution_log_not_found\"}", "application/json");
       return;
     }
-    std::ostringstream buf;
-    buf << in.rdbuf();
-    const std::string body = buf.str();
     if (body.empty()) {
       res.status = 500;
       res.set_content("{\"error\":\"world_evolution_log_empty\"}", "application/json");
       return;
     }
     res.set_content(body, "application/json");
+  });
+
+  srv.Get(R"(/src/(.+))", [&](const httplib::Request& req, httplib::Response& res) {
+    add_cors(res);
+    const std::string rel = req.matches[1];
+    if (!is_safe_static_subpath(rel)) {
+      res.status = 400;
+      res.set_content("{\"error\":\"bad_path\"}", "application/json");
+      return;
+    }
+    const std::string full = "src/" + rel;
+    std::string body;
+    if (!read_file_bytes(full, body)) {
+      res.status = 404;
+      res.set_content("{\"error\":\"not_found\"}", "application/json");
+      return;
+    }
+    res.set_content(body, content_type_for_path(full).c_str());
+  });
+
+  srv.Get(R"(/assets/(.+))", [&](const httplib::Request& req, httplib::Response& res) {
+    add_cors(res);
+    const std::string rel = req.matches[1];
+    if (!is_safe_static_subpath(rel)) {
+      res.status = 400;
+      res.set_content("{\"error\":\"bad_path\"}", "application/json");
+      return;
+    }
+    const std::string full = "assets/" + rel;
+    std::string body;
+    if (!read_file_bytes(full, body)) {
+      res.status = 404;
+      res.set_content("{\"error\":\"not_found\"}", "application/json");
+      return;
+    }
+    res.set_content(body, content_type_for_path(full).c_str());
   });
 
   srv.Get("/economy/state", [&](const httplib::Request&, httplib::Response& res) {
@@ -1914,6 +2087,10 @@ int main(int argc, char** argv) {
     ostringstream o;
     o << "{"
       << "\"user_id\":" << *uid << ","
+      << "\"auth_provider\":\"" << json_escape(user->auth_provider) << "\","
+      << "\"onboarding_completed\":" << (user->onboarding_completed ? "true" : "false") << ","
+      << "\"company_name\":\"" << json_escape(user->company_name) << "\","
+      << "\"starter_snake_id\":\"" << json_escape(user->starter_snake_id) << "\","
       << "\"balance_mi\":" << user->balance_mi << ","
       << "\"liquid_assets\":" << user->balance_mi << ","
       << "\"deployed_k\":" << deployed << ","
@@ -2260,8 +2437,24 @@ int main(int argc, char** argv) {
         });
   });
 
+  auto next_numeric_user_id = [&]() -> int {
+    int mx = 0;
+    for (const auto& u : storage->ListUsers()) {
+      try {
+        mx = std::max(mx, std::stoi(u.user_id));
+      } catch (...) {
+      }
+    }
+    return mx + 1;
+  };
+
   srv.Post("/auth/login", [&](const httplib::Request& req, httplib::Response& res) {
     add_cors(res);
+    if (runtime_cfg.google_auth_enabled) {
+      res.status = 403;
+      res.set_content("{\"error\":\"password_login_disabled\"}", "application/json");
+      return;
+    }
     auto u = get_json_string_field(req.body, "username");
     auto p = get_json_string_field(req.body, "password");
     if (!u || !p) {
@@ -2283,6 +2476,279 @@ int main(int argc, char** argv) {
     res.set_content(o.str(), "application/json");
   });
 
+  srv.Post("/auth/google", [&](const httplib::Request& req, httplib::Response& res) {
+    add_cors(res);
+    if (!runtime_cfg.google_auth_enabled) {
+      res.status = 403;
+      res.set_content("{\"error\":\"google_auth_disabled\"}", "application/json");
+      return;
+    }
+    if (runtime_cfg.google_client_id.empty()) {
+      res.status = 500;
+      res.set_content("{\"error\":\"google_client_id_missing\"}", "application/json");
+      return;
+    }
+    auto id_token = get_json_string_field(req.body, "id_token");
+    if (!id_token || id_token->empty()) {
+      res.status = 400;
+      res.set_content("{\"error\":\"missing_id_token\"}", "application/json");
+      return;
+    }
+    const auto claims = verify_google_id_token_with_google(*id_token);
+    if (!claims.has_value()) {
+      res.status = 401;
+      res.set_content("{\"error\":\"invalid_google_token\"}", "application/json");
+      return;
+    }
+    if (!is_google_issuer_allowed(claims->issuer)) {
+      res.status = 401;
+      res.set_content("{\"error\":\"invalid_google_issuer\"}", "application/json");
+      return;
+    }
+    if (claims->audience != runtime_cfg.google_client_id) {
+      res.status = 401;
+      res.set_content("{\"error\":\"invalid_google_audience\"}", "application/json");
+      return;
+    }
+    const int64_t now_s = static_cast<int64_t>(std::time(nullptr));
+    if (claims->exp < now_s - 30) {
+      res.status = 401;
+      res.set_content("{\"error\":\"google_token_expired\"}", "application/json");
+      return;
+    }
+
+    auto user = storage->GetUserByGoogleSubject(claims->subject);
+    bool first_login = false;
+    if (!user.has_value()) {
+      first_login = true;
+      storage::User nu;
+      nu.user_id = std::to_string(next_numeric_user_id());
+      nu.username = "g_" + claims->subject.substr(0, std::min<size_t>(claims->subject.size(), 20));
+      nu.password_hash = "";
+      nu.balance_mi = 0;
+      nu.created_at = now_s;
+      nu.updated_at = now_s;
+      nu.auth_provider = "google";
+      nu.google_subject_id = claims->subject;
+      nu.onboarding_completed = false;
+      nu.account_status = "active";
+      if (!storage->PutUser(nu)) {
+        res.status = 500;
+        res.set_content("{\"error\":\"user_create_failed\"}", "application/json");
+        return;
+      }
+      user = storage->GetUserById(nu.user_id);
+    }
+    if (!user.has_value()) {
+      res.status = 500;
+      res.set_content("{\"error\":\"user_load_failed\"}", "application/json");
+      return;
+    }
+    if (user->account_status == "deleted") {
+      res.status = 403;
+      res.set_content("{\"error\":\"account_deleted\"}", "application/json");
+      return;
+    }
+    if (user->auth_provider != "google") {
+      user->auth_provider = "google";
+      user->updated_at = now_s;
+      (void)storage->PutUser(*user);
+    }
+    int uid = 0;
+    try {
+      uid = stoi(user->user_id);
+    } catch (...) {
+      res.status = 500;
+      res.set_content("{\"error\":\"user_id_invalid\"}", "application/json");
+      return;
+    }
+    string token = auth.issue_token(uid);
+    ostringstream o;
+    o << "{"
+      << "\"token\":\"" << json_escape(token) << "\","
+      << "\"user_id\":" << uid << ","
+      << "\"first_login\":" << (first_login ? "true" : "false") << ","
+      << "\"onboarding_required\":" << (user->onboarding_completed ? "false" : "true")
+      << "}";
+    res.set_content(o.str(), "application/json");
+  });
+
+  srv.Get("/names/check-company", [&](const httplib::Request& req, httplib::Response& res) {
+    add_cors(res);
+    if (!req.has_param("name")) {
+      res.status = 400;
+      res.set_content("{\"error\":\"missing_name\"}", "application/json");
+      return;
+    }
+    const string name = req.get_param_value("name");
+    const bool valid = is_valid_game_name(name);
+    const string norm = normalize_name(name);
+    const bool taken = valid ? storage->CompanyNameExistsNormalized(norm) : false;
+    ostringstream o;
+    o << "{\"valid\":" << (valid ? "true" : "false")
+      << ",\"taken\":" << (taken ? "true" : "false") << "}";
+    res.set_content(o.str(), "application/json");
+  });
+
+  srv.Get("/names/check-snake", [&](const httplib::Request& req, httplib::Response& res) {
+    add_cors(res);
+    if (!req.has_param("name")) {
+      res.status = 400;
+      res.set_content("{\"error\":\"missing_name\"}", "application/json");
+      return;
+    }
+    const string name = req.get_param_value("name");
+    const bool valid = is_valid_game_name(name);
+    const string norm = normalize_name(name);
+    const bool taken = valid ? storage->SnakeNameExistsNormalized(norm) : false;
+    ostringstream o;
+    o << "{\"valid\":" << (valid ? "true" : "false")
+      << ",\"taken\":" << (taken ? "true" : "false") << "}";
+    res.set_content(o.str(), "application/json");
+  });
+
+  srv.Post("/onboarding/complete", [&](const httplib::Request& req, httplib::Response& res) {
+    add_cors(res);
+    auto uid_opt = require_auth_user(auth, req);
+    if (!uid_opt) {
+      res.status = 401;
+      res.set_content("{\"error\":\"unauthorized\"}", "application/json");
+      return;
+    }
+    const int uid = *uid_opt;
+    const string user_id = std::to_string(uid);
+    auto user = storage->GetUserById(user_id);
+    if (!user.has_value()) {
+      res.status = 404;
+      res.set_content("{\"error\":\"user_not_found\"}", "application/json");
+      return;
+    }
+    if (user->onboarding_completed) {
+      res.set_content("{\"ok\":true,\"already_completed\":true}", "application/json");
+      return;
+    }
+    auto company_name = get_json_string_field(req.body, "company_name");
+    auto snake_name = get_json_string_field(req.body, "snake_name");
+    if (!company_name || !snake_name || !is_valid_game_name(*company_name) || !is_valid_game_name(*snake_name)) {
+      res.status = 400;
+      res.set_content("{\"error\":\"invalid_name\"}", "application/json");
+      return;
+    }
+    const string company_norm = normalize_name(*company_name);
+    const string snake_norm = normalize_name(*snake_name);
+    if (storage->CompanyNameExistsNormalized(company_norm, user_id)) {
+      res.status = 409;
+      res.set_content("{\"error\":\"company_name_taken\"}", "application/json");
+      return;
+    }
+    if (storage->SnakeNameExistsNormalized(snake_norm)) {
+      res.status = 409;
+      res.set_content("{\"error\":\"snake_name_taken\"}", "application/json");
+      return;
+    }
+
+    int starter_snake_id = 0;
+    auto existing = game.list_user_snakes(uid);
+    if (!existing.empty()) {
+      starter_snake_id = existing.front().id;
+    } else {
+      const string color = "#00ffaa";
+      auto created = game.create_snake_for_user(uid, color);
+      if (!created.has_value()) {
+        res.status = 500;
+        res.set_content("{\"error\":\"starter_snake_create_failed\"}", "application/json");
+        return;
+      }
+      starter_snake_id = *created;
+      game.flush_persistence_delta();
+      persistence_coordinator.FlushNow();
+    }
+
+    auto starter_snake = storage->GetSnakeById(std::to_string(starter_snake_id));
+    if (starter_snake.has_value()) {
+      starter_snake->snake_name = *snake_name;
+      starter_snake->snake_name_normalized = snake_norm;
+      starter_snake->updated_at = static_cast<int64_t>(time(nullptr));
+      if (!storage->PutSnake(*starter_snake)) {
+        res.status = 500;
+        res.set_content("{\"error\":\"starter_snake_update_failed\"}", "application/json");
+        return;
+      }
+    }
+
+    // Guard starter grants so retried onboarding requests do not double-credit assets.
+    const bool should_grant_starter_assets =
+        runtime_cfg.starter_liquid_assets > 0 &&
+        user->starter_snake_id.empty() &&
+        user->balance_mi < runtime_cfg.starter_liquid_assets;
+    if (should_grant_starter_assets) {
+      if (!storage->IncrementUserBalance(user_id, runtime_cfg.starter_liquid_assets)) {
+        res.status = 500;
+        res.set_content("{\"error\":\"starter_assets_failed\"}", "application/json");
+        return;
+      }
+    }
+
+    user = storage->GetUserById(user_id);
+    if (!user.has_value()) {
+      res.status = 500;
+      res.set_content("{\"error\":\"user_reload_failed\"}", "application/json");
+      return;
+    }
+    user->company_name = *company_name;
+    user->company_name_normalized = company_norm;
+    user->onboarding_completed = true;
+    user->starter_snake_id = std::to_string(starter_snake_id);
+    user->updated_at = static_cast<int64_t>(time(nullptr));
+    if (!storage->PutUser(*user)) {
+      res.status = 500;
+      res.set_content("{\"error\":\"user_update_failed\"}", "application/json");
+      return;
+    }
+    ostringstream o;
+    o << "{\"ok\":true,\"starter_snake_id\":" << starter_snake_id
+      << ",\"starter_liquid_assets\":" << runtime_cfg.starter_liquid_assets << "}";
+    res.set_content(o.str(), "application/json");
+  });
+
+  srv.Post("/settings/delete-account", [&](const httplib::Request& req, httplib::Response& res) {
+    add_cors(res);
+    auto uid_opt = require_auth_user(auth, req);
+    if (!uid_opt) {
+      res.status = 401;
+      res.set_content("{\"error\":\"unauthorized\"}", "application/json");
+      return;
+    }
+    const int uid = *uid_opt;
+    const string user_id = std::to_string(uid);
+    auto user = storage->GetUserById(user_id);
+    if (!user.has_value()) {
+      res.status = 404;
+      res.set_content("{\"error\":\"user_not_found\"}", "application/json");
+      return;
+    }
+    auto confirm = get_json_string_field(req.body, "company_name_confirmation");
+    if (!confirm || *confirm != user->company_name) {
+      res.status = 400;
+      res.set_content("{\"error\":\"company_name_mismatch\"}", "application/json");
+      return;
+    }
+    const auto all_snakes = storage->ListSnakes();
+    for (const auto& s : all_snakes) {
+      if (s.owner_user_id != user_id) continue;
+      (void)storage->DeleteSnakeEventsBySnakeId(s.snake_id);
+      (void)storage->DeleteSnake(s.snake_id);
+    }
+    if (!storage->DeleteUserById(user_id)) {
+      res.status = 500;
+      res.set_content("{\"error\":\"delete_failed\"}", "application/json");
+      return;
+    }
+    std::cerr << "[account_delete] user_id=" << user_id << " company_name=" << user->company_name << "\n";
+    game.load_from_storage_or_seed_positions();
+    res.set_content("{\"ok\":true}", "application/json");
+  });
+
   srv.Get("/me/snakes", [&](const httplib::Request& req, httplib::Response& res) {
     add_cors(res);
     auto uid = require_auth_user(auth, req);
@@ -2296,7 +2762,13 @@ int main(int argc, char** argv) {
     ostringstream o;
     o << "{\"snakes\":[";
     for (size_t i = 0; i < snakes.size(); ++i) {
+      std::string snake_name = "snake-" + std::to_string(snakes[i].id);
+      const auto db_snake = storage->GetSnakeById(std::to_string(snakes[i].id));
+      if (db_snake.has_value() && !db_snake->snake_name.empty()) {
+        snake_name = db_snake->snake_name;
+      }
       o << "{" << "\"id\":" << snakes[i].id << ","
+        << "\"name\":\"" << json_escape(snake_name) << "\","
         << "\"color\":\"" << json_escape(snakes[i].color) << "\"," 
         << "\"paused\":" << (snakes[i].paused ? "true" : "false") << ","
         << "\"len\":" << snakes[i].body.size() << "}";
