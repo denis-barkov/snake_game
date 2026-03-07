@@ -17,6 +17,7 @@ class IStorage {
   virtual std::optional<User> GetUserByUsername(const std::string& username) = 0;
   virtual std::optional<User> GetUserById(const std::string& user_id) = 0;
   virtual bool PutUser(const User& u) = 0;
+  virtual bool UpdateUserLastSeenWorldVersion(const std::string& user_id, const std::string& version) = 0;
   virtual bool UpdateUserBalance(const std::string& user_id, int64_t new_balance) = 0;
   virtual bool IncrementUserBalance(const std::string& user_id, int64_t delta_balance) = 0;
   virtual bool BorrowCellsAndTrackPeriod(const std::string& user_id,

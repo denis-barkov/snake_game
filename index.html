@@ -264,6 +264,99 @@
     }
     .badge { width: 16px; height: 16px; border-radius: 4px; display: inline-block; margin-right: 8px; }
     small { color: #666; }
+    #version-badge {
+      position: fixed;
+      top: 12px;
+      right: 12px;
+      z-index: 40;
+      border: 1px solid #cfd8dc;
+      border-radius: 999px;
+      background: #fff;
+      padding: 6px 10px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    #world-log-panel {
+      position: fixed;
+      top: 52px;
+      right: 12px;
+      width: min(520px, calc(100vw - 24px));
+      max-height: min(70vh, 720px);
+      background: #fff;
+      border: 1px solid #cfd8dc;
+      border-radius: 10px;
+      box-shadow: 0 10px 28px rgba(0,0,0,0.14);
+      z-index: 45;
+      display: none;
+      overflow: hidden;
+    }
+    #world-log-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 12px;
+      border-bottom: 1px solid #eceff1;
+      font-weight: 700;
+    }
+    #world-log-list {
+      overflow: auto;
+      max-height: calc(min(70vh, 720px) - 96px);
+      padding: 8px 10px;
+    }
+    .world-log-entry {
+      border: 1px solid #eceff1;
+      border-radius: 8px;
+      padding: 8px 10px;
+      margin-bottom: 8px;
+      background: #fcfcfc;
+    }
+    .world-log-entry summary {
+      cursor: pointer;
+      font-weight: 600;
+    }
+    .world-log-entry ul {
+      margin: 8px 0 0 18px;
+      padding: 0;
+    }
+    #world-log-footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 12px 10px;
+      border-top: 1px solid #eceff1;
+      background: #fafafa;
+    }
+    #world-evolved-modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.35);
+      z-index: 60;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 12px;
+    }
+    #world-evolved-modal {
+      width: min(460px, calc(100vw - 24px));
+      background: #fff;
+      border-radius: 12px;
+      border: 1px solid #d7dde2;
+      padding: 16px;
+      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.22);
+    }
+    #world-evolved-modal h3 {
+      margin: 0 0 8px;
+      font-size: 18px;
+    }
+    #world-evolved-modal p {
+      margin: 0 0 14px;
+      color: #334155;
+    }
+    #world-evolved-actions {
+      display: flex;
+      gap: 8px;
+      justify-content: flex-end;
+    }
 
     @media (max-width: 980px) {
       .layout {
@@ -294,10 +387,38 @@
       .eco-grid {
         grid-template-columns: 1fr;
       }
+      #world-log-panel {
+        top: 52px;
+        right: 8px;
+        left: 8px;
+        width: auto;
+      }
     }
   </style>
 </head>
 <body>
+  <button id="version-badge" type="button">Version —</button>
+  <section id="world-log-panel" aria-label="World Evolution Log">
+    <div id="world-log-header">
+      <span>World Evolution Log</span>
+      <button id="world-log-close" type="button">Close</button>
+    </div>
+    <div id="world-log-list"></div>
+    <div id="world-log-footer">
+      <small id="world-log-current">Current: —</small>
+      <button id="world-log-archive" type="button">View Full Archive</button>
+    </div>
+  </section>
+  <div id="world-evolved-modal-backdrop">
+    <div id="world-evolved-modal" role="dialog" aria-modal="true" aria-label="World update">
+      <h3 id="world-evolved-title">The World Has Evolved</h3>
+      <p id="world-evolved-text">Version — Introduced</p>
+      <div id="world-evolved-actions">
+        <button id="world-evolved-dismiss" type="button">Dismiss</button>
+        <button id="world-evolved-view" type="button">View Changes</button>
+      </div>
+    </div>
+  </div>
   <div class="hero">
     <img src="src/images/snake_logo.png" alt="Terrarium Snake Club logo" />
     <div>
@@ -794,6 +915,8 @@
   const BOUNDS_TOGGLE_STORAGE_KEY = "snake_bounds_toggle";
   const EDGE_TOGGLE_STORAGE_KEY = "snake_edge_toggle";
   const MY_ECON_OPEN_STORAGE_KEY = "snake_my_economy_open";
+  const WORLD_LOG_CACHE_KEY = "snake_world_log_cache_v1";
+  const WORLD_LOG_ARCHIVE_OPEN_KEY = "snake_world_log_archive_open";
 
   let token = localStorage.getItem(TOKEN_STORAGE_KEY);
   let myUserId = Number(localStorage.getItem(USER_ID_STORAGE_KEY));
@@ -803,6 +926,8 @@
   let watchedSnakeId = Number(localStorage.getItem(WATCHED_SNAKE_STORAGE_KEY));
   if (!Number.isFinite(watchedSnakeId) || watchedSnakeId <= 0) watchedSnakeId = null;
   let latestServerState = null;
+  let worldEvolutionLog = null;
+  let worldLogArchiveOpen = localStorage.getItem(WORLD_LOG_ARCHIVE_OPEN_KEY) === "1";
   const stateBuffer = [];
   const camera = new Camera();
   const cameraSendSeq = { v: 0 };
@@ -842,6 +967,17 @@
   const ecoTipPopEl = document.getElementById("eco-tip-pop");
   const periodSummaryPopEl = document.getElementById("period-summary-pop");
   const attachHintEl = document.getElementById("attach-hint");
+  const versionBadgeEl = document.getElementById("version-badge");
+  const worldLogPanelEl = document.getElementById("world-log-panel");
+  const worldLogListEl = document.getElementById("world-log-list");
+  const worldLogCloseEl = document.getElementById("world-log-close");
+  const worldLogArchiveEl = document.getElementById("world-log-archive");
+  const worldLogCurrentEl = document.getElementById("world-log-current");
+  const worldEvolvedBackdropEl = document.getElementById("world-evolved-modal-backdrop");
+  const worldEvolvedTitleEl = document.getElementById("world-evolved-title");
+  const worldEvolvedTextEl = document.getElementById("world-evolved-text");
+  const worldEvolvedDismissEl = document.getElementById("world-evolved-dismiss");
+  const worldEvolvedViewEl = document.getElementById("world-evolved-view");
   const ecoStatusEl = document.getElementById("ecoStatus");
   const authStatus = document.getElementById("authStatus");
   const mySnakesEl = document.getElementById("mySnakes");
@@ -1099,6 +1235,71 @@
     return Number(v).toFixed(digits);
   }
 
+  function renderWorldEvolutionLog() {
+    if (!worldEvolutionLog || !Array.isArray(worldEvolutionLog.entries)) return;
+    const entries = worldEvolutionLog.entries;
+    const visibleCount = worldLogArchiveOpen ? entries.length : Math.min(10, entries.length);
+    worldLogListEl.innerHTML = "";
+    for (let i = 0; i < visibleCount; i++) {
+      const entry = entries[i];
+      const details = document.createElement("details");
+      details.className = "world-log-entry";
+      if (i === 0) details.open = true;
+      const summary = document.createElement("summary");
+      summary.textContent = `Version ${entry.version} · ${entry.release_date}`;
+      details.appendChild(summary);
+      const ul = document.createElement("ul");
+      for (const note of (entry.notes || [])) {
+        const li = document.createElement("li");
+        li.textContent = note;
+        ul.appendChild(li);
+      }
+      details.appendChild(ul);
+      worldLogListEl.appendChild(details);
+    }
+    worldLogArchiveEl.style.display = entries.length > 10 && !worldLogArchiveOpen ? "" : "none";
+    versionBadgeEl.textContent = `Version ${worldEvolutionLog.current_version || "—"}`;
+    worldLogCurrentEl.textContent = `Current: ${worldEvolutionLog.current_version || "—"}`;
+  }
+
+  async function loadWorldEvolutionLog() {
+    if (worldEvolutionLog) return worldEvolutionLog;
+    const cached = sessionStorage.getItem(WORLD_LOG_CACHE_KEY);
+    if (cached) {
+      try {
+        worldEvolutionLog = JSON.parse(cached);
+        renderWorldEvolutionLog();
+        return worldEvolutionLog;
+      } catch (_) {}
+    }
+    const res = await fetch(apiPath("/assets/world_evolution_log.json"), { cache: "no-cache" });
+    if (!res.ok) throw new Error("world evolution log unavailable");
+    const data = await res.json();
+    worldEvolutionLog = data;
+    sessionStorage.setItem(WORLD_LOG_CACHE_KEY, JSON.stringify(data));
+    renderWorldEvolutionLog();
+    return data;
+  }
+
+  async function maybeShowWorldEvolvedModal(lastSeenVersion) {
+    if (!token) return;
+    const data = await loadWorldEvolutionLog().catch(() => null);
+    if (!data || !data.current_version) return;
+    const currentVersion = String(data.current_version);
+    if (lastSeenVersion === currentVersion) return;
+    worldEvolvedTitleEl.textContent = "The World Has Evolved";
+    worldEvolvedTextEl.textContent = `Version ${currentVersion} Introduced`;
+    worldEvolvedBackdropEl.style.display = "flex";
+  }
+
+  async function markWorldVersionSeen() {
+    if (!token || !worldEvolutionLog || !worldEvolutionLog.current_version) return;
+    await api("/user/world-version-seen", {
+      method: "POST",
+      body: JSON.stringify({ version: worldEvolutionLog.current_version })
+    });
+  }
+
   function updateMicroEconomyFromMetrics(metrics) {
     if (!metrics) {
       setEconomyUserFallback();
@@ -1253,7 +1454,8 @@
     applyViewControlAuthState();
     restartStream();
     await loadMySnakes();
-    await loadUserMe();
+    const me = await loadUserMe();
+    await maybeShowWorldEvolvedModal(me && typeof me.last_seen_world_version === "string" ? me.last_seen_world_version : "");
   }
 
   function applyViewControlAuthState() {
@@ -1376,9 +1578,9 @@
   }
 
   async function loadUserMe() {
-    if (!token) return;
+    if (!token) return null;
     const res = await api("/user/me");
-    if (!res.ok) return;
+    if (!res.ok) return null;
     const data = await res.json();
     const liquidAssets = Number.isFinite(Number(data.liquid_assets)) ? Number(data.liquid_assets) : Number(data.balance_mi);
     myBalance = Number.isFinite(liquidAssets) ? liquidAssets : 0;
@@ -1389,6 +1591,7 @@
       updateMicroEconomyFromMetrics(latestUserMetrics);
     }
     updateActionButtons();
+    return data;
   }
 
   async function borrowCells() {
@@ -1886,6 +2089,32 @@
     if (periodSummaryPopEl.contains(ev.target)) return;
     periodSummaryPopEl.style.display = "none";
   });
+  versionBadgeEl.addEventListener("click", async () => {
+    await loadWorldEvolutionLog().catch(() => null);
+    worldLogPanelEl.style.display = worldLogPanelEl.style.display === "block" ? "none" : "block";
+  });
+  worldLogCloseEl.addEventListener("click", () => {
+    worldLogPanelEl.style.display = "none";
+  });
+  worldLogArchiveEl.addEventListener("click", () => {
+    worldLogArchiveOpen = true;
+    localStorage.setItem(WORLD_LOG_ARCHIVE_OPEN_KEY, "1");
+    renderWorldEvolutionLog();
+  });
+  worldEvolvedDismissEl.addEventListener("click", async () => {
+    worldEvolvedBackdropEl.style.display = "none";
+    await markWorldVersionSeen().catch(() => null);
+  });
+  worldEvolvedViewEl.addEventListener("click", async () => {
+    worldEvolvedBackdropEl.style.display = "none";
+    worldLogPanelEl.style.display = "block";
+    await loadWorldEvolutionLog().catch(() => null);
+    await markWorldVersionSeen().catch(() => null);
+  });
+  worldEvolvedBackdropEl.addEventListener("click", (ev) => {
+    if (ev.target !== worldEvolvedBackdropEl) return;
+    worldEvolvedBackdropEl.style.display = "none";
+  });
   window.addEventListener("resize", () => {
     renderCurrentState();
     ecoTipPopEl.style.display = "none";
@@ -1893,11 +2122,13 @@
 
   async function bootApp() {
     applyViewControlAuthState();
+    await loadWorldEvolutionLog().catch(() => null);
     if (token && myUserId) {
       authStatus.textContent = `Logged in as user_id=${myUserId}`;
       createSnakeBtn.disabled = false;
-      loadMySnakes();
-      loadUserMe();
+      await loadMySnakes();
+      const me = await loadUserMe();
+      await maybeShowWorldEvolvedModal(me && typeof me.last_seen_world_version === "string" ? me.last_seen_world_version : "");
     }
     if (!token) {
       await initSpectatorCameraBeforeStream();

@@ -8,6 +8,7 @@ make local-build
 ```
 
 `make local-build` compiles `snake_server` inside Docker and writes the binary to this repo.
+It also generates `assets/world_evolution_log.json` from `CHANGELOG.md`.
 
 ### Protocol source of truth
 
@@ -116,6 +117,19 @@ Gameplay code emits intents through `PersistenceCoordinator`; it does not write 
   - `extracted_output` mirrors global `Y`
   - `extracted_output_u` mirrors personal `Y_u`
   - Legacy fields remain present for backward compatibility.
+
+### World Evolution Log
+
+- Source of truth: `CHANGELOG.md` (main-branch release history).
+- Build/deploy generates: `assets/world_evolution_log.json` via:
+  - `python3 tools/generate_world_evolution_log.py --input CHANGELOG.md --output assets/world_evolution_log.json`
+- In-game UX:
+  - top-right `Version X.Y.Z` badge
+  - `World Evolution Log` panel (latest 10 by default, full archive on demand)
+  - one-time per-user modal after login when a new version is unseen
+- Backend user field:
+  - `users.last_seen_world_version`
+  - update endpoint: `POST /user/world-version-seen` with `{ "version": "X.Y.Z" }` (auth required)
 
 ### Economy/game write paths (Step 10)
 
@@ -388,6 +402,18 @@ Expected:
   - `WORLD_MASK_SEED=<int>`
   - `WORLD_MASK_STYLE=jagged`
   - playable cells stay tied to economy target area (`A_world`), with non-playable cells pushed to deterministic torn edges.
+
+## Changelog CI rules
+
+`tools/generate_world_evolution_log.py` enforces:
+- strict SemVer (`MAJOR.MINOR.PATCH`)
+- release date per entry
+- 3-7 bullet points per version
+- no duplicate versions
+
+CI/workflows:
+- `.github/workflows/changelog-validate.yml` validates/generates on PR/push to `main`.
+- `.github/workflows/deploy.yml` validates and generates the artifact before deploy.
 
 ## Modes
 

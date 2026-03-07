@@ -32,6 +32,7 @@ class DynamoStorage : public IStorage {
   std::optional<User> GetUserByUsername(const std::string& username) override;
   std::optional<User> GetUserById(const std::string& user_id) override;
   bool PutUser(const User& u) override;
+  bool UpdateUserLastSeenWorldVersion(const std::string& user_id, const std::string& version) override;
   bool UpdateUserBalance(const std::string& user_id, int64_t new_balance) override;
   bool IncrementUserBalance(const std::string& user_id, int64_t delta_balance) override;
   bool BorrowCellsAndTrackPeriod(const std::string& user_id,

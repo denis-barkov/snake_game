@@ -198,6 +198,7 @@ std::vector<User> DynamoStorage::ListUsers() {
       u.role = GetString(item, "role", "player");
       u.created_at = GetInt64(item, "created_at");
       u.company_name = GetString(item, "company_name");
+      u.last_seen_world_version = GetString(item, "last_seen_world_version");
       out.push_back(std::move(u));
     }
 
@@ -232,6 +233,7 @@ std::optional<User> DynamoStorage::GetUserByUsername(const std::string& username
     u.role = GetString(item, "role", "player");
     u.created_at = GetInt64(item, "created_at");
     u.company_name = GetString(item, "company_name");
+    u.last_seen_world_version = GetString(item, "last_seen_world_version");
     return u;
   };
 
@@ -279,6 +281,7 @@ std::optional<User> DynamoStorage::GetUserById(const std::string& user_id) {
   u.role = GetString(item, "role", "player");
   u.created_at = GetInt64(item, "created_at");
   u.company_name = GetString(item, "company_name");
+  u.last_seen_world_version = GetString(item, "last_seen_world_version");
   return u;
 }
 
@@ -295,7 +298,20 @@ bool DynamoStorage::PutUser(const User& u) {
   req.AddItem("role", S(u.role.empty() ? "player" : u.role));
   req.AddItem("created_at", N(u.created_at));
   if (!u.company_name.empty()) req.AddItem("company_name", S(u.company_name));
+  if (!u.last_seen_world_version.empty()) {
+    req.AddItem("last_seen_world_version", S(u.last_seen_world_version));
+  }
   return client_->PutItem(req).IsSuccess();
+}
+
+bool DynamoStorage::UpdateUserLastSeenWorldVersion(const std::string& user_id, const std::string& version) {
+  Aws::DynamoDB::Model::UpdateItemRequest req;
+  req.SetTableName(cfg_.users_table.c_str());
+  req.AddKey("user_id", S(user_id));
+  req.SetUpdateExpression("SET last_seen_world_version = :v");
+  req.SetConditionExpression("attribute_exists(user_id)");
+  req.AddExpressionAttributeValues(":v", S(version));
+  return client_->UpdateItem(req).IsSuccess();
 }
 
 bool DynamoStorage::UpdateUserBalance(const std::string& user_id, int64_t new_balance) {

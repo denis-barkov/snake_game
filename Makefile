@@ -62,6 +62,9 @@ DOCKER_LOCAL_IMAGE?=snake-local-run:dev
 LOCAL_PERSIST_DIR?=$(CURDIR)/.local/snake
 LOCAL_COMPILE_CMD=clang++ -std=c++17 -O2 -pthread api/snake_server.cpp api/protocol/encode_json.cpp api/storage/dynamo_storage.cpp api/storage/storage_factory.cpp api/economy/economy_v1.cpp api/economy_engine/compute.cpp api/persistence/profiles/persistence_profiles.cpp api/persistence/layers/runtime/runtime_state_store.cpp api/persistence/layers/sqlite/buffered_sqlite_store.cpp api/persistence/layers/dynamo/permanent_dynamo_store.cpp api/persistence/coordinator/persistence_coordinator.cpp api/persistence/flush/flush_scheduler.cpp config/runtime_config.cpp api/world/world.cpp api/world/chunk_manager.cpp api/world/entities/snake.cpp api/world/entities/food.cpp api/world/systems/movement_system.cpp api/world/systems/collision_system.cpp api/world/systems/spawn_system.cpp api/world/systems/replication_system.cpp -lboost_system -lsqlite3 -laws-cpp-sdk-dynamodb -laws-cpp-sdk-core -L/usr/local/lib64 -L/usr/local/lib -o snake_server
 
+world-evolution-log:
+	python3 tools/generate_world_evolution_log.py --input CHANGELOG.md --output assets/world_evolution_log.json
+
 # Accept both upper/lower-case CLI vars for convenience.
 ifneq ($(strip $(branch)),)
 APP_REF:=$(branch)
@@ -79,7 +82,7 @@ local-setup:
 local-dynamo-down:
 	docker compose -f docker/dynamodb-local.yml down
 
-local-docker-build:
+local-docker-build: world-evolution-log
 	docker build -f docker/local-run.Dockerfile -t $(DOCKER_LOCAL_IMAGE) .
 
 local-build: local-docker-build
@@ -232,7 +235,7 @@ aws-eip-attach:
 aws-plan:
 	AWS_PROFILE=$(PROFILE) terraform -chdir=$(TF_DIR) plan -input=false
 
-aws-code-deploy:
+aws-code-deploy: world-evolution-log
 	@if [ -z "$(DEPLOY_BRANCH)" ]; then \
 	  echo "Pass BRANCH=<git_branch> (or branch=<git_branch>). Example: make aws-code-deploy BRANCH=main"; \
 	  exit 1; \

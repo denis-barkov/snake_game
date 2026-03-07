@@ -10,12 +10,14 @@
 #include <ctime>
 #include <cmath>
 #include <functional>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <random>
+#include <regex>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -142,6 +144,11 @@ static string rand_token(size_t n = 32) {
   t.reserve(n);
   for (size_t i = 0; i < n; ++i) t.push_back(chars[dist(rng)]);
   return t;
+}
+
+static bool is_strict_semver(const std::string& v) {
+  static const std::regex re(R"(^\d+\.\d+\.\d+$)");
+  return std::regex_match(v, re);
 }
 
 class AuthState {
@@ -1617,6 +1624,25 @@ int main(int argc, char** argv) {
     res.set_content("{\"ok\":true}", "application/json");
   });
 
+  srv.Get("/assets/world_evolution_log.json", [&](const httplib::Request&, httplib::Response& res) {
+    add_cors(res);
+    std::ifstream in("assets/world_evolution_log.json");
+    if (!in.is_open()) {
+      res.status = 404;
+      res.set_content("{\"error\":\"world_evolution_log_not_found\"}", "application/json");
+      return;
+    }
+    std::ostringstream buf;
+    buf << in.rdbuf();
+    const std::string body = buf.str();
+    if (body.empty()) {
+      res.status = 500;
+      res.set_content("{\"error\":\"world_evolution_log_empty\"}", "application/json");
+      return;
+    }
+    res.set_content(body, "application/json");
+  });
+
   srv.Get("/economy/state", [&](const httplib::Request&, httplib::Response& res) {
     add_cors(res);
     EconomyService::Snapshot s = economy.GetState();
@@ -1891,9 +1917,32 @@ int main(int argc, char** argv) {
       << "\"balance_mi\":" << user->balance_mi << ","
       << "\"liquid_assets\":" << user->balance_mi << ","
       << "\"deployed_k\":" << deployed << ","
-      << "\"snake_count\":" << snakes.size()
+      << "\"snake_count\":" << snakes.size() << ","
+      << "\"last_seen_world_version\":\"" << json_escape(user->last_seen_world_version) << "\""
       << "}";
     res.set_content(o.str(), "application/json");
+  });
+
+  srv.Post("/user/world-version-seen", [&](const httplib::Request& req, httplib::Response& res) {
+    add_cors(res);
+    auto uid = require_auth_user(auth, req);
+    if (!uid) {
+      res.status = 401;
+      res.set_content("{\"error\":\"unauthorized\"}", "application/json");
+      return;
+    }
+    auto version = get_json_string_field(req.body, "version");
+    if (!version.has_value() || !is_strict_semver(*version)) {
+      res.status = 400;
+      res.set_content("{\"error\":\"bad_version\"}", "application/json");
+      return;
+    }
+    if (!storage->UpdateUserLastSeenWorldVersion(std::to_string(*uid), *version)) {
+      res.status = 500;
+      res.set_content("{\"error\":\"update_failed\"}", "application/json");
+      return;
+    }
+    res.set_content("{\"ok\":true}", "application/json");
   });
 
   auto handle_borrow_cells = [&](const httplib::Request& req, httplib::Response& res) {

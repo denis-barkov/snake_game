@@ -20,6 +20,7 @@ struct User {
   std::string role = "player";
   int64_t created_at = 0;
   std::string company_name;
+  std::string last_seen_world_version;
 };
 
 struct Snake {

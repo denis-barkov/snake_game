@@ -21,6 +21,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Validate and generate changelog artifact
+        run: |
+          python3 tools/generate_world_evolution_log.py --input CHANGELOG.md --validate-only
+          python3 tools/generate_world_evolution_log.py --input CHANGELOG.md --output assets/world_evolution_log.json
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
