@@ -1,0 +1,33 @@
+name: Changelog Validate
+
+on:
+  pull_request:
+    branches: ["main"]
+  push:
+    branches: ["main"]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Ensure CHANGELOG updated on PR
+        if: github.event_name == 'pull_request'
+        run: |
+          set -euo pipefail
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+          if ! git diff --name-only "$BASE_SHA" "$HEAD_SHA" | grep -qx "CHANGELOG.md"; then
+            echo "CHANGELOG.md must be updated for merges to main."
+            exit 1
+          fi
+
+      - name: Validate changelog format
+        run: python3 tools/generate_world_evolution_log.py --input CHANGELOG.md --validate-only
+
+      - name: Generate artifact (build gate)
+        run: python3 tools/generate_world_evolution_log.py --input CHANGELOG.md --output assets/world_evolution_log.json

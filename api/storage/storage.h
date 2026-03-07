@@ -1,0 +1,77 @@
+#pragma once
+
+#include <optional>
+#include <string>
+#include <vector>
+
+#include "models.h"
+
+namespace storage {
+
+class IStorage {
+ public:
+  virtual ~IStorage() = default;
+
+  // Full user listing is used by low-frequency aggregated reads (economy endpoint).
+  virtual std::vector<User> ListUsers() = 0;
+  virtual std::optional<User> GetUserByUsername(const std::string& username) = 0;
+  virtual std::optional<User> GetUserByGoogleSubject(const std::string& google_subject_id) = 0;
+  virtual bool CompanyNameExistsNormalized(const std::string& company_name_normalized,
+                                           const std::string& exclude_user_id = "") = 0;
+  virtual std::optional<User> GetUserById(const std::string& user_id) = 0;
+  virtual bool PutUser(const User& u) = 0;
+  virtual bool UpdateUserLastSeenWorldVersion(const std::string& user_id, const std::string& version) = 0;
+  virtual bool DeleteUserById(const std::string& user_id) = 0;
+  virtual bool UpdateUserBalance(const std::string& user_id, int64_t new_balance) = 0;
+  virtual bool IncrementUserBalance(const std::string& user_id, int64_t delta_balance) = 0;
+  virtual bool BorrowCellsAndTrackPeriod(const std::string& user_id,
+                                         int64_t amount,
+                                         const std::string& period_key,
+                                         int64_t& out_balance_mi) = 0;
+
+  virtual std::vector<Snake> ListSnakes() = 0;
+  virtual std::optional<Snake> GetSnakeById(const std::string& snake_id) = 0;
+  virtual bool SnakeNameExistsNormalized(const std::string& snake_name_normalized,
+                                         const std::string& exclude_snake_id = "") = 0;
+  virtual bool PutSnake(const Snake& s) = 0;
+  virtual bool DeleteSnake(const std::string& snake_id) = 0;
+  virtual bool DeleteSnakeEventsBySnakeId(const std::string& snake_id) = 0;
+  virtual bool AttachCellsToSnake(const std::string& user_id,
+                                  const std::string& snake_id,
+                                  int64_t amount,
+                                  int64_t& out_balance_mi,
+                                  int64_t& out_length_k) = 0;
+
+  virtual std::optional<WorldChunk> GetWorldChunk(const std::string& chunk_id) = 0;
+  virtual bool PutWorldChunk(const WorldChunk& chunk) = 0;
+
+  virtual bool AppendSnakeEvent(const SnakeEvent& e) = 0;
+
+  virtual std::optional<Settings> GetSettings(const std::string& settings_id = "global") = 0;
+  virtual bool PutSettings(const Settings& settings) = 0;
+
+  virtual std::optional<EconomyParams> GetEconomyParams() = 0;
+  virtual std::optional<EconomyParams> GetEconomyParamsActive() = 0;
+  virtual bool PutEconomyParams(const EconomyParams& p) = 0;
+  virtual bool PutEconomyParamsActiveAndVersioned(const EconomyParams& p, const std::string& updated_by) = 0;
+  virtual std::optional<EconomyPeriod> GetEconomyPeriod(const std::string& period_key) = 0;
+  virtual bool PutEconomyPeriod(const EconomyPeriod& p) = 0;
+  virtual bool IncrementEconomyPeriodDeltaMBuy(const std::string& period_key, int64_t delta_m_buy) = 0;
+  virtual bool IncrementEconomyPeriodRaw(const std::string& period_key,
+                                         int64_t harvested_food_delta,
+                                         int64_t movement_ticks_delta) = 0;
+  virtual std::optional<EconomyPeriodUser> GetEconomyPeriodUser(const std::string& period_key,
+                                                                const std::string& user_id) = 0;
+  virtual bool PutEconomyPeriodUser(const EconomyPeriodUser& p) = 0;
+  virtual bool IncrementEconomyPeriodUserRaw(const std::string& period_key,
+                                             const std::string& user_id,
+                                             int64_t harvested_food_delta,
+                                             int64_t movement_ticks_delta) = 0;
+  virtual std::vector<EconomyPeriodUser> ListEconomyPeriodUsers(const std::string& period_key) = 0;
+  virtual bool IncrementSystemReserve(int64_t delta_cells) = 0;
+
+  virtual bool HealthCheck() = 0;
+  virtual bool ResetForDev() = 0;
+};
+
+}  // namespace storage

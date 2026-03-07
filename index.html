@@ -3,8 +3,9 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1.0" />
-  <title>Online Snake (SSE)</title>
+  <title>Online Snake (WS)</title>
   <style>
+    * { box-sizing: border-box; }
     body { font-family: Arial, sans-serif; margin: 16px; background: #f8fbf7; color: #1a1a1a; }
     .hero {
       display: flex;
@@ -26,34 +27,220 @@
     }
     .hero h1 { margin: 0 0 6px 0; font-size: 26px; }
     .hero p { margin: 0; color: #2f4730; }
-    .layout { display: flex; gap: 16px; align-items: flex-start; }
-    #left { width: 260px; flex: 0 0 260px; }
-    #game { flex: 1; }
+    .layout { display: flex; gap: 16px; align-items: flex-start; width: 100%; min-width: 0; }
+    #left { width: 260px; max-width: 260px; flex: 0 0 260px; }
+    #game { flex: 1 1 auto; width: 100%; min-width: 0; }
+    #game-main {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      width: 100%;
+      min-width: 0;
+    }
+    #view-controls {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      flex-wrap: wrap;
+      gap: 8px;
+      padding: 6px 8px;
+      border: 1px solid #d7dfd5;
+      border-radius: 8px;
+      background: #ffffff;
+    }
+    #view-controls button {
+      padding: 6px 10px;
+      min-width: 44px;
+    }
+    #view-controls select {
+      padding: 5px 8px;
+      min-width: 120px;
+      border: 1px solid #cbd6c8;
+      border-radius: 6px;
+      background: #fff;
+    }
+    .view-inline {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: #374534;
+    }
+    #view-help {
+      color: #4b5b49;
+      font-size: 12px;
+      margin-left: 4px;
+      white-space: normal;
+    }
+    #public-view-hint {
+      display: none;
+      color: #5a3e1b;
+      background: #fff5e5;
+      border: 1px solid #f0d6a7;
+      border-radius: 6px;
+      padding: 4px 8px;
+      font-size: 12px;
+      margin-left: 6px;
+    }
+    #debug-overlay {
+      display: none;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 12px;
+      line-height: 1.35;
+      border: 1px solid #d5d5d5;
+      background: rgba(255, 255, 255, 0.92);
+      color: #222;
+      border-radius: 8px;
+      padding: 8px;
+    }
     #game-board-wrap {
-      overflow: auto;
+      position: relative;
+      width: 100%;
       max-width: 100%;
-      padding-bottom: 4px;
+      min-width: 0;
+      height: min(70vh, 560px);
+      border: 1px solid #d7dfd5;
+      border-radius: 8px;
+      background: #fbfdf9;
     }
-
-    #game-board {
-      display: grid;
-      gap: 1px;
-      background: #ccc;
-      width: max-content;
+    #game-canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+      touch-action: none;
       user-select: none;
+      cursor: grab;
+      background: #eef5eb;
     }
-    .cell {
-      width: 18px;
-      height: 18px;
-      background: #f3f3f3;
+    #game-canvas.dragging {
+      cursor: grabbing;
     }
-    .food { background: #ff4444 !important; }
-
-    .snake-cell { background: #00aa00; }
 
     .panel { border: 1px solid #ddd; padding: 12px; border-radius: 8px; margin-bottom: 12px; }
+    .compact-panel {
+      margin-bottom: 0;
+      padding: 10px;
+      background: #ffffff;
+    }
+    .compact-panel h3 {
+      margin: 0 0 8px 0;
+      font-size: 15px;
+    }
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 6px 12px;
+    }
+    #economy-panels {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 10px;
+      width: 100%;
+    }
+    .eco-card {
+      border: 1px solid #d7dfd5;
+      border-radius: 10px;
+      background: #ffffff;
+      padding: 10px;
+    }
+    .eco-card summary {
+      list-style: none;
+      cursor: pointer;
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+    .eco-card summary::-webkit-details-marker { display: none; }
+    .eco-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 6px 12px;
+    }
+    .eco-row {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+    }
+    .eco-row .label {
+      color: #32412f;
+      font-size: 13px;
+    }
+    .eco-row .value {
+      color: #131a12;
+      font-weight: 600;
+    }
+    .eco-help-btn {
+      border: 1px solid #c9d6c5;
+      border-radius: 999px;
+      width: 18px;
+      height: 18px;
+      line-height: 16px;
+      text-align: center;
+      font-size: 11px;
+      padding: 0;
+      background: #f4f8f2;
+      color: #355133;
+      cursor: pointer;
+    }
+    #eco-tip-pop {
+      position: fixed;
+      z-index: 1000;
+      max-width: min(92vw, 360px);
+      background: #ffffff;
+      border: 1px solid #cad7c7;
+      border-radius: 8px;
+      box-shadow: 0 8px 18px rgba(0, 0, 0, 0.15);
+      padding: 10px;
+      font-size: 13px;
+      color: #21301f;
+      display: none;
+      white-space: pre-line;
+    }
+    #period-summary-pop {
+      position: fixed;
+      z-index: 1001;
+      max-width: min(92vw, 420px);
+      background: #ffffff;
+      border: 1px solid #cad7c7;
+      border-radius: 8px;
+      box-shadow: 0 8px 18px rgba(0, 0, 0, 0.18);
+      padding: 10px;
+      font-size: 13px;
+      color: #21301f;
+      display: none;
+      top: 18px;
+      right: 18px;
+      white-space: normal;
+    }
+    #period-summary-pop h4 {
+      margin: 0 0 8px 0;
+      font-size: 14px;
+    }
+    #period-summary-pop .line {
+      margin: 3px 0;
+    }
+    #attach-hint {
+      display: none;
+      margin-top: 6px;
+      color: #4d5f47;
+      font-size: 12px;
+      border: 1px solid #d7dfd5;
+      border-radius: 6px;
+      padding: 6px;
+      background: #f7fbf5;
+    }
+    #eco-auth-note {
+      color: #5c6e5a;
+      font-size: 12px;
+      margin-top: 6px;
+    }
     .row { margin: 6px 0; }
-    input { width: 100%; padding: 6px; }
+    input {
+      width: 100%;
+      max-width: 100%;
+      padding: 6px;
+      box-sizing: border-box;
+    }
     button { padding: 8px 10px; cursor: pointer; }
 
     .snake-item {
@@ -67,8 +254,137 @@
       justify-content: space-between;
     }
     .snake-item.active { outline: 2px solid #333; }
+    .snake-item label {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .snake-item input.watch-toggle {
+      max-width: 100%;
+    }
     .badge { width: 16px; height: 16px; border-radius: 4px; display: inline-block; margin-right: 8px; }
     small { color: #666; }
+    #version-badge {
+      position: fixed;
+      top: 12px;
+      right: 12px;
+      z-index: 40;
+      border: 1px solid #cfd8dc;
+      border-radius: 999px;
+      background: #fff;
+      padding: 6px 10px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    #world-log-panel {
+      position: fixed;
+      top: 52px;
+      right: 12px;
+      width: min(520px, calc(100vw - 24px));
+      max-height: min(70vh, 720px);
+      background: #fff;
+      border: 1px solid #cfd8dc;
+      border-radius: 10px;
+      box-shadow: 0 10px 28px rgba(0,0,0,0.14);
+      z-index: 45;
+      display: none;
+      overflow: hidden;
+    }
+    #world-log-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 12px;
+      border-bottom: 1px solid #eceff1;
+      font-weight: 700;
+    }
+    #world-log-list {
+      overflow: auto;
+      max-height: calc(min(70vh, 720px) - 96px);
+      padding: 8px 10px;
+    }
+    .world-log-entry {
+      border: 1px solid #eceff1;
+      border-radius: 8px;
+      padding: 8px 10px;
+      margin-bottom: 8px;
+      background: #fcfcfc;
+    }
+    .world-log-entry summary {
+      cursor: pointer;
+      font-weight: 600;
+    }
+    .world-log-entry ul {
+      margin: 8px 0 0 18px;
+      padding: 0;
+    }
+    #world-log-footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 8px 12px 10px;
+      border-top: 1px solid #eceff1;
+      background: #fafafa;
+    }
+    #world-evolved-modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.35);
+      z-index: 60;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 12px;
+    }
+    #world-evolved-modal {
+      width: min(460px, calc(100vw - 24px));
+      background: #fff;
+      border-radius: 12px;
+      border: 1px solid #d7dde2;
+      padding: 16px;
+      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.22);
+    }
+    #world-evolved-modal h3 {
+      margin: 0 0 8px;
+      font-size: 18px;
+    }
+    #world-evolved-modal p {
+      margin: 0 0 14px;
+      color: #334155;
+    }
+    #world-evolved-actions {
+      display: flex;
+      gap: 8px;
+      justify-content: flex-end;
+    }
+    #login-transition-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(9, 16, 20, 0.56);
+      z-index: 68;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 12px;
+    }
+    #login-transition-card {
+      width: min(520px, calc(100vw - 24px));
+      border-radius: 12px;
+      border: 1px solid #30423b;
+      background: linear-gradient(140deg, #f2f8f1 0%, #e9f5f4 50%, #eef6ef 100%);
+      padding: 16px;
+      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.25);
+    }
+    #login-transition-title {
+      margin: 0 0 8px 0;
+      font-size: 18px;
+      color: #0f172a;
+    }
+    #login-transition-tip {
+      margin: 0;
+      color: #334155;
+      min-height: 20px;
+    }
 
     @media (max-width: 980px) {
       .layout {
@@ -76,6 +392,7 @@
       }
       #left {
         width: 100%;
+        max-width: none;
         flex: 1 1 auto;
       }
       #game {
@@ -95,25 +412,69 @@
         width: 64px;
         height: 64px;
       }
+      .eco-grid {
+        grid-template-columns: 1fr;
+      }
+      #world-log-panel {
+        top: 52px;
+        right: 8px;
+        left: 8px;
+        width: auto;
+      }
     }
   </style>
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
 </head>
 <body>
+  <button id="version-badge" type="button">Version —</button>
+  <section id="world-log-panel" aria-label="World Evolution Log">
+    <div id="world-log-header">
+      <span>World Evolution Log</span>
+      <button id="world-log-close" type="button">Close</button>
+    </div>
+    <div id="world-log-list"></div>
+    <div id="world-log-footer">
+      <small id="world-log-current">Current: —</small>
+      <button id="world-log-archive" type="button">View Full Archive</button>
+    </div>
+  </section>
+  <div id="world-evolved-modal-backdrop">
+    <div id="world-evolved-modal" role="dialog" aria-modal="true" aria-label="World update">
+      <h3 id="world-evolved-title">The World Has Evolved</h3>
+      <p id="world-evolved-text">Version — Introduced</p>
+      <div id="world-evolved-actions">
+        <button id="world-evolved-dismiss" type="button">Dismiss</button>
+        <button id="world-evolved-view" type="button">View Changes</button>
+      </div>
+    </div>
+  </div>
+  <div id="login-transition-backdrop">
+    <div id="login-transition-card" role="status" aria-live="polite">
+      <h3 id="login-transition-title">Entering The Economic Arena</h3>
+      <p id="login-transition-tip">Loading world activity…</p>
+    </div>
+  </div>
   <div class="hero">
     <img src="src/images/snake_logo.png" alt="Terrarium Snake Club logo" />
     <div>
       <h1>Terrarium Snake Club</h1>
-      <p>Welcome to the new world of gaming! We are currently testing the project, and it will be available very soon. Keep checking back!</p>
+      <p>Welcome to the Economic Arena — Build a Company. Raise Snakes. Shape the World.</p>
     </div>
   </div>
 
   <div class="layout">
   <div id="left">
     <div class="panel">
-      <div class="row"><strong>Login (optional)</strong></div>
-      <div class="row"><input id="username" placeholder="username (user1)" /></div>
-      <div class="row"><input id="password" type="password" placeholder="password (pass1)" /></div>
-      <div class="row"><button id="loginBtn">Login</button></div>
+      <div class="row"><strong>Sign In</strong></div>
+      <div id="legacy-login-fields">
+        <div class="row"><input id="username" placeholder="username (user1)" /></div>
+        <div class="row"><input id="password" type="password" placeholder="password (pass1)" /></div>
+        <div class="row"><button id="loginBtn">Login</button></div>
+      </div>
+      <div id="google-login-root" style="display:none;">
+        <div id="google-signin-button"></div>
+        <small>Continue with Google</small>
+      </div>
       <div class="row"><small id="authStatus">Not logged in (watch-only)</small></div>
     </div>
 
@@ -121,83 +482,1102 @@
       <div class="row"><strong>My Snakes</strong></div>
       <div id="mySnakes"></div>
       <div class="row"><button id="createSnakeBtn" disabled>Create Snake</button></div>
+      <div class="row"><strong>Liquid Assets</strong></div>
+      <div class="row"><small>My Cells: <span id="myBalance">—</span></small></div>
+      <div class="row"><small>Snakes count: <span id="mySnakeCount">—</span></small></div>
+      <div class="row">
+        <input id="borrowAmount" type="number" min="1" step="1" placeholder="Borrow amount" />
+      </div>
+      <div class="row"><button id="borrowBtn" disabled>Borrow</button></div>
+      <div class="row">
+        <input id="attachAmount" type="number" min="1" step="1" placeholder="Attach to selected snake" />
+      </div>
+      <div class="row" style="display:flex; gap:6px;">
+        <button id="attach1Btn" disabled>+1</button>
+        <button id="attach10Btn" disabled>+10</button>
+        <button id="attach50Btn" disabled>+50</button>
+        <button id="attachBtn" disabled>Attach</button>
+      </div>
+      <div class="row" id="attach-hint">
+        You are converting liquid assets into productive capital. This may increase potential output, but increases exposure to risk.
+      </div>
       <div class="row"><small>Controls: W/A/S/D move selected snake, P pause selected snake</small></div>
+    </div>
+
+    <div class="panel">
+      <details class="eco-card" id="eco-user-card" open>
+        <summary>My Economy</summary>
+        <div class="eco-grid">
+          <div class="eco-row"><span class="label">Extracted Output (Yᵤ)</span><button class="eco-help-btn" data-tip="Real Economy: Your firm’s production during a period.&#10;Real-World Impact: Higher production usually strengthens profitability and resilience.&#10;In This Game: Food harvested by your snakes during the current period.&#10;How to Use It: Raise Yᵤ by harvesting more food to improve your market share and your productivity metrics.">i</button><span class="value" id="ecoUY">—</span></div>
+          <div class="eco-row"><span class="label">Personal Labor (Lᵤ)</span><button class="eco-help-btn" data-tip="Real Economy: Your firm’s effort during the period.&#10;Real-World Impact: Effort matters, but efficiency matters more than raw hours.&#10;In This Game: Your movement activity ticks during this period.&#10;How to Use It: If Lᵤ rises but Yᵤ doesn’t, you’re working hard but not producing—change strategy.">i</button><span class="value" id="ecoUL">—</span></div>
+          <div class="eco-row"><span class="label">Personal Capital (Kᵤ)</span><button class="eco-help-btn" data-tip="Real Economy: Your deployed productive assets.&#10;Real-World Impact: More capital can scale output, but inefficient capital reduces productivity.&#10;In This Game: Your deployed snake cells currently on the field.&#10;How to Use It: Deploy cells to increase Kᵤ, but don’t overextend—capital without output reduces efficiency.">i</button><span class="value" id="ecoUK">—</span></div>
+          <div class="eco-row"><span class="label">Personal Productivity (Aᵤ)</span><button class="eco-help-btn" data-tip="Real Economy: Your firm’s efficiency.&#10;Real-World Impact: High productivity means strong results with less waste.&#10;In This Game: How efficiently your capital (snake size) and labor (moves) produce food.&#10;How to Use It: Aim to increase Aᵤ by harvesting more with fewer moves or better deployment.">i</button><span class="value" id="ecoUA">—</span></div>
+          <div class="eco-row"><span class="label">Global Productivity (A)</span><button class="eco-help-btn" data-tip="Productivity measures how efficiently you turn effort and capital into output. High productivity means smarter management, not just bigger size.">i</button><span class="value" id="ecoGlobalA">—</span></div>
+          <div class="eco-row"><span class="label">Personal Capital Share (αᵤ)</span><button class="eco-help-btn" data-tip="Real Economy: How much of your production comes from capital vs effort.&#10;Real-World Impact: Helps diagnose whether scaling assets or improving execution is better.&#10;In This Game: Shows whether your output is more size-driven or activity-driven.&#10;How to Use It: High αᵤ → scaling capital may help. Low αᵤ → improve movement/harvest efficiency.">i</button><span class="value" id="ecoUAlpha">—</span></div>
+          <div class="eco-row"><span class="label">Capital Intensity</span><button class="eco-help-btn" data-tip="Capital Intensity shows how much of your resources are invested in production rather than held as liquid assets. High capital intensity means higher risk but potentially higher output.">i</button><span class="value" id="ecoCapitalIntensity">—</span></div>
+          <div class="eco-row"><span class="label">Return on Capital</span><button class="eco-help-btn" data-tip="Return on Capital measures how much output your invested capital generates. Businesses monitor this to decide whether to expand or shrink.">i</button><span class="value" id="ecoReturnOnCapital">—</span></div>
+          <div class="eco-row"><span class="label">Labor Efficiency</span><button class="eco-help-btn" data-tip="Labor Efficiency shows how much output your effort produces. Higher efficiency means better movement and timing.">i</button><span class="value" id="ecoLaborEfficiency">—</span></div>
+          <div class="eco-row"><span class="label">Market Share (Yᵤ / Y)</span><button class="eco-help-btn" data-tip="Real Economy: Your share of total production in the economy.&#10;Real-World Impact: Higher market share often means stronger influence and performance.&#10;In This Game: Your output divided by global output during the period.&#10;How to Use It: Increase market share by harvesting more food relative to others.">i</button><span class="value" id="ecoMarket">—</span></div>
+          <div class="eco-row"><span class="label">Liquid Assets</span><button class="eco-help-btn" data-tip="Liquid Assets are resources you can immediately use or invest. In real economy, this equals cash or available funds.">i</button><span class="value" id="ecoBsLiquid">—</span></div>
+          <div class="eco-row"><span class="label">Deployed Capital</span><button class="eco-help-btn" data-tip="Deployed Capital represents productive resources currently in use. In real business, this equals machines, factories, or infrastructure.">i</button><span class="value" id="ecoBsDeployed">—</span></div>
+          <div class="eco-row"><span class="label">Total Assets</span><button class="eco-help-btn" data-tip="Total Assets combine your liquid resources and deployed productive capital.">i</button><span class="value" id="ecoBsTotal">—</span></div>
+        </div>
+        <div id="eco-auth-note">Login to see your personal economy metrics.</div>
+      </details>
+    </div>
+    <div class="panel" id="settings-panel" style="display:none;">
+      <div class="row"><strong>Settings</strong></div>
+      <div class="row"><button id="deleteAccountBtn">Delete Account</button></div>
+      <div class="row"><small>This action is permanent and cannot be undone.</small></div>
     </div>
   </div>
 
   <div id="game">
-    <div class="panel">
-      <div><strong>Live Game</strong></div>
-      <div>Tick: <span id="tick">0</span></div>
-    </div>
-    <div id="game-board-wrap">
-      <div id="game-board"></div>
+    <div id="game-main">
+      <div id="economy-panels">
+        <div class="eco-card" id="eco-global-card">
+          <div><strong>Global Economy</strong></div>
+          <div class="eco-grid">
+            <div class="eco-row"><span class="label">Extracted Output (Y)</span><button class="eco-help-btn" data-tip="Real Economy: Total goods/services produced in a period (real output).&#10;Real-World Impact: More output supports stable prices and growth; weak output makes money less valuable.&#10;In This Game: Total food harvested by all players during this economic period.&#10;How to Use It: If Y is rising, the world is producing more; prices should stabilize. If Y is low, expect higher price pressure when money grows.">i</button><span class="value" id="ecoY">—</span></div>
+            <div class="eco-row"><span class="label">Total Capital (K)</span><button class="eco-help-btn" data-tip="Real Economy: Productive infrastructure used to produce output (machines, factories).&#10;Real-World Impact: Capital boosts output potential, but needs effective use to be productive.&#10;In This Game: Total deployed snake cells on the field (not storage).&#10;How to Use It: Higher K means more production capacity in the world—watch how efficiently it converts into Y.">i</button><span class="value" id="ecoK">—</span></div>
+            <div class="eco-row"><span class="label">Total Labor (L)</span><button class="eco-help-btn" data-tip="Real Economy: Total work effort spent producing output during the period.&#10;Real-World Impact: Labor contributes to output, but too much effort with low output signals inefficiency.&#10;In This Game: Total movement activity ticks during this period (all snakes).&#10;How to Use It: Rising L with rising Y is healthy. Rising L with flat Y means efficiency is falling.">i</button><span class="value" id="ecoL">—</span></div>
+            <div class="eco-row"><span class="label">Capital Share (α)</span><button class="eco-help-btn" data-tip="Real Economy: Portion of output attributed to capital rather than labor.&#10;Real-World Impact: High α means capital-driven growth; low α means effort/skill dominates production.&#10;In This Game: Indicates whether snake size (capital) or movement (labor) is driving output.&#10;How to Use It: If α rises, bigger deployed snakes matter more. If α falls, active movement dominates.">i</button><span class="value" id="ecoAlpha">—</span></div>
+            <div class="eco-row"><span class="label">Productivity (A)</span><button class="eco-help-btn" data-tip="Real Economy: Efficiency of turning capital and labor into output.&#10;Real-World Impact: Higher productivity enables growth without inflation pressure.&#10;In This Game: How efficiently the world converts deployed cells and movement into harvested food.&#10;How to Use It: Track A to see if strategies are becoming smarter. If A drops, output isn’t keeping up with capital/labor.">i</button><span class="value" id="ecoA">—</span></div>
+            <div class="eco-row"><span class="label">Money Supply (M)</span><button class="eco-help-btn" data-tip="Real Economy: Total liquid money available to spend.&#10;Real-World Impact: Money growth without output growth pushes prices up.&#10;In This Game: Total player storage balances plus treasury balance (deployed snake cells don’t count).&#10;How to Use It: If M rises faster than Y, expect higher P and inflation.">i</button><span class="value" id="ecoM">—</span></div>
+            <div class="eco-row"><span class="label">Price Index (P)</span><button class="eco-help-btn" data-tip="Real Economy: Average price level; reflects purchasing power.&#10;Real-World Impact: Higher prices reduce purchasing power; stable prices support planning.&#10;In This Game: Money relative to output (M compared to Y).&#10;How to Use It: If P is rising, production may be too low vs money. Focus on increasing output (harvesting food).">i</button><span class="value" id="ecoP">—</span></div>
+            <div class="eco-row"><span class="label">Inflation</span><button class="eco-help-btn" data-tip="Real Economy: Rate of price level change between periods.&#10;Real-World Impact: High inflation reduces purchasing power and increases uncertainty.&#10;In This Game: How fast P changes from one period to the next.&#10;How to Use It: Rising inflation suggests money growth outpacing output—produce more or slow money growth.">i</button><span class="value" id="ecoPi">—</span></div>
+            <div class="eco-row"><span class="label">Treasury Balance</span><button class="eco-help-btn" data-tip="Real Economy: Government reserves used for policy and stabilization.&#10;Real-World Impact: Reserves provide stability and ability to respond to shocks.&#10;In This Game: System-held cells used for economy operations and balancing.&#10;How to Use It: Higher treasury gives the system more ability to stabilize; low treasury may constrain economy actions.">i</button><span class="value" id="ecoTreasury">—</span></div>
+            <div class="eco-row"><span class="label">Next Economic Period Ends In</span><button class="eco-help-btn" data-tip="Seconds until current economic period closes and snapshot becomes final.">i</button><span class="value" id="ecoEnds">—</span></div>
+          </div>
+        </div>
+      </div>
+      <div id="view-controls">
+        <strong>View</strong>
+        <button id="zoomInBtn" type="button">+ Zoom In</button>
+        <button id="zoomOutBtn" type="button">- Zoom Out</button>
+        <button id="zoomResetBtn" type="button">Reset</button>
+        <label class="view-inline">Grid
+          <select id="gridModeSelect">
+            <option value="off">Off</option>
+            <option value="cells">Cells</option>
+            <option value="cells_chunks">Cells+Chunks</option>
+          </select>
+        </label>
+        <label class="view-inline">
+          <input id="boundsToggle" type="checkbox" checked />
+          Bounds
+        </label>
+        <label class="view-inline">
+          <input id="edgeToggle" type="checkbox" checked />
+          Edge
+        </label>
+        <small id="view-help">Zoom: +/- buttons. Reset returns to default view.</small>
+        <small id="public-view-hint">Login to control camera &amp; zoom.</small>
+      </div>
+      <div id="debug-overlay"></div>
+      <div id="game-board-wrap">
+        <canvas id="game-canvas"></canvas>
+      </div>
+      <div class="panel compact-panel">
+        <h3>Live Game</h3>
+        <div class="stats-grid">
+          <div>Tick: <span id="tick">0</span></div>
+          <div>Expected speed: <span id="expectedTickHz">-</span> tick/s</div>
+          <div>Actual speed: <span id="actualTickHz">-</span> tick/s</div>
+          <div>Period: <span id="ecoPeriod">—</span></div>
+          <div><small id="ecoStatus">Economy: loading...</small></div>
+        </div>
+      </div>
     </div>
   </div>
+  </div>
+  <div id="eco-tip-pop"></div>
+  <div id="period-summary-pop"></div>
+  <div id="onboarding-backdrop" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.45); z-index:70; align-items:center; justify-content:center; padding:12px;">
+    <div id="onboarding-card" style="width:min(520px, calc(100vw - 24px)); background:#fff; border-radius:12px; padding:16px;">
+      <h3 id="onboarding-title">The World Has Evolved</h3>
+      <p id="onboarding-copy">Welcome to the Economic Arena.</p>
+      <div id="onboarding-form" style="display:none;">
+        <div class="row"><input id="companyNameInput" placeholder="Company Name" /></div>
+        <div class="row"><small id="companyNameHint"></small></div>
+        <div class="row"><input id="starterSnakeNameInput" placeholder="First Snake Name" /></div>
+        <div class="row"><small id="snakeNameHint"></small></div>
+        <div class="row"><button id="completeOnboardingBtn">Enter World</button></div>
+      </div>
+    </div>
+  </div>
+  <div id="delete-account-backdrop" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,.45); z-index:72; align-items:center; justify-content:center; padding:12px;">
+    <div style="width:min(520px, calc(100vw - 24px)); background:#fff; border-radius:12px; padding:16px;">
+      <h3>Delete Account</h3>
+      <p>This is irreversible. All snakes, company identity, and progress will be permanently removed.</p>
+      <div class="row"><input id="deleteCompanyConfirmInput" placeholder="Type your exact Company Name" /></div>
+      <div class="row" style="display:flex; gap:8px; justify-content:flex-end;">
+        <button id="deleteAccountCancelBtn">Cancel</button>
+        <button id="deleteAccountConfirmBtn">Delete Permanently</button>
+      </div>
+    </div>
   </div>
 
 <script>
-  const API = window.location.protocol === "file:" ? "http://127.0.0.1:8080" : window.location.origin;
+  const API_BASE = window.location.protocol === "file:" ? "http://127.0.0.1:8080" : "";
+  const apiPath = (path) => `${API_BASE}${path}`;
+  const wsPath = (path) => {
+    if (window.location.protocol === "file:") return `ws://127.0.0.1:8080${path}`;
+    const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+    return `${proto}//${window.location.host}${path}`;
+  };
+  const DEBUG_MODE = new URLSearchParams(window.location.search).get("debug") === "1";
+  const DEFAULT_VISIBLE_ROWS = 40;
 
-  let token = null;
-  let myUserId = null;
-  let selectedSnakeId = null;
-
-  let gridW = 40, gridH = 20;
-  let cells = [];
-
-  const board = document.getElementById("game-board");
-  const tickEl = document.getElementById("tick");
-  const authStatus = document.getElementById("authStatus");
-  const mySnakesEl = document.getElementById("mySnakes");
-  const createSnakeBtn = document.getElementById("createSnakeBtn");
-
-  function buildBoard(w, h) {
-    gridW = w; gridH = h;
-    board.style.gridTemplateColumns = `repeat(${w}, 18px)`;
-    board.innerHTML = "";
-    cells = [];
-    for (let i = 0; i < w*h; i++) {
-      const c = document.createElement("div");
-      c.className = "cell";
-      board.appendChild(c);
-      cells.push(c);
+  class Camera {
+    constructor() {
+      this.x = 20;
+      this.y = 10;
+      this.zoom = 1.0;
+    }
+    setCenter(x, y) {
+      this.x = Number.isFinite(x) ? x : this.x;
+      this.y = Number.isFinite(y) ? y : this.y;
+    }
+    setZoom(z) {
+      const next = Number.isFinite(z) ? z : this.zoom;
+      this.zoom = Math.max(0.25, Math.min(4.0, next));
+    }
+    resetToDefault(worldW, worldH) {
+      this.setCenter(Math.floor(worldW / 2), Math.floor(worldH / 2));
+      this.setZoom(1.0);
     }
   }
 
-  function idx(x,y){ return y*gridW + x; }
-
-  function clearBoard() {
-    for (const c of cells) {
-      c.className = "cell";
-      c.style.background = ""; // allow custom snake colors
+  class WebGLRenderer {
+    constructor(canvas) {
+      this.canvas = canvas;
+      this.gl = canvas.getContext("webgl", { alpha: false, antialias: false, preserveDrawingBuffer: false });
+      this.program = null;
+      this.posBuffer = null;
+      this.colorBuffer = null;
+      this.aPos = -1;
+      this.aColor = -1;
+      this.uViewMin = null;
+      this.uViewSize = null;
+      this.visibleCellsX = 0;
+      this.visibleCellsY = 0;
+      this.visibleCellCount = 0;
+      this.maskCacheKey = "";
+      this.maskCacheW = 0;
+      this.maskCacheH = 0;
+      this.maskPlayable = null;
+      if (this.gl) this.init();
     }
+
+    init() {
+      const gl = this.gl;
+      const vertSrc = `
+        attribute vec2 a_pos;
+        attribute vec4 a_color;
+        uniform vec2 u_view_min;
+        uniform vec2 u_view_size;
+        varying vec4 v_color;
+        void main() {
+          vec2 p = (a_pos - u_view_min) / u_view_size;
+          vec2 ndc = vec2(p.x * 2.0 - 1.0, 1.0 - p.y * 2.0);
+          gl_Position = vec4(ndc, 0.0, 1.0);
+          v_color = a_color;
+        }
+      `;
+      const fragSrc = `
+        precision mediump float;
+        varying vec4 v_color;
+        void main() {
+          gl_FragColor = v_color;
+        }
+      `;
+      const vs = this.compile(gl.VERTEX_SHADER, vertSrc);
+      const fs = this.compile(gl.FRAGMENT_SHADER, fragSrc);
+      if (!vs || !fs) return;
+      const program = gl.createProgram();
+      if (!program) return;
+      gl.attachShader(program, vs);
+      gl.attachShader(program, fs);
+      gl.linkProgram(program);
+      if (!gl.getProgramParameter(program, gl.LINK_STATUS)) return;
+
+      this.program = program;
+      this.aPos = gl.getAttribLocation(program, "a_pos");
+      this.aColor = gl.getAttribLocation(program, "a_color");
+      this.uViewMin = gl.getUniformLocation(program, "u_view_min");
+      this.uViewSize = gl.getUniformLocation(program, "u_view_size");
+      this.posBuffer = gl.createBuffer();
+      this.colorBuffer = gl.createBuffer();
+      gl.useProgram(program);
+      gl.enable(gl.BLEND);
+      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    }
+
+    compile(type, src) {
+      const gl = this.gl;
+      const shader = gl.createShader(type);
+      if (!shader) return null;
+      gl.shaderSource(shader, src);
+      gl.compileShader(shader);
+      if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) return null;
+      return shader;
+    }
+
+    resizeToDisplaySize() {
+      const dpr = Math.max(1, window.devicePixelRatio || 1);
+      const width = Math.max(1, Math.floor(this.canvas.clientWidth * dpr));
+      const height = Math.max(1, Math.floor(this.canvas.clientHeight * dpr));
+      if (this.canvas.width !== width || this.canvas.height !== height) {
+        this.canvas.width = width;
+        this.canvas.height = height;
+      }
+      if (this.gl) this.gl.viewport(0, 0, width, height);
+    }
+
+    getViewSize(worldW, worldH, zoom) {
+      const aspect = this.canvas.width > 0 && this.canvas.height > 0 ? this.canvas.width / this.canvas.height : 16 / 9;
+      const visibleRows = Math.max(8, Math.round(DEFAULT_VISIBLE_ROWS / Math.max(0.25, Math.min(4.0, zoom))));
+      const visibleY = Math.min(worldH, visibleRows);
+      const visibleX = Math.min(worldW, Math.max(8, Math.round(visibleY * aspect)));
+      return { visibleX, visibleY };
+    }
+
+    hexToRgb01(hex) {
+      const safe = typeof hex === "string" && /^#[0-9a-fA-F]{6}$/.test(hex) ? hex : "#00aa00";
+      const v = parseInt(safe.slice(1), 16);
+      return {
+        r: ((v >> 16) & 255) / 255,
+        g: ((v >> 8) & 255) / 255,
+        b: (v & 255) / 255
+      };
+    }
+
+    viewRect(state, camera) {
+      const view = this.getViewSize(state.w, state.h, camera.zoom);
+      this.visibleCellsX = view.visibleX;
+      this.visibleCellsY = view.visibleY;
+      this.visibleCellCount = view.visibleX * view.visibleY;
+      const minX = camera.x - view.visibleX / 2;
+      const minY = camera.y - view.visibleY / 2;
+      const maxX = minX + view.visibleX;
+      const maxY = minY + view.visibleY;
+      return { view, minX, minY, maxX, maxY };
+    }
+
+    drawBatched(mode, vertices, colors) {
+      const gl = this.gl;
+      if (!vertices.length || !colors.length) return;
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.posBuffer);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vertices), gl.DYNAMIC_DRAW);
+      gl.enableVertexAttribArray(this.aPos);
+      gl.vertexAttribPointer(this.aPos, 2, gl.FLOAT, false, 0, 0);
+
+      gl.bindBuffer(gl.ARRAY_BUFFER, this.colorBuffer);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(colors), gl.DYNAMIC_DRAW);
+      gl.enableVertexAttribArray(this.aColor);
+      gl.vertexAttribPointer(this.aColor, 4, gl.FLOAT, false, 0, 0);
+
+      gl.drawArrays(mode, 0, vertices.length / 2);
+    }
+
+    render(state, camera, overlay) {
+      if (!this.gl || !this.program || !state) return;
+      this.resizeToDisplaySize();
+      const gl = this.gl;
+
+      const vr = this.viewRect(state, camera);
+      const { view, minX, minY, maxX, maxY } = vr;
+
+      const triVertices = [];
+      const triColors = [];
+      const pushQuad = (x, y, r, g, b, a = 1.0) => {
+        const x0 = x;
+        const y0 = y;
+        const x1 = x + 1;
+        const y1 = y + 1;
+        triVertices.push(x0, y0, x1, y0, x0, y1, x0, y1, x1, y0, x1, y1);
+        for (let i = 0; i < 6; ++i) triColors.push(r, g, b, a);
+      };
+
+      for (const f of state.foods || []) {
+        if (f.x < minX || f.x >= maxX || f.y < minY || f.y >= maxY) continue;
+        pushQuad(f.x, f.y, 1.0, 0.25, 0.25);
+      }
+      for (const s of state.snakes || []) {
+        const rgb = this.hexToRgb01(s.color);
+        for (const seg of s.body || []) {
+          if (seg.x < minX || seg.x >= maxX || seg.y < minY || seg.y >= maxY) continue;
+          pushQuad(seg.x, seg.y, rgb.r, rgb.g, rgb.b);
+        }
+      }
+
+      gl.clearColor(0.92, 0.96, 0.91, 1.0);
+      gl.clear(gl.COLOR_BUFFER_BIT);
+
+      gl.useProgram(this.program);
+      gl.uniform2f(this.uViewMin, minX, minY);
+      gl.uniform2f(this.uViewSize, view.visibleX, view.visibleY);
+
+      this.drawBatched(gl.TRIANGLES, triVertices, triColors);
+      this.drawOverlays(state, vr, overlay || {});
+    }
+
+    drawOverlays(state, vr, overlay) {
+      const gl = this.gl;
+      const { minX, minY, maxX, maxY } = vr;
+      const lineVertices = [];
+      const lineColors = [];
+      const addLine = (x1, y1, x2, y2, r, g, b, a) => {
+        lineVertices.push(x1, y1, x2, y2);
+        lineColors.push(r, g, b, a, r, g, b, a);
+      };
+
+      const gridMode = overlay.gridMode || "off";
+      const showBounds = !!overlay.showBounds;
+      const showEdge = !!overlay.showEdge;
+      const chunkSize = Math.max(1, Number(overlay.chunkSize || 64));
+      const aoi = overlay.aoi || null;
+      const mask = overlay.mask || null;
+      const showCellGrid = gridMode !== "off" && this.visibleCellCount <= 30000;
+      const showChunkGrid = gridMode === "cells_chunks" || (gridMode === "cells" && !showCellGrid);
+      this.ensureMaskCache(state, mask);
+
+      if (showCellGrid) {
+        const xStart = Math.floor(minX);
+        const xEnd = Math.ceil(maxX);
+        const yStart = Math.floor(minY);
+        const yEnd = Math.ceil(maxY);
+        for (let x = xStart; x <= xEnd; ++x) addLine(x, minY, x, maxY, 0.08, 0.08, 0.08, 0.06);
+        for (let y = yStart; y <= yEnd; ++y) addLine(minX, y, maxX, y, 0.08, 0.08, 0.08, 0.06);
+      }
+
+      if (showChunkGrid) {
+        const cxStart = Math.floor(minX / chunkSize) - 1;
+        const cxEnd = Math.ceil(maxX / chunkSize) + 1;
+        const cyStart = Math.floor(minY / chunkSize) - 1;
+        const cyEnd = Math.ceil(maxY / chunkSize) + 1;
+        const gy0 = Math.max(0, minY);
+        const gy1 = Math.min(state.h, maxY);
+        const gx0 = Math.max(0, minX);
+        const gx1 = Math.min(state.w, maxX);
+        for (let cx = cxStart; cx <= cxEnd; ++cx) {
+          const x = cx * chunkSize;
+          if (x < 0 || x > state.w) continue;
+          addLine(x, gy0, x, gy1, 0.12, 0.12, 0.12, 0.16);
+        }
+        for (let cy = cyStart; cy <= cyEnd; ++cy) {
+          const y = cy * chunkSize;
+          if (y < 0 || y > state.h) continue;
+          addLine(gx0, y, gx1, y, 0.12, 0.12, 0.12, 0.16);
+        }
+      }
+
+      if (showBounds) {
+        addLine(0, 0, state.w, 0, 0.18, 0.18, 0.18, 0.38);
+        addLine(state.w, 0, state.w, state.h, 0.18, 0.18, 0.18, 0.38);
+        addLine(state.w, state.h, 0, state.h, 0.18, 0.18, 0.18, 0.38);
+        addLine(0, state.h, 0, 0, 0.18, 0.18, 0.18, 0.38);
+      }
+
+      if (aoi &&
+          Number.isFinite(aoi.min_chunk_x) && Number.isFinite(aoi.max_chunk_x) &&
+          Number.isFinite(aoi.min_chunk_y) && Number.isFinite(aoi.max_chunk_y)) {
+        const ax0 = aoi.min_chunk_x * chunkSize;
+        const ay0 = aoi.min_chunk_y * chunkSize;
+        const ax1 = (aoi.max_chunk_x + 1) * chunkSize;
+        const ay1 = (aoi.max_chunk_y + 1) * chunkSize;
+        addLine(ax0, ay0, ax1, ay0, 0.05, 0.28, 0.88, 0.34);
+        addLine(ax1, ay0, ax1, ay1, 0.05, 0.28, 0.88, 0.34);
+        addLine(ax1, ay1, ax0, ay1, 0.05, 0.28, 0.88, 0.34);
+        addLine(ax0, ay1, ax0, ay0, 0.05, 0.28, 0.88, 0.34);
+      }
+
+      if (showEdge && mask && mask.mode === "torn" && this.maskPlayable) {
+        const overlayVertices = [];
+        const overlayColors = [];
+        const addOverlayQuad = (x, y, r, g, b, a) => {
+          const x0 = x;
+          const y0 = y;
+          const x1 = x + 1;
+          const y1 = y + 1;
+          overlayVertices.push(x0, y0, x1, y0, x0, y1, x0, y1, x1, y0, x1, y1);
+          for (let i = 0; i < 6; ++i) overlayColors.push(r, g, b, a);
+        };
+        const x0 = Math.max(0, Math.floor(minX));
+        const y0 = Math.max(0, Math.floor(minY));
+        const x1 = Math.min(state.w, Math.ceil(maxX));
+        const y1 = Math.min(state.h, Math.ceil(maxY));
+        for (let y = y0; y < y1; ++y) {
+          for (let x = x0; x < x1; ++x) {
+            const idx = y * state.w + x;
+            if (idx < 0 || idx >= this.maskPlayable.length) continue;
+            if (this.maskPlayable[idx]) continue;
+            addOverlayQuad(x, y, 0.05, 0.05, 0.05, 0.22);
+          }
+        }
+        this.drawBatched(gl.TRIANGLES, overlayVertices, overlayColors);
+
+        // Draw playable boundary from local neighbor diffs in visible range.
+        for (let y = y0; y < y1; ++y) {
+          for (let x = x0; x < x1; ++x) {
+            const idx = y * state.w + x;
+            if (idx < 0 || idx >= this.maskPlayable.length || !this.maskPlayable[idx]) continue;
+            const leftBlocked = (x === 0) || !this.maskPlayable[y * state.w + (x - 1)];
+            const rightBlocked = (x === state.w - 1) || !this.maskPlayable[y * state.w + (x + 1)];
+            const topBlocked = (y === 0) || !this.maskPlayable[(y - 1) * state.w + x];
+            const bottomBlocked = (y === state.h - 1) || !this.maskPlayable[(y + 1) * state.w + x];
+            if (leftBlocked) addLine(x, y, x, y + 1, 0.16, 0.26, 0.76, 0.52);
+            if (rightBlocked) addLine(x + 1, y, x + 1, y + 1, 0.16, 0.26, 0.76, 0.52);
+            if (topBlocked) addLine(x, y, x + 1, y, 0.16, 0.26, 0.76, 0.52);
+            if (bottomBlocked) addLine(x, y + 1, x + 1, y + 1, 0.16, 0.26, 0.76, 0.52);
+          }
+        }
+      }
+
+      this.drawBatched(gl.LINES, lineVertices, lineColors);
+    }
+
+    ensureMaskCache(state, mask) {
+      if (!mask || mask.mode !== "torn") {
+        this.maskCacheKey = "";
+        this.maskPlayable = null;
+        return;
+      }
+      const key = `${state.w}:${state.h}:${mask.mode}:${mask.style}:${mask.seed}:${mask.unplayable_cells}`;
+      if (key === this.maskCacheKey && this.maskPlayable) return;
+      const area = state.w * state.h;
+      const playable = new Uint8Array(area);
+      playable.fill(1);
+      const unplayable = Math.max(0, Math.min(area, Number(mask.unplayable_cells || 0)));
+      if (unplayable > 0) {
+        const scored = [];
+        scored.length = area;
+        let i = 0;
+        for (let y = 0; y < state.h; ++y) {
+          for (let x = 0; x < state.w; ++x) {
+            const edge = Math.min(Math.min(x, state.w - 1 - x), Math.min(y, state.h - 1 - y));
+            let h = ((x >>> 0) * 73856093) ^ ((y >>> 0) * 19349663) ^ (((Number(mask.seed) | 0) >>> 0) * 83492791);
+            h = (h ^ (h >>> 13)) >>> 0;
+            h = Math.imul(h, 1274126177) >>> 0;
+            h = (h ^ (h >>> 16)) >>> 0;
+            const jitter = h % 1000;
+            scored[i] = { idx: i, score: edge * 1000 + jitter };
+            i++;
+          }
+        }
+        scored.sort((a, b) => a.score - b.score);
+        for (let k = 0; k < unplayable; ++k) playable[scored[k].idx] = 0;
+      }
+      this.maskPlayable = playable;
+      this.maskCacheW = state.w;
+      this.maskCacheH = state.h;
+      this.maskCacheKey = key;
+    }
+  }
+
+  const TOKEN_STORAGE_KEY = "snake_auth_token";
+  const USER_ID_STORAGE_KEY = "snake_auth_user_id";
+  const LOGIN_RELOAD_FLAG = "snake_reload_after_login";
+  const SELECTED_SNAKE_STORAGE_KEY = "snake_selected_snake_id";
+  const WATCHED_SNAKE_STORAGE_KEY = "snake_watched_snake_id";
+  const GRID_MODE_STORAGE_KEY = "snake_grid_mode";
+  const BOUNDS_TOGGLE_STORAGE_KEY = "snake_bounds_toggle";
+  const EDGE_TOGGLE_STORAGE_KEY = "snake_edge_toggle";
+  const MY_ECON_OPEN_STORAGE_KEY = "snake_my_economy_open";
+  const WORLD_LOG_CACHE_KEY = "snake_world_log_cache_v1";
+  const WORLD_LOG_ARCHIVE_OPEN_KEY = "snake_world_log_archive_open";
+
+  let token = localStorage.getItem(TOKEN_STORAGE_KEY);
+  let myUserId = Number(localStorage.getItem(USER_ID_STORAGE_KEY));
+  if (!Number.isFinite(myUserId) || myUserId <= 0) myUserId = null;
+  let selectedSnakeId = Number(localStorage.getItem(SELECTED_SNAKE_STORAGE_KEY));
+  if (!Number.isFinite(selectedSnakeId) || selectedSnakeId <= 0) selectedSnakeId = null;
+  let watchedSnakeId = Number(localStorage.getItem(WATCHED_SNAKE_STORAGE_KEY));
+  if (!Number.isFinite(watchedSnakeId) || watchedSnakeId <= 0) watchedSnakeId = null;
+  let latestServerState = null;
+  let worldEvolutionLog = null;
+  let worldLogArchiveOpen = localStorage.getItem(WORLD_LOG_ARCHIVE_OPEN_KEY) === "1";
+  const stateBuffer = [];
+  const camera = new Camera();
+  const cameraSendSeq = { v: 0 };
+
+  let gridW = 40, gridH = 20;
+  const canvas = document.getElementById("game-canvas");
+  const renderer = new WebGLRenderer(canvas);
+  const tickEl = document.getElementById("tick");
+  const expectedTickHzEl = document.getElementById("expectedTickHz");
+  const actualTickHzEl = document.getElementById("actualTickHz");
+  const ecoYEl = document.getElementById("ecoY");
+  const ecoKEl = document.getElementById("ecoK");
+  const ecoLEl = document.getElementById("ecoL");
+  const ecoAlphaEl = document.getElementById("ecoAlpha");
+  const ecoAEl = document.getElementById("ecoA");
+  const ecoMEl = document.getElementById("ecoM");
+  const ecoPEl = document.getElementById("ecoP");
+  const ecoPiEl = document.getElementById("ecoPi");
+  const ecoTreasuryEl = document.getElementById("ecoTreasury");
+  const ecoEndsEl = document.getElementById("ecoEnds");
+  const ecoPeriodEl = document.getElementById("ecoPeriod");
+  const ecoUYEl = document.getElementById("ecoUY");
+  const ecoUKEl = document.getElementById("ecoUK");
+  const ecoULEl = document.getElementById("ecoUL");
+  const ecoUAEl = document.getElementById("ecoUA");
+  const ecoGlobalAEl = document.getElementById("ecoGlobalA");
+  const ecoUAlphaEl = document.getElementById("ecoUAlpha");
+  const ecoCapitalIntensityEl = document.getElementById("ecoCapitalIntensity");
+  const ecoReturnOnCapitalEl = document.getElementById("ecoReturnOnCapital");
+  const ecoLaborEfficiencyEl = document.getElementById("ecoLaborEfficiency");
+  const ecoMarketEl = document.getElementById("ecoMarket");
+  const ecoBsLiquidEl = document.getElementById("ecoBsLiquid");
+  const ecoBsDeployedEl = document.getElementById("ecoBsDeployed");
+  const ecoBsTotalEl = document.getElementById("ecoBsTotal");
+  const ecoUserCardEl = document.getElementById("eco-user-card");
+  const ecoAuthNoteEl = document.getElementById("eco-auth-note");
+  const ecoTipPopEl = document.getElementById("eco-tip-pop");
+  const periodSummaryPopEl = document.getElementById("period-summary-pop");
+  const attachHintEl = document.getElementById("attach-hint");
+  const versionBadgeEl = document.getElementById("version-badge");
+  const worldLogPanelEl = document.getElementById("world-log-panel");
+  const worldLogListEl = document.getElementById("world-log-list");
+  const worldLogCloseEl = document.getElementById("world-log-close");
+  const worldLogArchiveEl = document.getElementById("world-log-archive");
+  const worldLogCurrentEl = document.getElementById("world-log-current");
+  const worldEvolvedBackdropEl = document.getElementById("world-evolved-modal-backdrop");
+  const worldEvolvedTitleEl = document.getElementById("world-evolved-title");
+  const worldEvolvedTextEl = document.getElementById("world-evolved-text");
+  const worldEvolvedDismissEl = document.getElementById("world-evolved-dismiss");
+  const worldEvolvedViewEl = document.getElementById("world-evolved-view");
+  const loginTransitionBackdropEl = document.getElementById("login-transition-backdrop");
+  const loginTransitionTipEl = document.getElementById("login-transition-tip");
+  const ecoStatusEl = document.getElementById("ecoStatus");
+  const authStatus = document.getElementById("authStatus");
+  const mySnakesEl = document.getElementById("mySnakes");
+  const legacyLoginFieldsEl = document.getElementById("legacy-login-fields");
+  const googleLoginRootEl = document.getElementById("google-login-root");
+  const settingsPanelEl = document.getElementById("settings-panel");
+  const deleteAccountBtn = document.getElementById("deleteAccountBtn");
+  const deleteAccountBackdropEl = document.getElementById("delete-account-backdrop");
+  const deleteAccountCancelBtn = document.getElementById("deleteAccountCancelBtn");
+  const deleteAccountConfirmBtn = document.getElementById("deleteAccountConfirmBtn");
+  const deleteCompanyConfirmInputEl = document.getElementById("deleteCompanyConfirmInput");
+  const onboardingBackdropEl = document.getElementById("onboarding-backdrop");
+  const onboardingTitleEl = document.getElementById("onboarding-title");
+  const onboardingCopyEl = document.getElementById("onboarding-copy");
+  const onboardingFormEl = document.getElementById("onboarding-form");
+  const companyNameInputEl = document.getElementById("companyNameInput");
+  const companyNameHintEl = document.getElementById("companyNameHint");
+  const starterSnakeNameInputEl = document.getElementById("starterSnakeNameInput");
+  const snakeNameHintEl = document.getElementById("snakeNameHint");
+  const completeOnboardingBtn = document.getElementById("completeOnboardingBtn");
+  const createSnakeBtn = document.getElementById("createSnakeBtn");
+  const myBalanceEl = document.getElementById("myBalance");
+  const mySnakeCountEl = document.getElementById("mySnakeCount");
+  const borrowAmountEl = document.getElementById("borrowAmount");
+  const borrowBtn = document.getElementById("borrowBtn");
+  const attachAmountEl = document.getElementById("attachAmount");
+  const attachBtn = document.getElementById("attachBtn");
+  const attach1Btn = document.getElementById("attach1Btn");
+  const attach10Btn = document.getElementById("attach10Btn");
+  const attach50Btn = document.getElementById("attach50Btn");
+  const zoomInBtn = document.getElementById("zoomInBtn");
+  const zoomOutBtn = document.getElementById("zoomOutBtn");
+  const zoomResetBtn = document.getElementById("zoomResetBtn");
+  const gridModeSelect = document.getElementById("gridModeSelect");
+  const boundsToggle = document.getElementById("boundsToggle");
+  const edgeToggle = document.getElementById("edgeToggle");
+  const debugOverlayEl = document.getElementById("debug-overlay");
+  const viewControlsEl = document.getElementById("view-controls");
+  const publicViewHintEl = document.getElementById("public-view-hint");
+
+  let lastTickSample = null;
+  let expectedTickHz = null;
+  const FALLBACK_EXPECTED_TICK_HZ = 10;
+  const SPECTATOR_DEFAULT_ZOOM = 0.25;
+  let runtimeSpeedPollTimer = null;
+  let cameraPollTimer = null;
+  let latestSnapshotBytes = 0;
+  let serverChunkSize = 64;
+  let serverAoiChunks = 0;
+  let serverAoiRange = null;
+  let serverMask = { mode: "none", style: "jagged", seed: 0, playable_cells: 0, unplayable_cells: 0 };
+  let debugModeLabel = "PUBLIC";
+  let debugPublicChunk = { cx: 0, cy: 0 };
+  let wsHandle = null;
+  let wsBackoffMs = 1000;
+  let wsConnected = false;
+  let stateFallbackTimer = null;
+  let isDragging = false;
+  let dragLastX = 0;
+  let dragLastY = 0;
+  let myBalance = 0;
+  let currentGlobalA = 0;
+  let currentPeriodId = "";
+  let periodStartUserMetrics = null;
+  let latestUserMetrics = null;
+  let lastCameraSendAt = 0;
+  let lastCameraPayload = "";
+  let gridMode = localStorage.getItem(GRID_MODE_STORAGE_KEY) || "cells_chunks";
+  if (!["off", "cells", "cells_chunks"].includes(gridMode)) gridMode = "cells_chunks";
+  let showBounds = localStorage.getItem(BOUNDS_TOGGLE_STORAGE_KEY) !== "0";
+  let showEdge = localStorage.getItem(EDGE_TOGGLE_STORAGE_KEY) !== "0";
+  let spectatorDefaultsApplied = false;
+  let googleAuthEnabled = false;
+  let googleClientId = "";
+  let onboardingRequired = false;
+  let loginTipTimer = null;
+  const LOGIN_TIPS = [
+    "Extracted Output grows when your snakes harvest food efficiently.",
+    "Liquid Assets can be invested into Deployed Capital at any time.",
+    "Capital Intensity shows how much of your resources are currently invested.",
+    "Market Share rises when your personal output grows faster than the world."
+  ];
+  if (sessionStorage.getItem(LOGIN_RELOAD_FLAG) === "1") {
+    sessionStorage.removeItem(LOGIN_RELOAD_FLAG);
+  }
+  const savedMyEcoOpen = localStorage.getItem(MY_ECON_OPEN_STORAGE_KEY);
+  if (savedMyEcoOpen === "0") ecoUserCardEl.open = false;
+
+  function applySpectatorDefaults(worldW = gridW, worldH = gridH, force = false) {
+    if (token) return;
+    if (spectatorDefaultsApplied && !force) return;
+    const w = Math.max(1, Number(worldW) || gridW);
+    const h = Math.max(1, Number(worldH) || gridH);
+    camera.setCenter(Math.floor(w / 2), Math.floor(h / 2));
+    camera.setZoom(SPECTATOR_DEFAULT_ZOOM);
+    spectatorDefaultsApplied = true;
+  }
+
+  async function initSpectatorCameraBeforeStream() {
+    if (token) return;
+    try {
+      const res = await fetch(apiPath("/game/state"));
+      if (!res.ok) return;
+      const state = await res.json();
+      if (!state || typeof state !== "object") return;
+      if (!Number.isFinite(Number(state.w)) || !Number.isFinite(Number(state.h))) return;
+      gridW = Math.max(1, Number(state.w));
+      gridH = Math.max(1, Number(state.h));
+      applySpectatorDefaults(gridW, gridH, true);
+      latestServerState = state;
+      renderCurrentState();
+    } catch (_) {
+      // Keep deterministic local fallback if state bootstrap fails.
+      applySpectatorDefaults(gridW, gridH, true);
+    }
+  }
+
+  function renderCurrentState() {
+    if (!latestServerState) return;
+    renderer.render(latestServerState, camera, {
+      gridMode,
+      showBounds,
+      showEdge,
+      chunkSize: serverChunkSize,
+      aoi: serverAoiRange,
+      mask: serverMask
+    });
   }
 
   function drawFrame(state) {
+    latestServerState = state;
     tickEl.textContent = state.tick;
-
-    if (state.w !== gridW || state.h !== gridH || cells.length === 0) {
-      buildBoard(state.w, state.h);
-    }
-
-    clearBoard();
-
-    // foods
-    for (const f of state.foods) {
-      const i = idx(f.x, f.y);
-      if (cells[i]) cells[i].classList.add("food");
-    }
-
-    // snakes
-    for (const s of state.snakes) {
-      for (const seg of s.body) {
-        const i = idx(seg.x, seg.y);
-        if (!cells[i]) continue;
-        cells[i].classList.add("snake-cell");
-        // color each snake
-        cells[i].style.background = s.color;
+    updateActualTickHz(state.tick);
+    gridW = state.w;
+    gridH = state.h;
+    clampCameraToWorld();
+    renderCurrentState();
+    // Continuous follow is only active when watch checkbox is enabled.
+    if (token && watchedSnakeId) {
+      const followTarget = findSnakeHeadById(watchedSnakeId);
+      if (followTarget) {
+        camera.setCenter(followTarget.x, followTarget.y);
+        renderCurrentState();
       }
+    }
+  }
+
+  function pushStateBuffer(state) {
+    stateBuffer.push({ state, t: performance.now() });
+    if (stateBuffer.length > 2) stateBuffer.shift();
+  }
+
+  function buildWorldView() {
+    // v1 view layer: keep ring buffer ready for interpolation, render latest snapshot for now.
+    if (stateBuffer.length === 0) return null;
+    return stateBuffer[stateBuffer.length - 1].state;
+  }
+
+  function updateDebugOverlay() {
+    if (!DEBUG_MODE) return;
+    debugOverlayEl.style.display = "block";
+    debugOverlayEl.textContent =
+      `mode: ${debugModeLabel}\n` +
+      `camera: x=${camera.x.toFixed(2)} y=${camera.y.toFixed(2)}\n` +
+      `zoom: ${camera.zoom.toFixed(2)}\n` +
+      `public_chunk: cx=${debugPublicChunk.cx} cy=${debugPublicChunk.cy}\n` +
+      `chunk_size: ${serverChunkSize}\n` +
+      `mask: ${serverMask.mode}/${serverMask.style} seed=${serverMask.seed}\n` +
+      `playable: ${serverMask.playable_cells} unplayable: ${serverMask.unplayable_cells}\n` +
+      `camera_chunk: ${serverAoiRange ? `(${serverAoiRange.camera_chunk_x},${serverAoiRange.camera_chunk_y})` : "-" }\n` +
+      `aoi_range: ${serverAoiRange ? `[${serverAoiRange.min_chunk_x}..${serverAoiRange.max_chunk_x}] [${serverAoiRange.min_chunk_y}..${serverAoiRange.max_chunk_y}]` : "-" }\n` +
+      `aoi_chunks: ${serverAoiChunks}\n` +
+      `last_snapshot_bytes: ${latestSnapshotBytes}`;
+  }
+
+  function updateActualTickHz(currentTick) {
+    const now = performance.now();
+    if (!lastTickSample) {
+      lastTickSample = { tick: currentTick, t: now };
+      return;
+    }
+
+    const dtMs = now - lastTickSample.t;
+    const dTick = currentTick - lastTickSample.tick;
+    if (dtMs >= 800 && dTick >= 0) {
+      const hz = dTick / (dtMs / 1000);
+      actualTickHzEl.textContent = hz.toFixed(2);
+      lastTickSample = { tick: currentTick, t: now };
+    }
+  }
+
+  async function loadRuntimeSpeed() {
+    try {
+      const res = await fetch(apiPath("/game/runtime"));
+      if (!res.ok) throw new Error("runtime endpoint unavailable");
+      const data = await res.json();
+      if (typeof data.tick_hz === "number" && data.tick_hz > 0) {
+        expectedTickHz = data.tick_hz;
+        expectedTickHzEl.textContent = String(expectedTickHz);
+      } else {
+        throw new Error("runtime endpoint missing tick_hz");
+      }
+      googleAuthEnabled = !!data.google_auth_enabled;
+      googleClientId = typeof data.google_client_id === "string" ? data.google_client_id : "";
+      if (googleAuthEnabled) {
+        legacyLoginFieldsEl.style.display = "none";
+        googleLoginRootEl.style.display = "block";
+        if (window.google && window.google.accounts && googleClientId) {
+          window.google.accounts.id.initialize({
+            client_id: googleClientId,
+            callback: (resp) => {
+              if (resp && resp.credential) loginWithGoogleIdToken(resp.credential);
+            }
+          });
+          const target = document.getElementById("google-signin-button");
+          target.innerHTML = "";
+          window.google.accounts.id.renderButton(target, { theme: "outline", size: "large", text: "continue_with", shape: "pill" });
+        } else {
+          authStatus.textContent = "Google Sign-In is not configured.";
+        }
+      } else {
+        legacyLoginFieldsEl.style.display = "";
+        googleLoginRootEl.style.display = "none";
+      }
+      return;
+    } catch (_) {
+      // Fallback keeps local/prod UI readable when talking to an older backend binary.
+      expectedTickHz = FALLBACK_EXPECTED_TICK_HZ;
+      expectedTickHzEl.textContent = `${expectedTickHz} (fallback)`;
+      // Stop repeated failing polls on older binaries that do not expose /game/runtime.
+      if (runtimeSpeedPollTimer) {
+        clearInterval(runtimeSpeedPollTimer);
+        runtimeSpeedPollTimer = null;
+      }
+    }
+  }
+
+  function setEconomyFallback() {
+    ecoYEl.textContent = "—";
+    ecoKEl.textContent = "—";
+    ecoLEl.textContent = "—";
+    ecoAlphaEl.textContent = "—";
+    ecoAEl.textContent = "—";
+    ecoMEl.textContent = "—";
+    ecoPEl.textContent = "—";
+    ecoPiEl.textContent = "—";
+    ecoTreasuryEl.textContent = "—";
+    ecoEndsEl.textContent = "—";
+    ecoPeriodEl.textContent = "—";
+    ecoStatusEl.textContent = "Economy unavailable";
+    updateDebugOverlay();
+  }
+
+  function setEconomyUserFallback() {
+    ecoUYEl.textContent = "—";
+    ecoUKEl.textContent = "—";
+    ecoULEl.textContent = "—";
+    ecoUAEl.textContent = "—";
+    ecoGlobalAEl.textContent = "—";
+    ecoUAlphaEl.textContent = "—";
+    ecoCapitalIntensityEl.textContent = "—";
+    ecoReturnOnCapitalEl.textContent = "—";
+    ecoLaborEfficiencyEl.textContent = "—";
+    ecoMarketEl.textContent = "—";
+    ecoBsLiquidEl.textContent = "—";
+    ecoBsDeployedEl.textContent = "—";
+    ecoBsTotalEl.textContent = "—";
+  }
+
+  async function loadStateFallbackOnce() {
+    try {
+      const res = await fetch(apiPath("/game/state"));
+      if (!res.ok) return;
+      const state = await res.json();
+      if (!state || typeof state !== "object") return;
+      if (!Number.isFinite(Number(state.tick))) return;
+      pushStateBuffer(state);
+      const view = buildWorldView();
+      if (view) drawFrame(view);
+    } catch (_) {
+      // fallback best effort
+    }
+  }
+
+  function ensureStateFallbackRunning() {
+    if (stateFallbackTimer) return;
+    stateFallbackTimer = setInterval(() => {
+      if (!wsConnected) loadStateFallbackOnce();
+    }, 500);
+  }
+
+  function stopStateFallback() {
+    if (!stateFallbackTimer) return;
+    clearInterval(stateFallbackTimer);
+    stateFallbackTimer = null;
+  }
+
+  function fmtInt(v) {
+    if (!Number.isFinite(v)) return "—";
+    return Math.trunc(v).toLocaleString();
+  }
+
+  function fmtNum(v, digits = 4) {
+    if (!Number.isFinite(v)) return "—";
+    return Number(v).toFixed(digits);
+  }
+
+  function isValidGameName(name) {
+    return /^[A-Za-z][A-Za-z0-9_-]{2,23}$/.test(String(name || ""));
+  }
+
+  let companyNameCheckTimer = null;
+  let snakeNameCheckTimer = null;
+
+  async function checkNameAvailability(kind, name) {
+    const path = kind === "company" ? `/names/check-company?name=${encodeURIComponent(name)}` : `/names/check-snake?name=${encodeURIComponent(name)}`;
+    const res = await fetch(apiPath(path));
+    if (!res.ok) return { valid: false, taken: false };
+    return await res.json();
+  }
+
+  function setNameHint(el, text, ok) {
+    if (!el) return;
+    el.textContent = text || "";
+    el.style.color = ok ? "#166534" : "#b91c1c";
+  }
+
+  function showOnboardingWelcomeThenForm() {
+    onboardingBackdropEl.style.display = "flex";
+    onboardingTitleEl.textContent = "Welcome";
+    onboardingCopyEl.innerHTML = [
+      "Welcome to the Economic Arena.",
+      "You are now the owner of a new Company.",
+      "Harvest. Grow. Compete. Influence the world."
+    ].join("<br />");
+    onboardingFormEl.style.display = "none";
+    setTimeout(() => {
+      onboardingTitleEl.textContent = "Set Your Company And First Snake";
+      onboardingCopyEl.textContent = "";
+      onboardingFormEl.style.display = "block";
+    }, 3500);
+  }
+
+  async function showLoginTransition(durationMs = 2600) {
+    if (!loginTransitionBackdropEl || !loginTransitionTipEl) return;
+    if (loginTipTimer) {
+      clearInterval(loginTipTimer);
+      loginTipTimer = null;
+    }
+    let idx = 0;
+    loginTransitionTipEl.textContent = LOGIN_TIPS[idx];
+    loginTransitionBackdropEl.style.display = "flex";
+    loginTipTimer = setInterval(() => {
+      idx = (idx + 1) % LOGIN_TIPS.length;
+      loginTransitionTipEl.textContent = LOGIN_TIPS[idx];
+    }, 1200);
+    await new Promise((resolve) => setTimeout(resolve, Math.max(1200, durationMs)));
+    if (loginTipTimer) {
+      clearInterval(loginTipTimer);
+      loginTipTimer = null;
+    }
+    loginTransitionBackdropEl.style.display = "none";
+  }
+
+  function renderWorldEvolutionLog() {
+    if (!worldEvolutionLog || !Array.isArray(worldEvolutionLog.entries)) return;
+    const entries = worldEvolutionLog.entries;
+    const visibleCount = worldLogArchiveOpen ? entries.length : Math.min(10, entries.length);
+    worldLogListEl.innerHTML = "";
+    for (let i = 0; i < visibleCount; i++) {
+      const entry = entries[i];
+      const details = document.createElement("details");
+      details.className = "world-log-entry";
+      if (i === 0) details.open = true;
+      const summary = document.createElement("summary");
+      summary.textContent = `Version ${entry.version} · ${entry.release_date}`;
+      details.appendChild(summary);
+      const ul = document.createElement("ul");
+      for (const note of (entry.notes || [])) {
+        const li = document.createElement("li");
+        li.textContent = note;
+        ul.appendChild(li);
+      }
+      details.appendChild(ul);
+      worldLogListEl.appendChild(details);
+    }
+    worldLogArchiveEl.style.display = entries.length > 10 && !worldLogArchiveOpen ? "" : "none";
+    versionBadgeEl.textContent = `Version ${worldEvolutionLog.current_version || "—"}`;
+    worldLogCurrentEl.textContent = `Current: ${worldEvolutionLog.current_version || "—"}`;
+  }
+
+  async function loadWorldEvolutionLog() {
+    if (worldEvolutionLog) return worldEvolutionLog;
+    const cached = sessionStorage.getItem(WORLD_LOG_CACHE_KEY);
+    if (cached) {
+      try {
+        worldEvolutionLog = JSON.parse(cached);
+        renderWorldEvolutionLog();
+        return worldEvolutionLog;
+      } catch (_) {}
+    }
+    const res = await fetch(apiPath("/assets/world_evolution_log.json"), { cache: "no-cache" });
+    if (!res.ok) throw new Error("world evolution log unavailable");
+    const data = await res.json();
+    worldEvolutionLog = data;
+    sessionStorage.setItem(WORLD_LOG_CACHE_KEY, JSON.stringify(data));
+    renderWorldEvolutionLog();
+    return data;
+  }
+
+  async function maybeShowWorldEvolvedModal(lastSeenVersion) {
+    if (!token) return;
+    const data = await loadWorldEvolutionLog().catch(() => null);
+    if (!data || !data.current_version) return;
+    const currentVersion = String(data.current_version);
+    if (lastSeenVersion === currentVersion) return;
+    worldEvolvedTitleEl.textContent = "The World Has Evolved";
+    worldEvolvedTextEl.textContent = `Version ${currentVersion} Introduced`;
+    worldEvolvedBackdropEl.style.display = "flex";
+  }
+
+  async function markWorldVersionSeen() {
+    if (!token || !worldEvolutionLog || !worldEvolutionLog.current_version) return;
+    await api("/user/world-version-seen", {
+      method: "POST",
+      body: JSON.stringify({ version: worldEvolutionLog.current_version })
+    });
+  }
+
+  function updateMicroEconomyFromMetrics(metrics) {
+    if (!metrics) {
+      setEconomyUserFallback();
+      return;
+    }
+    const y = Number(metrics.y || 0);
+    const k = Number(metrics.k || 0);
+    const l = Number(metrics.l || 0);
+    const a = Number(metrics.a || 0);
+    const alpha = Number(metrics.alpha || 0);
+    const marketShare = Number(metrics.market_share || 0);
+    const liquidAssets = Number(metrics.liquid_assets || 0);
+    const totalAssets = liquidAssets + k;
+    const capitalIntensity = totalAssets > 0 ? (k / totalAssets) : 0;
+    const roc = k > 0 ? (y / k) : 0;
+    const laborEff = l > 0 ? (y / l) : 0;
+
+    ecoUYEl.textContent = fmtInt(y);
+    ecoUKEl.textContent = fmtInt(k);
+    ecoULEl.textContent = fmtInt(l);
+    ecoUAEl.textContent = fmtNum(a, 4);
+    ecoGlobalAEl.textContent = fmtNum(currentGlobalA, 4);
+    ecoUAlphaEl.textContent = fmtNum(alpha, 4);
+    ecoCapitalIntensityEl.textContent = `${(capitalIntensity * 100).toFixed(2)}%`;
+    ecoReturnOnCapitalEl.textContent = fmtNum(roc, 4);
+    ecoLaborEfficiencyEl.textContent = fmtNum(laborEff, 4);
+    ecoMarketEl.textContent = Number.isFinite(marketShare) ? `${(marketShare * 100).toFixed(2)}%` : "—";
+    ecoBsLiquidEl.textContent = fmtInt(liquidAssets);
+    ecoBsDeployedEl.textContent = fmtInt(k);
+    ecoBsTotalEl.textContent = fmtInt(totalAssets);
+  }
+
+  function showAttachHint() {
+    if (!attachHintEl) return;
+    attachHintEl.style.display = "block";
+    setTimeout(() => {
+      attachHintEl.style.display = "none";
+    }, 3500);
+  }
+
+  function showPeriodSummaryIfNeeded(newPeriodId) {
+    if (!token || !newPeriodId) return;
+    if (!currentPeriodId) {
+      currentPeriodId = newPeriodId;
+      return;
+    }
+    if (newPeriodId === currentPeriodId) return;
+    const summary = latestUserMetrics;
+    if (!summary || !periodSummaryPopEl) {
+      currentPeriodId = newPeriodId;
+      periodStartUserMetrics = null;
+      return;
+    }
+    const lines = [];
+    lines.push(`<h4>Period Summary (${currentPeriodId})</h4>`);
+    lines.push(`<div class="line">Output produced (Yᵤ): ${fmtInt(summary.y)}</div>`);
+    lines.push(`<div class="line">Labor performed (Lᵤ): ${fmtInt(summary.l)}</div>`);
+    lines.push(`<div class="line">Productivity (Aᵤ): ${fmtNum(summary.a, 4)}</div>`);
+    if (periodStartUserMetrics) {
+      const dK = Number(summary.k || 0) - Number(periodStartUserMetrics.k || 0);
+      const dM = Number(summary.liquid_assets || 0) - Number(periodStartUserMetrics.liquid_assets || 0);
+      lines.push(`<div class="line">Deployed Capital change (ΔKᵤ): ${dK >= 0 ? "+" : ""}${fmtInt(dK)}</div>`);
+      lines.push(`<div class="line">Liquid Assets change (ΔMᵤ): ${dM >= 0 ? "+" : ""}${fmtInt(dM)}</div>`);
+      lines.push(`<div class="line">Total Assets change: ${(dK + dM) >= 0 ? "+" : ""}${fmtInt(dK + dM)}</div>`);
+    }
+    periodSummaryPopEl.innerHTML = lines.join("");
+    periodSummaryPopEl.style.display = "block";
+    setTimeout(() => {
+      periodSummaryPopEl.style.display = "none";
+    }, 7000);
+    currentPeriodId = newPeriodId;
+    periodStartUserMetrics = null;
+  }
+
+  async function loadEconomyState() {
+    try {
+      const res = await fetch(apiPath("/economy/state"));
+      if (!res.ok) throw new Error("economy endpoint unavailable");
+      const s = await res.json();
+      const y = Number.isFinite(Number(s.extracted_output)) ? Number(s.extracted_output) : Number(s.Y);
+      ecoYEl.textContent = fmtInt(y);
+      ecoKEl.textContent = fmtInt(Number(s.K));
+      ecoLEl.textContent = fmtInt(Number(s.L));
+      ecoAlphaEl.textContent = Number.isFinite(Number(s.alpha)) ? Number(s.alpha).toFixed(4) : "—";
+      ecoAEl.textContent = Number.isFinite(Number(s.A)) ? Number(s.A).toFixed(4) : "—";
+      currentGlobalA = Number.isFinite(Number(s.A)) ? Number(s.A) : 0;
+      ecoMEl.textContent = fmtInt(Number(s.M));
+      ecoPEl.textContent = Number.isFinite(Number(s.P)) ? Number(s.P).toFixed(3) : "—";
+      ecoPiEl.textContent = Number.isFinite(Number(s.pi)) ? Number(s.pi).toFixed(4) : "—";
+      ecoTreasuryEl.textContent = fmtInt(Number(s.treasury_balance));
+      ecoEndsEl.textContent = fmtInt(Number(s.period_ends_in_seconds));
+      const periodId = typeof s.period_id === "string" && s.period_id ? s.period_id : "—";
+      ecoPeriodEl.textContent = periodId;
+      showPeriodSummaryIfNeeded(periodId);
+      ecoStatusEl.textContent = "Economy: live";
+      if (latestUserMetrics) updateMicroEconomyFromMetrics(latestUserMetrics);
+      updateDebugOverlay();
+    } catch (_) {
+      setEconomyFallback();
     }
   }
 
@@ -205,15 +1585,29 @@
     const headers = opts.headers || {};
     headers["Content-Type"] = "application/json";
     if (token) headers["Authorization"] = "Bearer " + token;
-    const res = await fetch(API + path, { ...opts, headers });
+    const res = await fetch(apiPath(path), { ...opts, headers });
+    if (res.status === 401 && token) {
+      token = null;
+      myUserId = null;
+      selectedSnakeId = null;
+      watchedSnakeId = null;
+      localStorage.removeItem(TOKEN_STORAGE_KEY);
+      localStorage.removeItem(USER_ID_STORAGE_KEY);
+      localStorage.removeItem(SELECTED_SNAKE_STORAGE_KEY);
+      localStorage.removeItem(WATCHED_SNAKE_STORAGE_KEY);
+      authStatus.textContent = "Session expired. Please log in again.";
+      createSnakeBtn.disabled = true;
+      applyViewControlAuthState();
+    }
     return res;
   }
 
   async function login() {
+    if (googleAuthEnabled) return;
     const username = document.getElementById("username").value.trim();
     const password = document.getElementById("password").value.trim();
 
-    const res = await fetch(API + "/auth/login", {
+    const res = await fetch(apiPath("/auth/login"), {
       method: "POST",
       headers: {"Content-Type":"application/json"},
       body: JSON.stringify({username, password})
@@ -226,11 +1620,97 @@
     const data = await res.json();
     token = data.token;
     myUserId = data.user_id;
+    localStorage.setItem(TOKEN_STORAGE_KEY, token);
+    localStorage.setItem(USER_ID_STORAGE_KEY, String(myUserId));
+    spectatorDefaultsApplied = false;
 
     authStatus.textContent = `Logged in as user_id=${myUserId}`;
     createSnakeBtn.disabled = false;
-
+    if (sessionStorage.getItem(LOGIN_RELOAD_FLAG) !== "1") {
+      sessionStorage.setItem(LOGIN_RELOAD_FLAG, "1");
+      setTimeout(() => window.location.reload(), 120);
+      return;
+    }
+    applyViewControlAuthState();
+    restartStream();
     await loadMySnakes();
+    const me = await loadUserMe();
+    await maybeShowWorldEvolvedModal(me && typeof me.last_seen_world_version === "string" ? me.last_seen_world_version : "");
+  }
+
+  async function loginWithGoogleIdToken(idToken) {
+    const res = await fetch(apiPath("/auth/google"), {
+      method: "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({ id_token: idToken })
+    });
+    if (!res.ok) {
+      authStatus.textContent = "Google login failed";
+      return;
+    }
+    const data = await res.json();
+    token = data.token;
+    myUserId = data.user_id;
+    onboardingRequired = !!data.onboarding_required;
+    localStorage.setItem(TOKEN_STORAGE_KEY, token);
+    localStorage.setItem(USER_ID_STORAGE_KEY, String(myUserId));
+    authStatus.textContent = `Logged in as user_id=${myUserId}`;
+    createSnakeBtn.disabled = onboardingRequired;
+    applyViewControlAuthState();
+    restartStream();
+    await loadMySnakes();
+    const me = await loadUserMe();
+    if (onboardingRequired || (me && me.onboarding_completed === false)) {
+      showOnboardingWelcomeThenForm();
+    } else {
+      await showLoginTransition();
+      await maybeShowWorldEvolvedModal(me && typeof me.last_seen_world_version === "string" ? me.last_seen_world_version : "");
+    }
+  }
+
+  function applyViewControlAuthState() {
+    const isAuth = !!token;
+    const canOperateWorld = isAuth && !onboardingRequired;
+    zoomInBtn.disabled = !isAuth;
+    zoomOutBtn.disabled = !isAuth;
+    zoomResetBtn.disabled = !isAuth;
+    borrowBtn.disabled = !isAuth;
+    attachBtn.disabled = !isAuth;
+    attach1Btn.disabled = !isAuth;
+    attach10Btn.disabled = !isAuth;
+    attach50Btn.disabled = !isAuth;
+    zoomInBtn.style.display = isAuth ? "" : "none";
+    zoomOutBtn.style.display = isAuth ? "" : "none";
+    zoomResetBtn.style.display = isAuth ? "" : "none";
+    publicViewHintEl.style.display = isAuth ? "none" : "inline";
+    viewControlsEl.style.opacity = isAuth ? "1" : "0.82";
+    ecoAuthNoteEl.style.display = isAuth ? "none" : "block";
+    settingsPanelEl.style.display = isAuth ? "block" : "none";
+    createSnakeBtn.disabled = !canOperateWorld;
+    if (!isAuth) {
+      latestUserMetrics = null;
+      periodStartUserMetrics = null;
+      setEconomyUserFallback();
+    }
+    if (!isAuth) {
+      myBalanceEl.textContent = "—";
+      mySnakeCountEl.textContent = "—";
+      applySpectatorDefaults(gridW, gridH, true);
+    }
+    updateActionButtons();
+  }
+
+  function updateActionButtons() {
+    const isAuth = !!token && !onboardingRequired;
+    const hasSnake = !!selectedSnakeId;
+    const attachAmount = Math.floor(Number(attachAmountEl.value || "0"));
+    const attachValid = isAuth && hasSnake && Number.isFinite(attachAmount) && attachAmount > 0 && attachAmount <= myBalance;
+    attachBtn.disabled = !attachValid;
+    attach1Btn.disabled = !(isAuth && hasSnake && myBalance >= 1);
+    attach10Btn.disabled = !(isAuth && hasSnake && myBalance >= 10);
+    attach50Btn.disabled = !(isAuth && hasSnake && myBalance >= 50);
+    const borrowAmount = Math.floor(Number(borrowAmountEl.value || "0"));
+    borrowBtn.disabled = !(isAuth && Number.isFinite(borrowAmount) && borrowAmount > 0);
   }
 
   async function loadMySnakes() {
@@ -238,23 +1718,145 @@
     const res = await api("/me/snakes");
     if (!res.ok) return;
     const data = await res.json();
+    const snakeIds = new Set((data.snakes || []).map((s) => Number(s.id)).filter((v) => Number.isFinite(v) && v > 0));
+
+    // Normalize persisted selection against currently owned snakes.
+    if (!snakeIds.has(selectedSnakeId)) {
+      if (data.snakes.length > 0) {
+        selectedSnakeId = Number(data.snakes[0].id);
+        localStorage.setItem(SELECTED_SNAKE_STORAGE_KEY, String(selectedSnakeId));
+      } else {
+        selectedSnakeId = null;
+        localStorage.removeItem(SELECTED_SNAKE_STORAGE_KEY);
+      }
+    }
+    if (!snakeIds.has(watchedSnakeId) || watchedSnakeId !== selectedSnakeId) {
+      watchedSnakeId = null;
+      localStorage.removeItem(WATCHED_SNAKE_STORAGE_KEY);
+    }
 
     mySnakesEl.innerHTML = "";
     for (const s of data.snakes) {
+      const isSelected = s.id === selectedSnakeId;
+      const isWatched = s.id === watchedSnakeId;
       const div = document.createElement("div");
-      div.className = "snake-item" + (s.id === selectedSnakeId ? " active" : "");
+      div.className = "snake-item" + (isSelected ? " active" : "");
       div.onclick = () => {
         selectedSnakeId = s.id;
+        localStorage.setItem(SELECTED_SNAKE_STORAGE_KEY, String(selectedSnakeId));
+        // Selection performs a one-time jump only; it must not start follow.
+        const jumpTarget = findSnakeHeadById(selectedSnakeId);
+        if (jumpTarget) {
+          camera.setCenter(jumpTarget.x, jumpTarget.y);
+          postCamera({ autoFollow: false });
+          renderCurrentState();
+        }
         loadMySnakes();
       };
       div.innerHTML = `
-        <span><span class="badge" style="background:${s.color}"></span>Snake #${s.id}</span>
-        <small>${s.paused ? "paused" : "moving"} · len ${s.len}</small>
+        <span>
+          <span><span class="badge" style="background:${s.color}"></span>Snake #${s.id}</span><br />
+          <small>
+            <label>
+              <input class="watch-toggle" type="checkbox" data-sid="${s.id}" ${isWatched ? "checked" : ""} ${isSelected ? "" : "disabled"} />
+              watch
+            </label>
+          </small>
+        </span>
+        <small>${s.paused ? "paused" : "moving"} · Deployed Capital: ${s.len} cells</small>
       `;
       mySnakesEl.appendChild(div);
     }
 
-    if (!selectedSnakeId && data.snakes.length > 0) selectedSnakeId = data.snakes[0].id;
+    mySnakesEl.querySelectorAll(".watch-toggle").forEach((el) => {
+      el.addEventListener("click", async (ev) => {
+        ev.stopPropagation();
+        const sid = Number(ev.target.getAttribute("data-sid"));
+        if (!Number.isFinite(sid)) return;
+        if (sid !== selectedSnakeId) return;
+        watchedSnakeId = ev.target.checked ? sid : null;
+        if (watchedSnakeId) {
+          localStorage.setItem(WATCHED_SNAKE_STORAGE_KEY, String(watchedSnakeId));
+        } else {
+          localStorage.removeItem(WATCHED_SNAKE_STORAGE_KEY);
+        }
+        await postCamera({ autoFollow: true });
+        loadMySnakes();
+      });
+    });
+    mySnakesEl.querySelectorAll("label").forEach((el) => {
+      el.addEventListener("click", (ev) => ev.stopPropagation());
+    });
+    updateActionButtons();
+  }
+
+  async function loadUserMe() {
+    if (!token) return null;
+    const res = await api("/user/me");
+    if (!res.ok) return null;
+    const data = await res.json();
+    const liquidAssets = Number.isFinite(Number(data.liquid_assets)) ? Number(data.liquid_assets) : Number(data.balance_mi);
+    myBalance = Number.isFinite(liquidAssets) ? liquidAssets : 0;
+    myBalanceEl.textContent = fmtInt(myBalance);
+    mySnakeCountEl.textContent = fmtInt(Number(data.snake_count));
+    if (latestUserMetrics) {
+      latestUserMetrics.liquid_assets = myBalance;
+      updateMicroEconomyFromMetrics(latestUserMetrics);
+    }
+    updateActionButtons();
+    return data;
+  }
+
+  async function borrowCells() {
+    if (!token) return;
+    const amount = Number(borrowAmountEl.value);
+    if (!Number.isFinite(amount) || amount <= 0) return;
+    const res = await api("/user/borrow", {
+      method: "POST",
+      body: JSON.stringify({ amount: Math.floor(amount) })
+    });
+    if (!res.ok) {
+      const t = await res.text();
+      alert("Borrow failed: " + t);
+      return;
+    }
+    const data = await res.json();
+    const liquidAssets = Number.isFinite(Number(data.liquid_assets)) ? Number(data.liquid_assets) : Number(data.balance_mi);
+    if (Number.isFinite(liquidAssets)) {
+      myBalance = liquidAssets;
+      myBalanceEl.textContent = fmtInt(myBalance);
+    }
+    await loadEconomyState();
+    await loadUserMe();
+  }
+
+  async function attachCells(amountOverride = null) {
+    if (!token || !selectedSnakeId) return;
+    const raw = amountOverride == null ? Number(attachAmountEl.value) : Number(amountOverride);
+    const amount = Math.floor(raw);
+    if (!Number.isFinite(amount) || amount <= 0) return;
+    if (amount > myBalance) {
+      alert("Not enough liquid assets.");
+      return;
+    }
+    const res = await api(`/snake/${selectedSnakeId}/attach`, {
+      method: "POST",
+      body: JSON.stringify({ amount })
+    });
+    if (!res.ok) {
+      const t = await res.text();
+      alert("Attach failed: " + t);
+      return;
+    }
+    const data = await res.json();
+    const liquidAssets = Number.isFinite(Number(data.liquid_assets)) ? Number(data.liquid_assets) : Number(data.balance_mi);
+    if (Number.isFinite(liquidAssets)) {
+      myBalance = liquidAssets;
+      myBalanceEl.textContent = fmtInt(myBalance);
+    }
+    showAttachHint();
+    await loadMySnakes();
+    await loadUserMe();
   }
 
   async function createSnake() {
@@ -267,22 +1869,65 @@
       alert("Create snake failed: " + t);
       return;
     }
+    const data = await res.json().catch(() => ({}));
+    const liquidAssets = Number.isFinite(Number(data.liquid_assets)) ? Number(data.liquid_assets) : Number(data.balance_mi);
+    if (Number.isFinite(liquidAssets)) {
+      myBalance = liquidAssets;
+      myBalanceEl.textContent = fmtInt(myBalance);
+    }
     await loadMySnakes();
+    await loadUserMe();
   }
 
   async function setDir(dir) {
     if (!token || !selectedSnakeId) return;
+    if (wsHandle && wsHandle.readyState === WebSocket.OPEN) {
+      const dirMap = { 1: "L", 2: "R", 3: "U", 4: "D" };
+      wsHandle.send(JSON.stringify({
+        type: "input",
+        channel: "private",
+        snake_id: selectedSnakeId,
+        dir: dirMap[dir] || "STOP",
+        seq: Date.now()
+      }));
+      return;
+    }
     await api(`/snakes/${selectedSnakeId}/dir`, { method:"POST", body: JSON.stringify({dir}) });
   }
 
   async function togglePause() {
     if (!token || !selectedSnakeId) return;
+    if (wsHandle && wsHandle.readyState === WebSocket.OPEN) {
+      wsHandle.send(JSON.stringify({
+        type: "input",
+        channel: "private",
+        snake_id: selectedSnakeId,
+        pause_toggle: true,
+        seq: Date.now()
+      }));
+      return;
+    }
     await api(`/snakes/${selectedSnakeId}/pause`, { method:"POST" });
     await loadMySnakes();
   }
 
+  function isTextEditingTarget(el) {
+    if (!el) return false;
+    if (el.isContentEditable) return true;
+    const tag = (el.tagName || "").toLowerCase();
+    if (tag === "textarea" || tag === "select") return true;
+    if (tag === "input") {
+      const t = (el.type || "text").toLowerCase();
+      return !["button","checkbox","color","file","hidden","image","radio","range","reset","submit"].includes(t);
+    }
+    return false;
+  }
+
   // Input
   document.addEventListener("keydown", async (e) => {
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (isTextEditingTarget(document.activeElement) || isTextEditingTarget(e.target)) return;
+
     const k = e.key.toLowerCase();
     if (["w","a","s","d","p"].includes(k)) e.preventDefault();
 
@@ -295,22 +1940,530 @@
 
   document.getElementById("loginBtn").onclick = login;
   document.getElementById("createSnakeBtn").onclick = createSnake;
-
-  // SSE stream (watchers scale well)
-  function startStream() {
-    const es = new EventSource(API + "/game/stream");
-    es.addEventListener("frame", (ev) => {
-      const state = JSON.parse(ev.data);
-      drawFrame(state);
+  borrowBtn.onclick = borrowCells;
+  attachBtn.onclick = () => attachCells();
+  attach1Btn.onclick = () => attachCells(1);
+  attach10Btn.onclick = () => attachCells(10);
+  attach50Btn.onclick = () => attachCells(50);
+  borrowAmountEl.addEventListener("input", updateActionButtons);
+  attachAmountEl.addEventListener("input", updateActionButtons);
+  companyNameInputEl.addEventListener("input", () => {
+    const name = companyNameInputEl.value.trim();
+    if (!isValidGameName(name)) {
+      setNameHint(companyNameHintEl, "3-24 chars, start with letter, letters/numbers/_/- only", false);
+      return;
+    }
+    setNameHint(companyNameHintEl, "Checking availability...", true);
+    if (companyNameCheckTimer) clearTimeout(companyNameCheckTimer);
+    companyNameCheckTimer = setTimeout(async () => {
+      const r = await checkNameAvailability("company", name);
+      if (!r.valid) setNameHint(companyNameHintEl, "Invalid name format", false);
+      else if (r.taken) setNameHint(companyNameHintEl, "Name already taken", false);
+      else setNameHint(companyNameHintEl, "Name available", true);
+    }, 250);
+  });
+  starterSnakeNameInputEl.addEventListener("input", () => {
+    const name = starterSnakeNameInputEl.value.trim();
+    if (!isValidGameName(name)) {
+      setNameHint(snakeNameHintEl, "3-24 chars, start with letter, letters/numbers/_/- only", false);
+      return;
+    }
+    setNameHint(snakeNameHintEl, "Checking availability...", true);
+    if (snakeNameCheckTimer) clearTimeout(snakeNameCheckTimer);
+    snakeNameCheckTimer = setTimeout(async () => {
+      const r = await checkNameAvailability("snake", name);
+      if (!r.valid) setNameHint(snakeNameHintEl, "Invalid name format", false);
+      else if (r.taken) setNameHint(snakeNameHintEl, "Name already taken", false);
+      else setNameHint(snakeNameHintEl, "Name available", true);
+    }, 250);
+  });
+  [companyNameInputEl, starterSnakeNameInputEl].forEach((el) => {
+    el.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") {
+        ev.preventDefault();
+        completeOnboardingBtn.click();
+      }
     });
-    es.onerror = () => {
-      // auto reconnect
-      es.close();
-      setTimeout(startStream, 1000);
+  });
+  completeOnboardingBtn.addEventListener("click", async () => {
+    const companyName = companyNameInputEl.value.trim();
+    const snakeName = starterSnakeNameInputEl.value.trim();
+    if (!isValidGameName(companyName) || !isValidGameName(snakeName)) {
+      setNameHint(companyNameHintEl, "Please enter valid names first", false);
+      setNameHint(snakeNameHintEl, "Please enter valid names first", false);
+      return;
+    }
+    const c = await checkNameAvailability("company", companyName);
+    const s = await checkNameAvailability("snake", snakeName);
+    if (c.taken || s.taken) {
+      if (c.taken) setNameHint(companyNameHintEl, "Name already taken", false);
+      if (s.taken) setNameHint(snakeNameHintEl, "Name already taken", false);
+      return;
+    }
+    const res = await api("/onboarding/complete", {
+      method: "POST",
+      body: JSON.stringify({ company_name: companyName, snake_name: snakeName })
+    });
+    if (!res.ok) {
+      const t = await res.text();
+      setNameHint(companyNameHintEl, `Onboarding failed: ${t}`, false);
+      return;
+    }
+    onboardingBackdropEl.style.display = "none";
+    onboardingRequired = false;
+    applyViewControlAuthState();
+    await loadMySnakes();
+    const me = await loadUserMe();
+    await maybeShowWorldEvolvedModal(me && typeof me.last_seen_world_version === "string" ? me.last_seen_world_version : "");
+  });
+  deleteAccountBtn.addEventListener("click", () => {
+    deleteCompanyConfirmInputEl.value = "";
+    deleteAccountBackdropEl.style.display = "flex";
+  });
+  deleteAccountCancelBtn.addEventListener("click", () => {
+    deleteAccountBackdropEl.style.display = "none";
+  });
+  deleteAccountConfirmBtn.addEventListener("click", async () => {
+    const companyName = deleteCompanyConfirmInputEl.value.trim();
+    if (!companyName) return;
+    const res = await api("/settings/delete-account", {
+      method: "POST",
+      body: JSON.stringify({ company_name_confirmation: companyName })
+    });
+    if (!res.ok) {
+      const t = await res.text();
+      alert("Delete failed: " + t);
+      return;
+    }
+    deleteAccountBackdropEl.style.display = "none";
+    token = null;
+    myUserId = null;
+    localStorage.removeItem(TOKEN_STORAGE_KEY);
+    localStorage.removeItem(USER_ID_STORAGE_KEY);
+    localStorage.removeItem(SELECTED_SNAKE_STORAGE_KEY);
+    localStorage.removeItem(WATCHED_SNAKE_STORAGE_KEY);
+    applyViewControlAuthState();
+    authStatus.textContent = "Account deleted";
+    restartStream();
+  });
+
+  function handleWsMessage(raw) {
+    let msg = null;
+    try {
+      msg = JSON.parse(raw);
+    } catch (_) {
+      return;
+    }
+    if (!msg || typeof msg !== "object") return;
+
+    if (msg.type === "world_snapshot" && msg.snapshot) {
+      const state = msg.snapshot;
+      if (!token) applySpectatorDefaults(state.w, state.h);
+      latestSnapshotBytes = new TextEncoder().encode(raw).length;
+      if (typeof msg.mode === "string") debugModeLabel = msg.mode;
+      if (typeof msg.aoi_chunks === "number") serverAoiChunks = msg.aoi_chunks;
+      if (typeof msg.chunk_size === "number" && msg.chunk_size > 0) {
+        serverChunkSize = Math.floor(msg.chunk_size);
+      }
+      if (msg.mask && typeof msg.mask === "object") {
+        serverMask = {
+          mode: typeof msg.mask.mode === "string" ? msg.mask.mode : "none",
+          style: typeof msg.mask.style === "string" ? msg.mask.style : "jagged",
+          seed: Number.isFinite(Number(msg.mask.seed)) ? Number(msg.mask.seed) : 0,
+          playable_cells: Number.isFinite(Number(msg.mask.playable_cells)) ? Number(msg.mask.playable_cells) : 0,
+          unplayable_cells: Number.isFinite(Number(msg.mask.unplayable_cells)) ? Number(msg.mask.unplayable_cells) : 0
+        };
+      }
+      if (msg.aoi &&
+          Number.isFinite(msg.aoi.min_chunk_x) &&
+          Number.isFinite(msg.aoi.max_chunk_x) &&
+          Number.isFinite(msg.aoi.min_chunk_y) &&
+          Number.isFinite(msg.aoi.max_chunk_y)) {
+        serverAoiRange = {
+          min_chunk_x: Number(msg.aoi.min_chunk_x),
+          max_chunk_x: Number(msg.aoi.max_chunk_x),
+          min_chunk_y: Number(msg.aoi.min_chunk_y),
+          max_chunk_y: Number(msg.aoi.max_chunk_y),
+          camera_chunk_x: Number.isFinite(msg.aoi.camera_chunk_x) ? Number(msg.aoi.camera_chunk_x) : 0,
+          camera_chunk_y: Number.isFinite(msg.aoi.camera_chunk_y) ? Number(msg.aoi.camera_chunk_y) : 0
+        };
+      }
+      if (msg.public_camera_chunk &&
+          typeof msg.public_camera_chunk.cx === "number" &&
+          typeof msg.public_camera_chunk.cy === "number") {
+        debugPublicChunk = { cx: msg.public_camera_chunk.cx, cy: msg.public_camera_chunk.cy };
+      }
+      if (msg.camera && typeof msg.camera.x === "number" && typeof msg.camera.y === "number") {
+        const shouldApplyServerCamera = (msg.channel !== "private") || !!watchedSnakeId;
+        if (shouldApplyServerCamera) {
+          camera.setCenter(msg.camera.x, msg.camera.y);
+          if (typeof msg.camera.zoom === "number") camera.setZoom(msg.camera.zoom);
+        }
+      }
+      pushStateBuffer(state);
+      const view = buildWorldView();
+      if (view) drawFrame(view);
+      updateDebugOverlay();
+      return;
+    }
+
+    if (msg.type === "economy_world") {
+      const y = Number.isFinite(Number(msg.extracted_output)) ? Number(msg.extracted_output) : Number(msg.Y);
+      ecoYEl.textContent = fmtInt(y);
+      ecoKEl.textContent = fmtInt(Number(msg.K));
+      ecoLEl.textContent = fmtInt(Number(msg.L));
+      ecoAlphaEl.textContent = Number.isFinite(Number(msg.alpha)) ? Number(msg.alpha).toFixed(4) : "—";
+      ecoAEl.textContent = Number.isFinite(Number(msg.A)) ? Number(msg.A).toFixed(4) : "—";
+      currentGlobalA = Number.isFinite(Number(msg.A)) ? Number(msg.A) : 0;
+      ecoMEl.textContent = fmtInt(Number(msg.M));
+      ecoPEl.textContent = Number.isFinite(Number(msg.P)) ? Number(msg.P).toFixed(3) : "—";
+      ecoPiEl.textContent = Number.isFinite(Number(msg.pi)) ? Number(msg.pi).toFixed(4) : "—";
+      ecoTreasuryEl.textContent = fmtInt(Number(msg.treasury_balance));
+      ecoEndsEl.textContent = fmtInt(Number(msg.period_ends_in_seconds));
+      const periodId = typeof msg.period_id === "string" && msg.period_id ? msg.period_id : "—";
+      ecoPeriodEl.textContent = periodId;
+      showPeriodSummaryIfNeeded(periodId);
+      if (latestUserMetrics) updateMicroEconomyFromMetrics(latestUserMetrics);
+      ecoStatusEl.textContent = "Economy: live";
+      return;
+    }
+
+    if (msg.type === "user_state") {
+      const liquidAssets = Number.isFinite(Number(msg.liquid_assets)) ? Number(msg.liquid_assets) : Number(msg.balance_mi);
+      if (Number.isFinite(liquidAssets)) {
+        myBalance = liquidAssets;
+        myBalanceEl.textContent = fmtInt(myBalance);
+      }
+      if (Number.isFinite(Number(msg.snake_count))) {
+        mySnakeCountEl.textContent = fmtInt(Number(msg.snake_count));
+      }
+      if (msg.economy_user && typeof msg.economy_user === "object") {
+        latestUserMetrics = {
+          y: Number.isFinite(Number(msg.economy_user.extracted_output_u)) ? Number(msg.economy_user.extracted_output_u) : Number(msg.economy_user.Y_u),
+          k: Number(msg.economy_user.K_u),
+          l: Number(msg.economy_user.L_u),
+          a: Number(msg.economy_user.A_u),
+          alpha: Number(msg.economy_user.alpha_u),
+          market_share: Number(msg.economy_user.market_share),
+          liquid_assets: myBalance
+        };
+        if (!periodStartUserMetrics) periodStartUserMetrics = { ...latestUserMetrics };
+        updateMicroEconomyFromMetrics(latestUserMetrics);
+      }
+      updateActionButtons();
+      return;
+    }
+
+    if (msg.type === "auth_ack") {
+      if (msg.ok) {
+        debugModeLabel = "AUTH";
+        postCamera({ autoFollow: true });
+      }
+      return;
+    }
+  }
+
+  function startStream() {
+    const ws = new WebSocket(wsPath("/ws"));
+    wsHandle = ws;
+    ws.onopen = () => {
+      wsConnected = true;
+      stopStateFallback();
+      wsBackoffMs = 1000;
+      if (token) {
+        ws.send(JSON.stringify({ type: "auth", channel: "private", token }));
+      } else {
+        ws.send(JSON.stringify({
+          type: "public_camera_init",
+          channel: "public",
+          x: Math.round(camera.x),
+          y: Math.round(camera.y),
+          zoom: Number(camera.zoom.toFixed(3))
+        }));
+      }
+    };
+    ws.onmessage = (ev) => handleWsMessage(ev.data);
+    ws.onclose = () => {
+      wsConnected = false;
+      ensureStateFallbackRunning();
+      if (wsHandle === ws) wsHandle = null;
+      setTimeout(startStream, wsBackoffMs);
+      wsBackoffMs = Math.min(15000, wsBackoffMs * 2);
+    };
+    ws.onerror = () => {
+      wsConnected = false;
+      ensureStateFallbackRunning();
+      try { ws.close(); } catch (_) {}
     };
   }
 
-  startStream();
+  function restartStream() {
+    if (wsHandle) {
+      try { wsHandle.close(); } catch (_) {}
+      wsHandle = null;
+    }
+    startStream();
+  }
+
+  function findSnakeHeadById(snakeId) {
+    if (!latestServerState || !Array.isArray(latestServerState.snakes)) return null;
+    if (!snakeId) return null;
+    const target = latestServerState.snakes.find((s) => s.id === snakeId);
+    if (!target || !Array.isArray(target.body) || target.body.length === 0) return null;
+    return { x: target.body[0].x, y: target.body[0].y };
+  }
+
+  function getCameraTargetForFollow() {
+    const center = { x: Math.floor(gridW / 2), y: Math.floor(gridH / 2) };
+    if (!token || !watchedSnakeId) return center;
+    return findSnakeHeadById(watchedSnakeId) || center;
+  }
+
+  async function postCamera({ autoFollow = true } = {}) {
+    if (!token) return;
+    try {
+      if (autoFollow && watchedSnakeId) {
+        const target = getCameraTargetForFollow();
+        camera.setCenter(target.x, target.y);
+      }
+      if (!wsHandle || wsHandle.readyState !== WebSocket.OPEN) return;
+      const now = Date.now();
+      if (now - lastCameraSendAt < 200) return;
+      const payloadObj = {
+        type: "camera_set",
+        channel: "private",
+        x: Math.round(camera.x),
+        y: Math.round(camera.y),
+        zoom: Number(camera.zoom.toFixed(3)),
+        mode: watchedSnakeId ? "follow" : "free",
+        follow_snake_id: watchedSnakeId || null,
+        seq: ++cameraSendSeq.v
+      };
+      const payload = JSON.stringify(payloadObj);
+      if (payload === lastCameraPayload) return;
+      wsHandle.send(payload);
+      lastCameraSendAt = now;
+      lastCameraPayload = payload;
+      updateDebugOverlay();
+    } catch (_) {
+      // Optional session camera update.
+    }
+  }
+
+  function zoomIn() {
+    camera.setZoom(camera.zoom * 1.1);
+    renderCurrentState();
+    postCamera();
+  }
+
+  function zoomOut() {
+    camera.setZoom(camera.zoom / 1.1);
+    renderCurrentState();
+    postCamera();
+  }
+
+  function resetView() {
+    camera.resetToDefault(gridW, gridH);
+    if (token && watchedSnakeId) {
+      const target = getCameraTargetForFollow();
+      camera.setCenter(target.x, target.y);
+    }
+    renderCurrentState();
+    postCamera();
+  }
+
+  function onBoardWheel(ev) {
+    if (!token) return;
+    ev.preventDefault();
+    if (ev.deltaY < 0) {
+      zoomIn();
+    } else {
+      zoomOut();
+    }
+  }
+
+  function clampCameraToWorld() {
+    if (!Number.isFinite(camera.x) || !Number.isFinite(camera.y)) return;
+    const maxX = Math.max(0, gridW - 1);
+    const maxY = Math.max(0, gridH - 1);
+    camera.x = Math.max(0, Math.min(maxX, camera.x));
+    camera.y = Math.max(0, Math.min(maxY, camera.y));
+  }
+
+  function onPointerDown(ev) {
+    if (!token || watchedSnakeId) return;
+    isDragging = true;
+    dragLastX = ev.clientX;
+    dragLastY = ev.clientY;
+    canvas.classList.add("dragging");
+    canvas.setPointerCapture(ev.pointerId);
+  }
+
+  function onPointerMove(ev) {
+    if (!isDragging || !token || watchedSnakeId || !latestServerState) return;
+    const dx = ev.clientX - dragLastX;
+    const dy = ev.clientY - dragLastY;
+    dragLastX = ev.clientX;
+    dragLastY = ev.clientY;
+    const viewX = renderer.visibleCellsX || 1;
+    const viewY = renderer.visibleCellsY || 1;
+    camera.x -= dx * (viewX / Math.max(1, canvas.clientWidth));
+    camera.y -= dy * (viewY / Math.max(1, canvas.clientHeight));
+    clampCameraToWorld();
+    renderCurrentState();
+    postCamera({ autoFollow: false });
+  }
+
+  function onPointerUp(ev) {
+    isDragging = false;
+    canvas.classList.remove("dragging");
+    if (canvas.hasPointerCapture(ev.pointerId)) {
+      canvas.releasePointerCapture(ev.pointerId);
+    }
+  }
+
+  if (DEBUG_MODE) {
+    debugOverlayEl.style.display = "block";
+  }
+  gridModeSelect.value = gridMode;
+  boundsToggle.checked = showBounds;
+  edgeToggle.checked = showEdge;
+
+  zoomInBtn.addEventListener("click", zoomIn);
+  zoomOutBtn.addEventListener("click", zoomOut);
+  zoomResetBtn.addEventListener("click", resetView);
+  gridModeSelect.addEventListener("change", () => {
+    const next = gridModeSelect.value;
+    if (["off", "cells", "cells_chunks"].includes(next)) {
+      gridMode = next;
+      localStorage.setItem(GRID_MODE_STORAGE_KEY, gridMode);
+      renderCurrentState();
+      updateDebugOverlay();
+    }
+  });
+  boundsToggle.addEventListener("change", () => {
+    showBounds = !!boundsToggle.checked;
+    localStorage.setItem(BOUNDS_TOGGLE_STORAGE_KEY, showBounds ? "1" : "0");
+    renderCurrentState();
+    updateDebugOverlay();
+  });
+  edgeToggle.addEventListener("change", () => {
+    showEdge = !!edgeToggle.checked;
+    localStorage.setItem(EDGE_TOGGLE_STORAGE_KEY, showEdge ? "1" : "0");
+    renderCurrentState();
+    updateDebugOverlay();
+  });
+  ecoUserCardEl.addEventListener("toggle", () => {
+    localStorage.setItem(MY_ECON_OPEN_STORAGE_KEY, ecoUserCardEl.open ? "1" : "0");
+  });
+  canvas.addEventListener("wheel", onBoardWheel, { passive: false });
+  canvas.addEventListener("pointerdown", onPointerDown);
+  canvas.addEventListener("pointermove", onPointerMove);
+  canvas.addEventListener("pointerup", onPointerUp);
+  canvas.addEventListener("pointercancel", onPointerUp);
+  document.querySelectorAll(".eco-help-btn").forEach((btn) => {
+    btn.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      const tip = btn.getAttribute("data-tip") || "";
+      if (!tip) return;
+      ecoTipPopEl.textContent = tip;
+      ecoTipPopEl.style.display = "block";
+      if (window.innerWidth <= 640) {
+        ecoTipPopEl.style.left = "50%";
+        ecoTipPopEl.style.top = "50%";
+        ecoTipPopEl.style.transform = "translate(-50%, -50%)";
+        return;
+      }
+      const rect = btn.getBoundingClientRect();
+      const top = Math.min(window.innerHeight - 12, rect.bottom + 8);
+      const left = Math.min(window.innerWidth - 12, rect.left);
+      ecoTipPopEl.style.top = `${top}px`;
+      ecoTipPopEl.style.left = `${left}px`;
+      ecoTipPopEl.style.transform = "translate(0, 0)";
+      const popRect = ecoTipPopEl.getBoundingClientRect();
+      if (popRect.right > window.innerWidth - 8) {
+        ecoTipPopEl.style.left = `${Math.max(8, window.innerWidth - popRect.width - 8)}px`;
+      }
+      if (popRect.bottom > window.innerHeight - 8) {
+        ecoTipPopEl.style.top = `${Math.max(8, rect.top - popRect.height - 8)}px`;
+      }
+    });
+  });
+  document.addEventListener("click", (ev) => {
+    if (ecoTipPopEl.style.display !== "block") return;
+    if (ev.target && ev.target.classList && ev.target.classList.contains("eco-help-btn")) return;
+    if (ecoTipPopEl.contains(ev.target)) return;
+    ecoTipPopEl.style.display = "none";
+  });
+  document.addEventListener("click", (ev) => {
+    if (periodSummaryPopEl.style.display !== "block") return;
+    if (periodSummaryPopEl.contains(ev.target)) return;
+    periodSummaryPopEl.style.display = "none";
+  });
+  versionBadgeEl.addEventListener("click", async () => {
+    await loadWorldEvolutionLog().catch(() => null);
+    worldLogPanelEl.style.display = worldLogPanelEl.style.display === "block" ? "none" : "block";
+  });
+  worldLogCloseEl.addEventListener("click", () => {
+    worldLogPanelEl.style.display = "none";
+  });
+  worldLogArchiveEl.addEventListener("click", () => {
+    worldLogArchiveOpen = true;
+    localStorage.setItem(WORLD_LOG_ARCHIVE_OPEN_KEY, "1");
+    renderWorldEvolutionLog();
+  });
+  worldEvolvedDismissEl.addEventListener("click", async () => {
+    worldEvolvedBackdropEl.style.display = "none";
+    await markWorldVersionSeen().catch(() => null);
+  });
+  worldEvolvedViewEl.addEventListener("click", async () => {
+    worldEvolvedBackdropEl.style.display = "none";
+    worldLogPanelEl.style.display = "block";
+    await loadWorldEvolutionLog().catch(() => null);
+    await markWorldVersionSeen().catch(() => null);
+  });
+  worldEvolvedBackdropEl.addEventListener("click", (ev) => {
+    if (ev.target !== worldEvolvedBackdropEl) return;
+    worldEvolvedBackdropEl.style.display = "none";
+  });
+  window.addEventListener("resize", () => {
+    renderCurrentState();
+    ecoTipPopEl.style.display = "none";
+  });
+
+  async function bootApp() {
+    applyViewControlAuthState();
+    await loadWorldEvolutionLog().catch(() => null);
+    if (token && myUserId) {
+      authStatus.textContent = `Logged in as user_id=${myUserId}`;
+      await loadMySnakes();
+      const me = await loadUserMe();
+      onboardingRequired = !!(me && me.onboarding_completed === false);
+      applyViewControlAuthState();
+      if (onboardingRequired) {
+        showOnboardingWelcomeThenForm();
+      } else {
+        await maybeShowWorldEvolvedModal(me && typeof me.last_seen_world_version === "string" ? me.last_seen_world_version : "");
+      }
+    }
+    if (!token) {
+      await initSpectatorCameraBeforeStream();
+    }
+    startStream();
+    ensureStateFallbackRunning();
+    loadStateFallbackOnce();
+    loadRuntimeSpeed();
+    loadEconomyState();
+    runtimeSpeedPollTimer = setInterval(loadRuntimeSpeed, 10000);
+    cameraPollTimer = setInterval(() => {
+      if (token) postCamera();
+    }, 250);
+    if (token) postCamera();
+    updateDebugOverlay();
+  }
+
+  bootApp();
 </script>
 </body>
 </html>

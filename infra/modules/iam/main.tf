@@ -22,7 +22,10 @@ data "aws_iam_policy_document" "ddb" {
       "dynamodb:Query", "dynamodb:Scan", "dynamodb:BatchGetItem", "dynamodb:BatchWriteItem",
       "dynamodb:DescribeTable"
     ]
-    resources = var.dynamodb_table_arns
+    resources = concat(
+      var.dynamodb_table_arns,
+      [for arn in var.dynamodb_table_arns : "${arn}/index/*"]
+    )
   }
 }
 

@@ -12,7 +12,30 @@ LE_EMAIL="${letsencrypt_email}"
 dnf -y update
 
 # Build/runtime deps + AWS tools (avoid curl/curl-minimal conflicts on AL2023)
-dnf -y install git clang sqlite-devel boost-devel amazon-cloudwatch-agent amazon-ssm-agent awscli
+dnf -y install git clang boost-devel cmake gcc-c++ libcurl-devel openssl-devel zlib-devel sqlite-devel python3 \
+  amazon-cloudwatch-agent amazon-ssm-agent awscli
+
+# Some AL2023 repos do not provide aws-sdk-cpp packages; build once from source.
+if [ ! -f /usr/local/lib64/libaws-cpp-sdk-dynamodb.so ] && [ ! -f /usr/local/lib/libaws-cpp-sdk-dynamodb.so ]; then
+  if [ ! -d /opt/aws-sdk-cpp ]; then
+    git clone --depth 1 --branch 1.11.676 --recurse-submodules https://github.com/aws/aws-sdk-cpp.git /opt/aws-sdk-cpp
+  else
+    cd /opt/aws-sdk-cpp
+    git fetch --tags --force
+    git checkout 1.11.676
+    git submodule sync --recursive
+    git submodule update --init --recursive
+    cd /opt/snake/repo
+  fi
+  cmake -S /opt/aws-sdk-cpp -B /opt/aws-sdk-cpp/build \
+    -DBUILD_ONLY="dynamodb" \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DENABLE_TESTING=OFF
+  cmake --build /opt/aws-sdk-cpp/build -j2
+  cmake --install /opt/aws-sdk-cpp/build
+  echo -e "/usr/local/lib64\n/usr/local/lib" >/etc/ld.so.conf.d/aws-sdk-cpp.conf
+  ldconfig || true
+fi
 
 # Ensure SSM registration is enabled for this instance
 systemctl enable amazon-ssm-agent
@@ -43,6 +66,13 @@ if [ -d /opt/snake/repo/src ]; then
   rm -rf /var/www/snake/src
   cp -a /opt/snake/repo/src /var/www/snake/src
 fi
+python3 /opt/snake/repo/tools/generate_world_evolution_log.py \
+  --input /opt/snake/repo/CHANGELOG.md \
+  --output /opt/snake/repo/assets/world_evolution_log.json
+if [ -d /opt/snake/repo/assets ]; then
+  rm -rf /var/www/snake/assets
+  cp -a /opt/snake/repo/assets /var/www/snake/assets
+fi
 sed -i 's|const API = "http://127.0.0.1:8080";|const API = window.location.origin;|' /var/www/snake/index.html || true
 chmod 755 /var/www/snake || true
 chmod 644 /var/www/snake/index.html || true
@@ -50,13 +80,42 @@ if [ -d /var/www/snake/src ]; then
   find /var/www/snake/src -type d -exec chmod 755 {} \;
   find /var/www/snake/src -type f -exec chmod 644 {} \;
 fi
+if [ -d /var/www/snake/assets ]; then
+  find /var/www/snake/assets -type d -exec chmod 755 {} \;
+  find /var/www/snake/assets -type f -exec chmod 644 {} \;
+fi
 
-clang++ -std=c++17 -O2 -pthread "${app_build_target}" \
-  -o /opt/snake/snake_server -lboost_system -lsqlite3
+clang++ -std=c++17 -O2 -pthread \
+  "${app_build_target}" \
+  api/protocol/encode_json.cpp \
+  api/storage/dynamo_storage.cpp \
+  api/storage/storage_factory.cpp \
+  api/economy/economy_v1.cpp \
+  api/economy_engine/compute.cpp \
+  api/persistence/profiles/persistence_profiles.cpp \
+  api/persistence/layers/runtime/runtime_state_store.cpp \
+  api/persistence/layers/sqlite/buffered_sqlite_store.cpp \
+  api/persistence/layers/dynamo/permanent_dynamo_store.cpp \
+  api/persistence/coordinator/persistence_coordinator.cpp \
+  api/persistence/flush/flush_scheduler.cpp \
+  config/runtime_config.cpp \
+  api/world/world.cpp \
+  api/world/chunk_manager.cpp \
+  api/world/entities/snake.cpp \
+  api/world/entities/food.cpp \
+  api/world/systems/movement_system.cpp \
+  api/world/systems/collision_system.cpp \
+  api/world/systems/spawn_system.cpp \
+  api/world/systems/replication_system.cpp \
+  -o /opt/snake/snake_server \
+  -lboost_system -lsqlite3 -laws-cpp-sdk-dynamodb -laws-cpp-sdk-core \
+  -L/usr/local/lib64 -L/usr/local/lib
 
 cat >/etc/snake.env <<EOF
 ${env_lines}
 EOF
+
+mkdir -p /var/lib/snake
 
 cat >/etc/systemd/system/snake.service <<EOF
 [Unit]
@@ -71,11 +130,81 @@ EnvironmentFile=/etc/snake.env
 ExecStart=/opt/snake/snake_server serve
 Restart=always
 RestartSec=2
+LimitNOFILE=100000
 StandardOutput=append:/var/log/snake_server.log
 StandardError=append:/var/log/snake_server.log
 
 [Install]
 WantedBy=multi-user.target
+EOF
+
+if [ -f /opt/snake/repo/tools/snakecli.py ]; then
+  install -m 0755 /opt/snake/repo/tools/snakecli.py /usr/local/bin/snakecli
+else
+  echo "Missing /opt/snake/repo/tools/snakecli.py"
+  exit 1
+fi
+
+if [ -f /opt/snake/repo/tools/snake-admin.sh ]; then
+  install -m 0755 /opt/snake/repo/tools/snake-admin.sh /usr/local/bin/snake-admin
+else
+  echo "Missing /opt/snake/repo/tools/snake-admin.sh"
+  exit 1
+fi
+
+cat >/etc/systemd/system/snake-seed.service <<EOF
+[Unit]
+Description=Seed Snake DynamoDB data
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/snakecli app seed
+EOF
+
+cat >/etc/systemd/system/snake-reset.service <<EOF
+[Unit]
+Description=Reset Snake DynamoDB data
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/snakecli app reset
+EOF
+
+cat >/etc/systemd/system/snake-reset-seed.service <<EOF
+[Unit]
+Description=Reset and seed Snake DynamoDB data
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/snakecli app reset-seed
+EOF
+
+cat >/etc/systemd/system/snake-reload.service <<EOF
+[Unit]
+Description=Reload Snake state from DynamoDB (no restart)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/snakecli app reload
+EOF
+
+cat >/etc/systemd/system/snake-seed-reload.service <<EOF
+[Unit]
+Description=Seed Snake DynamoDB data and reload running server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/snakecli app seed-reload
 EOF
 
 touch /var/log/snake_server.log
@@ -137,7 +266,14 @@ if command -v caddy >/dev/null 2>&1; then
 $${DOMAIN_NAME} {
   encode zstd gzip
 
-  @api path /auth/* /me/* /snakes/* /game/*
+  @sse path /game/stream
+  handle @sse {
+    reverse_proxy 127.0.0.1:$${APP_PORT} {
+      flush_interval -1
+    }
+  }
+
+  @api path /auth/* /me/* /snakes/* /game/* /economy/* /health
   handle @api {
     reverse_proxy 127.0.0.1:$${APP_PORT}
   }
@@ -150,7 +286,8 @@ EOF
   systemctl daemon-reload || true
   systemctl stop nginx >/dev/null 2>&1 || true
   systemctl disable nginx >/dev/null 2>&1 || true
-  systemctl enable --now caddy || true
+  systemctl enable caddy >/dev/null 2>&1 || true
+  systemctl restart caddy >/dev/null 2>&1 || systemctl start caddy >/dev/null 2>&1 || true
   if ! systemctl is-active --quiet caddy; then
     dnf -y install nginx
     rm -f /etc/nginx/conf.d/*.conf /etc/nginx/default.d/*.conf
@@ -164,16 +301,28 @@ server {
 
   location = / { try_files /index.html =404; }
   location = /index.html { try_files /index.html =404; }
+  location = /game/stream {
+    proxy_pass http://127.0.0.1:$${APP_PORT};
+    proxy_http_version 1.1;
+    proxy_set_header Connection "";
+    proxy_buffering off;
+    proxy_cache off;
+    proxy_read_timeout 3600;
+    proxy_send_timeout 3600;
+    send_timeout 3600;
+  }
   location /auth/ { proxy_pass http://127.0.0.1:$${APP_PORT}; }
   location /me/ { proxy_pass http://127.0.0.1:$${APP_PORT}; }
   location /snakes/ { proxy_pass http://127.0.0.1:$${APP_PORT}; }
   location /game/ { proxy_pass http://127.0.0.1:$${APP_PORT}; }
+  location /economy/ { proxy_pass http://127.0.0.1:$${APP_PORT}; }
+  location = /health { proxy_pass http://127.0.0.1:$${APP_PORT}; }
   location / { try_files $$uri $$uri/ /index.html; }
 }
 EOF
     nginx -t
-    systemctl enable nginx
-    systemctl restart nginx
+    systemctl enable nginx >/dev/null 2>&1 || true
+    systemctl restart nginx >/dev/null 2>&1 || systemctl start nginx >/dev/null 2>&1 || true
   fi
 else
   dnf -y install nginx
@@ -188,14 +337,26 @@ server {
 
   location = / { try_files /index.html =404; }
   location = /index.html { try_files /index.html =404; }
+  location = /game/stream {
+    proxy_pass http://127.0.0.1:$${APP_PORT};
+    proxy_http_version 1.1;
+    proxy_set_header Connection "";
+    proxy_buffering off;
+    proxy_cache off;
+    proxy_read_timeout 3600;
+    proxy_send_timeout 3600;
+    send_timeout 3600;
+  }
   location /auth/ { proxy_pass http://127.0.0.1:$${APP_PORT}; }
   location /me/ { proxy_pass http://127.0.0.1:$${APP_PORT}; }
   location /snakes/ { proxy_pass http://127.0.0.1:$${APP_PORT}; }
   location /game/ { proxy_pass http://127.0.0.1:$${APP_PORT}; }
+  location /economy/ { proxy_pass http://127.0.0.1:$${APP_PORT}; }
+  location = /health { proxy_pass http://127.0.0.1:$${APP_PORT}; }
   location / { try_files $$uri $$uri/ /index.html; }
 }
 EOF
   nginx -t
-  systemctl enable nginx
-  systemctl restart nginx
+  systemctl enable nginx >/dev/null 2>&1 || true
+  systemctl restart nginx >/dev/null 2>&1 || systemctl start nginx >/dev/null 2>&1 || true
 fi
