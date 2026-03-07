@@ -1,7 +1,7 @@
 TF_DIR=infra
 PROFILE=business
-PROJECT_TAG?=snake
-ENVIRONMENT_TAG?=mvp
+PROJECT_TAG?=snake-game
+ENVIRONMENT_TAG?=prod
 ASG_NAME?=$(PROJECT_TAG)-$(ENVIRONMENT_TAG)-asg
 APP_REF?=main
 APP_GIT_REPO?=https://github.com/denis-progman/snake_game.git

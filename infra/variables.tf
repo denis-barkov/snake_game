@@ -14,7 +14,7 @@ variable "project" {
 
 variable "environment" {
   type    = string
-  default = "mvp"
+  default = "prod"
 }
 
 variable "owner" {

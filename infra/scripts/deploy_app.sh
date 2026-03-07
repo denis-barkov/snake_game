@@ -2,8 +2,8 @@
 set -euo pipefail
 
 REGION="${AWS_REGION:-us-east-1}"
-PROJECT_TAG="${PROJECT_TAG:-snake}"
-ENVIRONMENT_TAG="${ENVIRONMENT_TAG:-mvp}"
+PROJECT_TAG="${PROJECT_TAG:-snake-game}"
+ENVIRONMENT_TAG="${ENVIRONMENT_TAG:-prod}"
 ASG_NAME="${ASG_NAME:-${PROJECT_TAG}-${ENVIRONMENT_TAG}-asg}"
 APP_REF="${APP_REF:-main}"
 APP_GIT_REPO="${APP_GIT_REPO:-https://github.com/denis-progman/snake_game.git}"

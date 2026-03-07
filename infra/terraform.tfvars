@@ -1,4 +1,4 @@
-project           = "snake"
+project           = "snake-game"
 owner             = "denis_pm"
 domain_name       = "terrariumsnake.com"
 route53_zone_name = "terrariumsnake.com"

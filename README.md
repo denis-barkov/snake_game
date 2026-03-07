@@ -281,14 +281,14 @@ Use instance role (no `DYNAMO_ENDPOINT`).
 ```bash
 export AWS_REGION=us-east-1
 export DYNAMO_REGION=us-east-1
-export DYNAMO_TABLE_USERS=snake-mvp-users
-export DYNAMO_TABLE_SNAKES=snake-mvp-snakes
-export DYNAMO_TABLE_WORLD_CHUNKS=snake-mvp-world_chunks
-export DYNAMO_TABLE_SNAKE_EVENTS=snake-mvp-snake_events
-export DYNAMO_TABLE_SETTINGS=snake-mvp-settings
-export DYNAMO_TABLE_ECONOMY_PARAMS=snake-mvp-economy_params
-export DYNAMO_TABLE_ECONOMY_PERIOD=snake-mvp-economy_period
-export DYNAMO_TABLE_ECONOMY_PERIOD_USER=snake-mvp-economy_period_user
+export DYNAMO_TABLE_USERS=snake-game-prod-users
+export DYNAMO_TABLE_SNAKES=snake-game-prod-snakes
+export DYNAMO_TABLE_WORLD_CHUNKS=snake-game-prod-world_chunks
+export DYNAMO_TABLE_SNAKE_EVENTS=snake-game-prod-snake_events
+export DYNAMO_TABLE_SETTINGS=snake-game-prod-settings
+export DYNAMO_TABLE_ECONOMY_PARAMS=snake-game-prod-economy_params
+export DYNAMO_TABLE_ECONOMY_PERIOD=snake-game-prod-economy_period
+export DYNAMO_TABLE_ECONOMY_PERIOD_USER=snake-game-prod-economy_period_user
 
 ./snake_server serve
 ```

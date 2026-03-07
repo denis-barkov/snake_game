@@ -18,8 +18,8 @@ This provisions an MVP environment for the Snake WebSocket server:
 Create `infra/terraform.tfvars`:
 
 ```hcl
-project     = "snake"
-environment = "mvp"
+project     = "snake-game"
+environment = "prod"
 owner       = "denis"
 aws_region  = "us-east-1"
 az          = "us-east-1a"
