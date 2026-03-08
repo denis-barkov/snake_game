@@ -1,6 +1,17 @@
 {
-  "current_version": "2.8.1",
+  "current_version": "2.8.2",
   "entries": [
+    {
+      "version": "2.8.2",
+      "release_date": "2026-03-08",
+      "notes": [
+        "Fixed borrow transfer accounting to debit treasury and credit user liquidity atomically.",
+        "Added explicit borrow rejection reasons (`invalid_amount`, `insufficient_treasury`, `policy_rejected`, `internal_error`).",
+        "Fixed treasury-row compatibility for legacy `economy_params` keys (`active` and `global`) in borrow flow.",
+        "Hardened labor counting to only count successful active snake advances.",
+        "Added backend validity flags for `price_index` and `inflation` during zero-output periods."
+      ]
+    },
     {
       "version": "2.8.1",
       "release_date": "2026-03-08",

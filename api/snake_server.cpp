@@ -676,6 +676,21 @@ class EconomyService {
   }
 
  private:
+  // Canonical derived economy/spatial view used by WS/HTTP/admin and stabilization logic.
+  economy::StabilizationDerived BuildCanonicalSpatialDerived(const storage::EconomyParams& params,
+                                                             int64_t money_supply,
+                                                             int64_t deployed_capital,
+                                                             const std::optional<world::WorldSnapshot>& world_snap) {
+    const int64_t occupied_cells = world_snap.has_value()
+                                       ? economy::StabilizationEngine::ComputeOccupiedSnakeCells(*world_snap)
+                                       : std::max<int64_t>(0, deployed_capital);
+    const int64_t field_size = world_snap.has_value()
+                                   ? std::max<int64_t>(0, world_snap->playable_cells)
+                                   : economy_world_area(params, economy::EconomySnapshot{});
+    const int64_t free_space_on_field = std::max<int64_t>(0, field_size - occupied_cells);
+    return stabilization_engine_.Derive(money_supply, params.k_land, deployed_capital, field_size, free_space_on_field);
+  }
+
   void EnsurePeriodLocked() {
     const auto ps = economy::CurrentPeriodState(std::time(nullptr), period_cfg_);
     if (current_period_id_.empty()) {
@@ -748,13 +763,9 @@ class EconomyService {
       world_snap = stabilization_actions_.current_world_snapshot();
       has_world_snapshot = true;
     }
-    const int64_t occupied_cells =
-        has_world_snapshot ? economy::StabilizationEngine::ComputeOccupiedSnakeCells(world_snap) : capital.total_capital;
-    const int64_t playable_cells =
-        has_world_snapshot ? std::max<int64_t>(0, world_snap.playable_cells) : economy_world_area(params, economy::EconomySnapshot{});
-    const int64_t free_space_on_field = std::max<int64_t>(0, playable_cells - occupied_cells);
-    const auto derived_close = stabilization_engine_.Derive(
-        sum_mi + params.m_gov_reserve, params.k_land, capital.total_capital, playable_cells, free_space_on_field);
+    const auto derived_close_base = BuildCanonicalSpatialDerived(
+        params, sum_mi + params.m_gov_reserve, capital.total_capital, has_world_snapshot ? std::optional<world::WorldSnapshot>(world_snap) : std::nullopt);
+    const auto& derived_close = derived_close_base;
     const auto close_decision = stabilization_engine_.EvaluatePeriodClose(period_id, derived_close, sum_mi + params.m_gov_reserve);
     std::optional<storage::EconomyParams> stabilized_params;
     if (!close_decision.already_handled_for_period) {
@@ -816,6 +827,8 @@ class EconomyService {
     period.money_supply = global.m;
     period.price_index = global.p;
     period.inflation_rate = global.pi;
+    period.price_index_valid = global.price_index_valid;
+    period.inflation_valid = global.inflation_valid;
     period.treasury_balance = global.treasury_balance;
     period.alpha_bootstrap = global.alpha_bootstrap;
     period.snapshot_status = "cached";
@@ -939,10 +952,8 @@ class EconomyService {
       world_snap = stabilization_actions_.current_world_snapshot();
       has_world_snapshot = true;
     }
-    const int64_t occupied_cells = has_world_snapshot ? economy::StabilizationEngine::ComputeOccupiedSnakeCells(world_snap) : out.k_snakes;
-    const int64_t playable_cells = has_world_snapshot ? std::max<int64_t>(0, world_snap.playable_cells) : economy_world_area(out.params, out.global);
-    const int64_t free_space = std::max<int64_t>(0, playable_cells - occupied_cells);
-    out.stabilization = stabilization_engine_.Derive(out.global.m, out.params.k_land, out.k_snakes, playable_cells, free_space);
+    out.stabilization = BuildCanonicalSpatialDerived(
+        out.params, out.global.m, out.k_snakes, has_world_snapshot ? std::optional<world::WorldSnapshot>(world_snap) : std::nullopt);
     out.stabilization_runtime = stabilization_engine_.runtime_state();
     const auto now = std::chrono::steady_clock::now();
     if (next_fast_check_at_ > now) {
@@ -1513,6 +1524,7 @@ int main(int argc, char** argv) {
     uint64_t ticks_since_log = 0;
     uint64_t broadcasts_since_log = 0;
     auto next_log_at = clock::now() + chrono::seconds(5);
+    auto last_food_debug_log_at = clock::now() - chrono::seconds(10);
 
     while (running.load()) {
       if (g_reload_requested) {
@@ -1530,7 +1542,24 @@ int main(int argc, char** argv) {
       while (now >= next_tick && catch_up_ticks < max_catch_up_ticks) {
         game.tick();
         const auto activity = game.flush_persistence_delta_and_credit_food(runtime_cfg.food_reward_cells);
+        const bool has_food_activity = activity.harvested_food > 0;
+        EconomyService::Snapshot eco_before_food;
+        if (has_food_activity) {
+          eco_before_food = economy.GetState();
+        }
         economy.OnActivity(activity);
+        if (has_food_activity && (clock::now() - last_food_debug_log_at) >= chrono::seconds(2)) {
+          const auto eco_after_food = economy.GetState();
+          std::cerr << "[food] harvested=" << activity.harvested_food
+                    << " users_with_harvest=" << activity.harvested_food_by_user.size()
+                    << " money_supply_before=" << eco_before_food.global.m
+                    << " money_supply_after=" << eco_after_food.global.m
+                    << " treasury_before=" << eco_before_food.global.treasury_balance
+                    << " treasury_after=" << eco_after_food.global.treasury_balance
+                    << " output_before=" << eco_before_food.global.y
+                    << " output_after=" << eco_after_food.global.y << "\n";
+          last_food_debug_log_at = clock::now();
+        }
         ++ticks_since_log;
         ++catch_up_ticks;
         if (runtime_cfg.public_view_enabled) {
@@ -1903,6 +1932,8 @@ int main(int argc, char** argv) {
             << "\"M\":" << eco.global.m << ","
             << "\"P\":" << json_number(eco.global.p) << ","
             << "\"pi\":" << json_number(eco.global.pi) << ","
+            << "\"price_index_valid\":" << (eco.global.price_index_valid ? "true" : "false") << ","
+            << "\"inflation_valid\":" << (eco.global.inflation_valid ? "true" : "false") << ","
             << "\"treasury_balance\":" << eco.global.treasury_balance << ","
             << "\"field_size\":" << eco.stabilization.field_size << ","
             << "\"free_space_on_field\":" << eco.stabilization.free_space_on_field << ","
@@ -2116,6 +2147,8 @@ int main(int argc, char** argv) {
       << "\"M\":" << s.global.m << ","
       << "\"P\":" << json_number(s.global.p) << ","
       << "\"pi\":" << json_number(s.global.pi) << ","
+      << "\"price_index_valid\":" << (s.global.price_index_valid ? "true" : "false") << ","
+      << "\"inflation_valid\":" << (s.global.inflation_valid ? "true" : "false") << ","
       << "\"A_world\":" << a_world << ","
       << "\"M_white\":" << m_white << ","
       << "\"R\":" << json_number(s.stabilization.spatial_ratio_r) << ","
@@ -2207,6 +2240,8 @@ int main(int argc, char** argv) {
       << "\"last_action_type\":\"" << json_escape(eco.stabilization_runtime.last_stabilization_action_type) << "\","
       << "\"next_fast_check_in_seconds\":" << eco.next_fast_check_in_seconds
       << "},"
+      << "\"price_index_valid\":" << (eco.global.price_index_valid ? "true" : "false") << ","
+      << "\"inflation_valid\":" << (eco.global.inflation_valid ? "true" : "false") << ","
       << "\"snapshot_status\":\"" << json_escape(eco.global.snapshot_status) << "\""
       << "}";
     res.set_content(o.str(), "application/json");
@@ -2237,6 +2272,8 @@ int main(int argc, char** argv) {
       << "\"M\":" << s.global.m << ","
       << "\"P\":" << json_number(s.global.p) << ","
       << "\"pi\":" << json_number(s.global.pi) << ","
+      << "\"price_index_valid\":" << (s.global.price_index_valid ? "true" : "false") << ","
+      << "\"inflation_valid\":" << (s.global.inflation_valid ? "true" : "false") << ","
       << "\"A_world\":" << a_world << ","
       << "\"M_white\":" << std::max<int64_t>(0, a_world - s.global.k) << ","
       << "\"field_size\":" << s.stabilization.field_size << ","
@@ -2462,27 +2499,45 @@ int main(int argc, char** argv) {
     if (!amount) amount = get_json_int_field(req.body, "cells");
     if (!amount || *amount <= 0 || *amount > runtime_cfg.max_borrow_per_call) {
       res.status = 400;
-      res.set_content("{\"error\":\"bad_amount\"}", "application/json");
+      res.set_content("{\"error\":\"invalid_amount\"}", "application/json");
       return;
     }
 
     int64_t balance_after = 0;
     const string user_id = std::to_string(*uid);
+    const auto user_before = storage->GetUserById(user_id);
     const auto eco_before = economy.GetState();
     const string period_key = eco_before.period_id;
     if (eco_before.global.treasury_balance < *amount) {
       res.status = 409;
-      res.set_content("{\"error\":\"insufficient_treasury_liquidity\"}", "application/json");
+      res.set_content("{\"error\":\"insufficient_treasury\"}", "application/json");
       return;
     }
-    if (!storage->BorrowCellsAndTrackPeriod(user_id, *amount, period_key, balance_after)) {
-      res.status = 409;
-      res.set_content("{\"error\":\"borrow_rejected\"}", "application/json");
+    std::string borrow_error;
+    if (!storage->BorrowCellsAndTrackPeriod(user_id, *amount, period_key, balance_after, &borrow_error)) {
+      if (borrow_error.empty()) borrow_error = "internal_error";
+      std::cerr << "[borrow] reject user_id=" << user_id
+                << " amount=" << *amount
+                << " user_liquid_before=" << (user_before.has_value() ? user_before->balance_mi : -1)
+                << " treasury_before=" << eco_before.global.treasury_balance
+                << " money_supply_before=" << eco_before.global.m
+                << " reason=" << borrow_error << "\n";
+      res.status = (borrow_error == "internal_error") ? 500 : 409;
+      res.set_content("{\"error\":\"" + json_escape(borrow_error) + "\"}", "application/json");
       return;
     }
 
     economy.InvalidateCache();
     const auto eco = economy.GetState();
+    const auto user_after = storage->GetUserById(user_id);
+    std::cerr << "[borrow] success user_id=" << user_id
+              << " amount=" << *amount
+              << " user_liquid_before=" << (user_before.has_value() ? user_before->balance_mi : -1)
+              << " user_liquid_after=" << (user_after.has_value() ? user_after->balance_mi : balance_after)
+              << " treasury_before=" << eco_before.global.treasury_balance
+              << " treasury_after=" << eco.global.treasury_balance
+              << " money_supply_before=" << eco_before.global.m
+              << " money_supply_after=" << eco.global.m << "\n";
     maybe_resize_world_from_economy(eco);
     const int64_t a_world = economy_world_area(eco.params, eco.global);
     const int64_t m_white = std::max<int64_t>(0, a_world - eco.global.k);
@@ -2530,6 +2585,7 @@ int main(int argc, char** argv) {
 
     const std::string uid_str = std::to_string(*uid);
     const std::string snake_id_str = std::to_string(snake_id);
+    const auto eco_before = economy.GetState();
     const auto user = storage->GetUserById(uid_str);
     if (!user.has_value()) {
       res.status = 404;
@@ -2574,6 +2630,21 @@ int main(int argc, char** argv) {
       world_len_after = refreshed;
     }
     game.flush_persistence_delta();
+    economy.InvalidateCache();
+    const auto eco_after = economy.GetState();
+    std::cerr << "[attach] success user_id=" << uid_str
+              << " snake_id=" << snake_id_str
+              << " amount=" << *amount
+              << " user_liquid_before=" << user->balance_mi
+              << " user_liquid_after=" << balance_after
+              << " snake_length_before=" << snake->length_k
+              << " snake_length_after=" << *world_len_after
+              << " total_capital_before=" << eco_before.global.k
+              << " total_capital_after=" << eco_after.global.k
+              << " free_space_before=" << eco_before.stabilization.free_space_on_field
+              << " free_space_after=" << eco_after.stabilization.free_space_on_field
+              << " money_supply_before=" << eco_before.global.m
+              << " money_supply_after=" << eco_after.global.m << "\n";
 
     ostringstream o;
     o << "{"

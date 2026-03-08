@@ -426,8 +426,39 @@ bool DynamoStorage::IncrementUserBalance(const std::string& user_id, int64_t del
 bool DynamoStorage::BorrowCellsAndTrackPeriod(const std::string& user_id,
                                               int64_t amount,
                                               const std::string& period_key,
-                                              int64_t& out_balance_mi) {
-  if (amount <= 0) return false;
+                                              int64_t& out_balance_mi,
+                                              std::string* out_error_code) {
+  if (out_error_code) *out_error_code = "";
+  if (amount <= 0) {
+    if (out_error_code) *out_error_code = "invalid_amount";
+    return false;
+  }
+
+  std::string treasury_params_id = "active";
+  Aws::DynamoDB::Model::GetItemRequest req_params;
+  req_params.SetTableName(cfg_.economy_params_table.c_str());
+  req_params.AddKey("params_id", S(treasury_params_id));
+  auto params_out = client_->GetItem(req_params);
+  auto params_item = params_out.IsSuccess() ? params_out.GetResult().GetItem()
+                                            : Aws::Map<Aws::String, Aws::DynamoDB::Model::AttributeValue>{};
+  if (params_item.empty()) {
+    treasury_params_id = "global";
+    Aws::DynamoDB::Model::GetItemRequest req_legacy;
+    req_legacy.SetTableName(cfg_.economy_params_table.c_str());
+    req_legacy.AddKey("params_id", S(treasury_params_id));
+    params_out = client_->GetItem(req_legacy);
+    params_item = params_out.IsSuccess() ? params_out.GetResult().GetItem()
+                                         : Aws::Map<Aws::String, Aws::DynamoDB::Model::AttributeValue>{};
+  }
+  if (params_item.empty()) {
+    if (out_error_code) *out_error_code = "internal_error";
+    return false;
+  }
+  const auto active_params = LoadEconomyParamsFromItem(params_item);
+  if (active_params.m_gov_reserve < amount) {
+    if (out_error_code) *out_error_code = "insufficient_treasury";
+    return false;
+  }
 
   Aws::DynamoDB::Model::TransactWriteItemsRequest tx;
 
@@ -456,7 +487,7 @@ bool DynamoStorage::BorrowCellsAndTrackPeriod(const std::string& user_id,
   // Borrowing is treasury-backed: user assets increase while treasury decreases.
   Aws::DynamoDB::Model::Update treasury_update;
   treasury_update.SetTableName(cfg_.economy_params_table.c_str());
-  treasury_update.AddKey("params_id", S("active"));
+  treasury_update.AddKey("params_id", S(treasury_params_id));
   treasury_update.SetUpdateExpression("SET m_gov_reserve = if_not_exists(m_gov_reserve, :zero) - :a");
   treasury_update.SetConditionExpression("attribute_exists(params_id) AND if_not_exists(m_gov_reserve, :zero) >= :a");
   treasury_update.AddExpressionAttributeValues(":zero", N(0));
@@ -467,10 +498,16 @@ bool DynamoStorage::BorrowCellsAndTrackPeriod(const std::string& user_id,
   tx.AddTransactItems(treasury_item);
 
   auto tx_res = client_->TransactWriteItems(tx);
-  if (!tx_res.IsSuccess()) return false;
+  if (!tx_res.IsSuccess()) {
+    if (out_error_code) *out_error_code = "policy_rejected";
+    return false;
+  }
 
   const auto user = GetUserById(user_id);
-  if (!user.has_value()) return false;
+  if (!user.has_value()) {
+    if (out_error_code) *out_error_code = "internal_error";
+    return false;
+  }
   out_balance_mi = user->balance_mi;
   return true;
 }
@@ -885,6 +922,8 @@ std::optional<EconomyPeriod> DynamoStorage::GetEconomyPeriod(const std::string& 
   p.money_supply = GetInt64(item, "money_supply", 0);
   p.price_index = GetDouble(item, "price_index", 0.0);
   p.inflation_rate = GetDouble(item, "inflation_rate", 0.0);
+  p.price_index_valid = GetBool(item, "price_index_valid", false);
+  p.inflation_valid = GetBool(item, "inflation_valid", false);
   p.treasury_balance = GetInt64(item, "treasury_balance", 0);
   p.alpha_bootstrap = GetBool(item, "alpha_bootstrap", false);
   p.is_finalized = GetBool(item, "is_finalized", false);
@@ -918,6 +957,8 @@ bool DynamoStorage::PutEconomyPeriod(const EconomyPeriod& p) {
   req.AddItem("money_supply", N(p.money_supply));
   req.AddItem("price_index", D(p.price_index));
   req.AddItem("inflation_rate", D(p.inflation_rate));
+  req.AddItem("price_index_valid", B(p.price_index_valid));
+  req.AddItem("inflation_valid", B(p.inflation_valid));
   req.AddItem("treasury_balance", N(p.treasury_balance));
   req.AddItem("alpha_bootstrap", B(p.alpha_bootstrap));
   req.AddItem("is_finalized", B(p.is_finalized));

@@ -37,20 +37,29 @@ EconomySnapshot ComputeGlobal(const EconomyPeriodRaw& raw,
   out.l = std::max<int64_t>(0, raw.movement_ticks);
   out.m = std::max<int64_t>(0, users_sum_balance + treasury_balance);
   out.treasury_balance = treasury_balance;
-  out.p = static_cast<double>(out.m) / static_cast<double>(std::max<int64_t>(out.y, 1));
+  out.price_index_valid = out.y > 0;
+  out.inflation_valid = false;
+  out.p = out.price_index_valid ? (static_cast<double>(out.m) / static_cast<double>(out.y)) : 0.0;
 
   const double alpha_bootstrap_default = Clamp(raw.alpha_bootstrap_default, 0.05, 0.95);
   if (!prev) {
     out.alpha = alpha_bootstrap_default;
     out.alpha_bootstrap = true;
     out.pi = 0.0;
+    out.inflation_valid = false;
   } else {
     const int64_t d_y = out.y - prev->y;
     const int64_t d_k = out.k - prev->k;
     const double mpk = d_k > 0 ? (static_cast<double>(d_y) / static_cast<double>(d_k)) : 0.0;
     out.alpha = Clamp((mpk * static_cast<double>(out.k)) / static_cast<double>(std::max<int64_t>(out.y, 1)), 0.0, 1.0);
-    const double prev_p = std::max(prev->p, 1e-9);
-    out.pi = (out.p - prev->p) / prev_p;
+    if (out.price_index_valid && prev->price_index_valid) {
+      const double prev_p = std::max(prev->p, 1e-9);
+      out.pi = (out.p - prev->p) / prev_p;
+      out.inflation_valid = true;
+    } else {
+      out.pi = 0.0;
+      out.inflation_valid = false;
+    }
     out.alpha_bootstrap = false;
   }
 

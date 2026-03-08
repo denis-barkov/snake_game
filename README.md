@@ -184,6 +184,7 @@ Gameplay code emits intents through `PersistenceCoordinator`; it does not write 
 
 - `GET /user/me` (auth) returns `balance_mi` (`liquid_assets` alias), deployed capital, and snake count.
 - `POST /user/borrow` (auth) with `{ "amount": <int> }` credits user liquid assets and debits treasury by the same amount.
+  - reject codes: `invalid_amount`, `insufficient_treasury`, `policy_rejected`, `unauthorized`, `internal_error`
 - `POST /snake/{snake_id}/attach` (auth) with `{ "amount": <int> }` moves cells from storage to selected snake.
 - `POST /economy/purchase` remains as an alias of `/user/borrow` for compatibility.
 
@@ -408,6 +409,7 @@ curl -sS https://terrariumsnake.com/economy/state
 Expected:
 - `/health` -> `{"ok":true}`
 - `/economy/state` -> JSON with numeric `Y`, `K`, `L`, `alpha`, `A`, `M`, `P`, `pi`, `treasury_balance`, `period_ends_in_seconds`
+  - includes validity flags: `price_index_valid`, `inflation_valid` (false in zero-output edge periods)
 
 ## Watch camera / AOI-ready behavior
 

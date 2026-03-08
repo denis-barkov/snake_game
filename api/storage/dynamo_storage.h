@@ -42,7 +42,8 @@ class DynamoStorage : public IStorage {
   bool BorrowCellsAndTrackPeriod(const std::string& user_id,
                                  int64_t amount,
                                  const std::string& period_key,
-                                 int64_t& out_balance_mi) override;
+                                 int64_t& out_balance_mi,
+                                 std::string* out_error_code = nullptr) override;
 
   std::vector<Snake> ListSnakes() override;
   std::optional<Snake> GetSnakeById(const std::string& snake_id) override;

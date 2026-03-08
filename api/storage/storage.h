@@ -27,7 +27,8 @@ class IStorage {
   virtual bool BorrowCellsAndTrackPeriod(const std::string& user_id,
                                          int64_t amount,
                                          const std::string& period_key,
-                                         int64_t& out_balance_mi) = 0;
+                                         int64_t& out_balance_mi,
+                                         std::string* out_error_code = nullptr) = 0;
 
   virtual std::vector<Snake> ListSnakes() = 0;
   virtual std::optional<Snake> GetSnakeById(const std::string& snake_id) = 0;

@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.8.2 - 2026-03-08
+- Fixed borrow transfer accounting to debit treasury and credit user liquidity atomically.
+- Added explicit borrow rejection reasons (`invalid_amount`, `insufficient_treasury`, `policy_rejected`, `internal_error`).
+- Fixed treasury-row compatibility for legacy `economy_params` keys (`active` and `global`) in borrow flow.
+- Hardened labor counting to only count successful active snake advances.
+- Added backend validity flags for `price_index` and `inflation` during zero-output periods.
+
 ## 2.8.1 - 2026-03-08
 - Fixed borrow accounting so treasury is debited atomically when user liquid assets are credited.
 - Added treasury-liquidity rejection for borrow when reserve is insufficient.

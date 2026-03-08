@@ -112,6 +112,8 @@ struct EconomyPeriod {
   int64_t money_supply = 0;
   double price_index = 0.0;
   double inflation_rate = 0.0;
+  bool price_index_valid = false;
+  bool inflation_valid = false;
   int64_t treasury_balance = 0;
   bool alpha_bootstrap = false;
   bool is_finalized = false;

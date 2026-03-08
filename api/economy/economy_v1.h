@@ -26,6 +26,8 @@ struct EconomySnapshot {
   int64_t m = 0;
   double p = 0.0;
   double pi = 0.0;
+  bool price_index_valid = false;
+  bool inflation_valid = false;
   int64_t treasury_balance = 0;
   bool alpha_bootstrap = false;
   std::string snapshot_status = "live_unfinalized";
