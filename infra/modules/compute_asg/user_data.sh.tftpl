@@ -266,6 +266,11 @@ if command -v caddy >/dev/null 2>&1; then
 $${DOMAIN_NAME} {
   encode zstd gzip
 
+  @ws path /ws
+  handle @ws {
+    reverse_proxy 127.0.0.1:$${APP_PORT}
+  }
+
   @sse path /game/stream
   handle @sse {
     reverse_proxy 127.0.0.1:$${APP_PORT} {
@@ -273,7 +278,7 @@ $${DOMAIN_NAME} {
     }
   }
 
-  @api path /auth/* /me/* /snakes/* /game/* /economy/* /health
+  @api path /auth/* /me/* /user/* /snake/* /snakes/* /names/* /onboarding/* /settings/* /game/* /economy/* /health
   handle @api {
     reverse_proxy 127.0.0.1:$${APP_PORT}
   }
@@ -301,6 +306,14 @@ server {
 
   location = / { try_files /index.html =404; }
   location = /index.html { try_files /index.html =404; }
+  location = /ws {
+    proxy_pass http://127.0.0.1:$${APP_PORT};
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_read_timeout 3600;
+    proxy_send_timeout 3600;
+  }
   location = /game/stream {
     proxy_pass http://127.0.0.1:$${APP_PORT};
     proxy_http_version 1.1;
@@ -313,7 +326,12 @@ server {
   }
   location /auth/ { proxy_pass http://127.0.0.1:$${APP_PORT}; }
   location /me/ { proxy_pass http://127.0.0.1:$${APP_PORT}; }
+  location /user/ { proxy_pass http://127.0.0.1:$${APP_PORT}; }
+  location /snake/ { proxy_pass http://127.0.0.1:$${APP_PORT}; }
   location /snakes/ { proxy_pass http://127.0.0.1:$${APP_PORT}; }
+  location /names/ { proxy_pass http://127.0.0.1:$${APP_PORT}; }
+  location /onboarding/ { proxy_pass http://127.0.0.1:$${APP_PORT}; }
+  location /settings/ { proxy_pass http://127.0.0.1:$${APP_PORT}; }
   location /game/ { proxy_pass http://127.0.0.1:$${APP_PORT}; }
   location /economy/ { proxy_pass http://127.0.0.1:$${APP_PORT}; }
   location = /health { proxy_pass http://127.0.0.1:$${APP_PORT}; }
@@ -337,6 +355,14 @@ server {
 
   location = / { try_files /index.html =404; }
   location = /index.html { try_files /index.html =404; }
+  location = /ws {
+    proxy_pass http://127.0.0.1:$${APP_PORT};
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_read_timeout 3600;
+    proxy_send_timeout 3600;
+  }
   location = /game/stream {
     proxy_pass http://127.0.0.1:$${APP_PORT};
     proxy_http_version 1.1;
@@ -349,7 +375,12 @@ server {
   }
   location /auth/ { proxy_pass http://127.0.0.1:$${APP_PORT}; }
   location /me/ { proxy_pass http://127.0.0.1:$${APP_PORT}; }
+  location /user/ { proxy_pass http://127.0.0.1:$${APP_PORT}; }
+  location /snake/ { proxy_pass http://127.0.0.1:$${APP_PORT}; }
   location /snakes/ { proxy_pass http://127.0.0.1:$${APP_PORT}; }
+  location /names/ { proxy_pass http://127.0.0.1:$${APP_PORT}; }
+  location /onboarding/ { proxy_pass http://127.0.0.1:$${APP_PORT}; }
+  location /settings/ { proxy_pass http://127.0.0.1:$${APP_PORT}; }
   location /game/ { proxy_pass http://127.0.0.1:$${APP_PORT}; }
   location /economy/ { proxy_pass http://127.0.0.1:$${APP_PORT}; }
   location = /health { proxy_pass http://127.0.0.1:$${APP_PORT}; }
