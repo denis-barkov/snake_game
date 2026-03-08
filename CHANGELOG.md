@@ -1,5 +1,21 @@
 # Changelog
 
+## 2.8.7 - 2026-03-08
+- Fixed borrow treasury guard expression to use valid DynamoDB condition syntax (`m_gov_reserve >= :a`) and avoid validation-write failures.
+- Kept borrow debit/credit rollback semantics while improving local DynamoDB compatibility.
+- Removed a failing `if_not_exists(...)` condition usage from borrow treasury debit path.
+
+## 2.8.6 - 2026-03-08
+- Reworked borrow persistence to a deterministic treasury-debit/user-credit path without Dynamo transaction dependency.
+- Replaced generic borrow rejection branch with explicit `persistence_write_failed`/`unauthorized` mappings in the storage path.
+- Improved local/prod parity for borrow by using the same guarded non-transaction update semantics.
+
+## 2.8.5 - 2026-03-08
+- Added signed-in auth UI behavior that hides Google sign-in and shows a `Log out` action with full local session cleanup.
+- Hardened client attach flow to refresh/repair selected snake id before calling `/snake/{id}/attach`.
+- Added structured production diagnostics for borrow/attach actions with profile, policy result, and rejection reason fields.
+- Added a minimal API smoke test (`tools/smoke_economy_flow.py`) and Make target (`smoke-economy-local`) for pre-release critical-flow checks.
+
 ## 2.8.4 - 2026-03-08
 - Hardened attach endpoint fallback resolution by checking DB-owned snakes and auto-creating a starter snake when none exists, preventing false `snake_not_found` failures after rebuilds.
 - Added explicit borrow pre-validation for missing authenticated user rows so borrow failures return `user_not_found` instead of generic policy errors.

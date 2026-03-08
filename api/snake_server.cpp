@@ -2490,6 +2490,14 @@ int main(int argc, char** argv) {
     add_cors(res);
     auto uid = require_auth_user(auth, req);
     if (!uid) {
+      std::cerr << "[economy_action] action=borrow"
+                << " user_id=unknown"
+                << " amount=0"
+                << " profile=" << runtime_cfg.persistence_profile
+                << " intent_type=UserBalanceChanged+TreasuryBalanceChanged"
+                << " policy_result=unauthorized"
+                << " rejection_reason=unauthorized"
+                << " treasury_balance_before=-1\n";
       res.status = 401;
       res.set_content("{\"error\":\"unauthorized\"}", "application/json");
       return;
@@ -2498,6 +2506,14 @@ int main(int argc, char** argv) {
     auto amount = get_json_int_field(req.body, "amount");
     if (!amount) amount = get_json_int_field(req.body, "cells");
     if (!amount || *amount <= 0 || *amount > runtime_cfg.max_borrow_per_call) {
+      std::cerr << "[economy_action] action=borrow"
+                << " user_id=" << *uid
+                << " amount=" << (amount.has_value() ? *amount : 0)
+                << " profile=" << runtime_cfg.persistence_profile
+                << " intent_type=UserBalanceChanged+TreasuryBalanceChanged"
+                << " policy_result=validation_reject"
+                << " rejection_reason=invalid_amount"
+                << " treasury_balance_before=-1\n";
       res.status = 400;
       res.set_content("{\"error\":\"invalid_amount\"}", "application/json");
       return;
@@ -2507,6 +2523,14 @@ int main(int argc, char** argv) {
     const string user_id = std::to_string(*uid);
     const auto user_before = storage->GetUserById(user_id);
     if (!user_before.has_value()) {
+      std::cerr << "[economy_action] action=borrow"
+                << " user_id=" << user_id
+                << " amount=" << *amount
+                << " profile=" << runtime_cfg.persistence_profile
+                << " intent_type=UserBalanceChanged+TreasuryBalanceChanged"
+                << " policy_result=validation_reject"
+                << " rejection_reason=unauthorized"
+                << " treasury_balance_before=-1\n";
       res.status = 404;
       res.set_content("{\"error\":\"user_not_found\"}", "application/json");
       return;
@@ -2514,6 +2538,14 @@ int main(int argc, char** argv) {
     const auto eco_before = economy.GetState();
     const string period_key = eco_before.period_id;
     if (eco_before.global.treasury_balance < *amount) {
+      std::cerr << "[economy_action] action=borrow"
+                << " user_id=" << user_id
+                << " amount=" << *amount
+                << " profile=" << runtime_cfg.persistence_profile
+                << " intent_type=UserBalanceChanged+TreasuryBalanceChanged"
+                << " policy_result=validation_reject"
+                << " rejection_reason=insufficient_treasury"
+                << " treasury_balance_before=" << eco_before.global.treasury_balance << "\n";
       res.status = 409;
       res.set_content("{\"error\":\"insufficient_treasury\"}", "application/json");
       return;
@@ -2521,12 +2553,23 @@ int main(int argc, char** argv) {
     std::string borrow_error;
     if (!storage->BorrowCellsAndTrackPeriod(user_id, *amount, period_key, balance_after, &borrow_error)) {
       if (borrow_error.empty()) borrow_error = "internal_error";
+      const std::string rejection_reason = (borrow_error == "policy_rejected")
+                                               ? "persistence_write_failed"
+                                               : borrow_error;
       std::cerr << "[borrow] reject user_id=" << user_id
                 << " amount=" << *amount
                 << " user_liquid_before=" << (user_before.has_value() ? user_before->balance_mi : -1)
                 << " treasury_before=" << eco_before.global.treasury_balance
                 << " money_supply_before=" << eco_before.global.m
                 << " reason=" << borrow_error << "\n";
+      std::cerr << "[economy_action] action=borrow"
+                << " user_id=" << user_id
+                << " amount=" << *amount
+                << " profile=" << runtime_cfg.persistence_profile
+                << " intent_type=UserBalanceChanged+TreasuryBalanceChanged"
+                << " policy_result=storage_reject"
+                << " rejection_reason=" << rejection_reason
+                << " treasury_balance_before=" << eco_before.global.treasury_balance << "\n";
       res.status = (borrow_error == "internal_error") ? 500 : 409;
       res.set_content("{\"error\":\"" + json_escape(borrow_error) + "\"}", "application/json");
       return;
@@ -2543,6 +2586,14 @@ int main(int argc, char** argv) {
               << " treasury_after=" << eco.global.treasury_balance
               << " money_supply_before=" << eco_before.global.m
               << " money_supply_after=" << eco.global.m << "\n";
+    std::cerr << "[economy_action] action=borrow"
+              << " user_id=" << user_id
+              << " amount=" << *amount
+              << " profile=" << runtime_cfg.persistence_profile
+              << " intent_type=UserBalanceChanged+TreasuryBalanceChanged"
+              << " policy_result=applied"
+              << " rejection_reason=none"
+              << " treasury_balance_before=" << eco_before.global.treasury_balance << "\n";
     maybe_resize_world_from_economy(eco);
     const int64_t a_world = economy_world_area(eco.params, eco.global);
     const int64_t m_white = std::max<int64_t>(0, a_world - eco.global.k);
@@ -2649,6 +2700,20 @@ int main(int argc, char** argv) {
     }
     if (!snake.has_value()) {
       res.status = 404;
+      std::ostringstream visible_ids;
+      const auto visible_runtime = game.list_user_snakes(*uid);
+      for (size_t i = 0; i < visible_runtime.size(); ++i) {
+        if (i) visible_ids << ",";
+        visible_ids << visible_runtime[i].id;
+      }
+      std::cerr << "[economy_action] action=attach"
+                << " user_id=" << uid_str
+                << " snake_id_requested=" << snake_id_str
+                << " snake_ids_visible_to_user=" << visible_ids.str()
+                << " profile=" << runtime_cfg.persistence_profile
+                << " read_layer_path_used=storage+runtime_fallback"
+                << " write_layer_path_used_for_snake_creation=persistence_coordinator"
+                << " attach_lookup_result=snake_not_found\n";
       res.set_content("{\"error\":\"snake_not_found\"}", "application/json");
       return;
     }
@@ -2695,6 +2760,14 @@ int main(int argc, char** argv) {
               << " free_space_after=" << eco_after.stabilization.free_space_on_field
               << " money_supply_before=" << eco_before.global.m
               << " money_supply_after=" << eco_after.global.m << "\n";
+    std::cerr << "[economy_action] action=attach"
+              << " user_id=" << uid_str
+              << " snake_id_requested=" << snake_id_str
+              << " snake_ids_visible_to_user=" << resolved_snake_id_str
+              << " profile=" << runtime_cfg.persistence_profile
+              << " read_layer_path_used=storage+runtime_fallback"
+              << " write_layer_path_used_for_snake_creation=persistence_coordinator"
+              << " attach_lookup_result=resolved\n";
 
     ostringstream o;
     o << "{"

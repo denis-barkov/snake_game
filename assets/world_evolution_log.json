@@ -1,6 +1,34 @@
 {
-  "current_version": "2.8.4",
+  "current_version": "2.8.7",
   "entries": [
+    {
+      "version": "2.8.7",
+      "release_date": "2026-03-08",
+      "notes": [
+        "Fixed borrow treasury guard expression to use valid DynamoDB condition syntax (`m_gov_reserve >= :a`) and avoid validation-write failures.",
+        "Kept borrow debit/credit rollback semantics while improving local DynamoDB compatibility.",
+        "Removed a failing `if_not_exists(...)` condition usage from borrow treasury debit path."
+      ]
+    },
+    {
+      "version": "2.8.6",
+      "release_date": "2026-03-08",
+      "notes": [
+        "Reworked borrow persistence to a deterministic treasury-debit/user-credit path without Dynamo transaction dependency.",
+        "Replaced generic borrow rejection branch with explicit `persistence_write_failed`/`unauthorized` mappings in the storage path.",
+        "Improved local/prod parity for borrow by using the same guarded non-transaction update semantics."
+      ]
+    },
+    {
+      "version": "2.8.5",
+      "release_date": "2026-03-08",
+      "notes": [
+        "Added signed-in auth UI behavior that hides Google sign-in and shows a `Log out` action with full local session cleanup.",
+        "Hardened client attach flow to refresh/repair selected snake id before calling `/snake/{id}/attach`.",
+        "Added structured production diagnostics for borrow/attach actions with profile, policy result, and rejection reason fields.",
+        "Added a minimal API smoke test (`tools/smoke_economy_flow.py`) and Make target (`smoke-economy-local`) for pre-release critical-flow checks."
+      ]
+    },
     {
       "version": "2.8.4",
       "release_date": "2026-03-08",

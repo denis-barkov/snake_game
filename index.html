@@ -475,6 +475,7 @@
         <div id="google-signin-button"></div>
         <small>Continue with Google</small>
       </div>
+      <div class="row"><button id="logoutBtn" style="display:none;">Log out</button></div>
       <div class="row"><small id="authStatus">Not logged in (watch-only)</small></div>
     </div>
 
@@ -1066,6 +1067,7 @@
   const mySnakesEl = document.getElementById("mySnakes");
   const legacyLoginFieldsEl = document.getElementById("legacy-login-fields");
   const googleLoginRootEl = document.getElementById("google-login-root");
+  const logoutBtn = document.getElementById("logoutBtn");
   const settingsPanelEl = document.getElementById("settings-panel");
   const deleteAccountBtn = document.getElementById("deleteAccountBtn");
   const deleteAccountBackdropEl = document.getElementById("delete-account-backdrop");
@@ -1148,6 +1150,35 @@
   }
   const savedMyEcoOpen = localStorage.getItem(MY_ECON_OPEN_STORAGE_KEY);
   if (savedMyEcoOpen === "0") ecoUserCardEl.open = false;
+
+  function refreshLoginUi() {
+    const isAuth = !!token;
+    if (googleAuthEnabled) {
+      legacyLoginFieldsEl.style.display = "none";
+      googleLoginRootEl.style.display = isAuth ? "none" : "block";
+    } else {
+      legacyLoginFieldsEl.style.display = isAuth ? "none" : "";
+      googleLoginRootEl.style.display = "none";
+    }
+    logoutBtn.style.display = isAuth ? "" : "none";
+  }
+
+  function performLogout(statusText = "Logged out") {
+    token = null;
+    myUserId = null;
+    selectedSnakeId = null;
+    watchedSnakeId = null;
+    onboardingRequired = false;
+    localStorage.removeItem(TOKEN_STORAGE_KEY);
+    localStorage.removeItem(USER_ID_STORAGE_KEY);
+    localStorage.removeItem(SELECTED_SNAKE_STORAGE_KEY);
+    localStorage.removeItem(WATCHED_SNAKE_STORAGE_KEY);
+    mySnakesEl.innerHTML = "";
+    authStatus.textContent = statusText;
+    refreshLoginUi();
+    applyViewControlAuthState();
+    restartStream();
+  }
 
   function applySpectatorDefaults(worldW = gridW, worldH = gridH, force = false) {
     if (token) return;
@@ -1266,8 +1297,6 @@
       googleAuthEnabled = !!data.google_auth_enabled;
       googleClientId = typeof data.google_client_id === "string" ? data.google_client_id : "";
       if (googleAuthEnabled) {
-        legacyLoginFieldsEl.style.display = "none";
-        googleLoginRootEl.style.display = "block";
         if (window.google && window.google.accounts && googleClientId) {
           window.google.accounts.id.initialize({
             client_id: googleClientId,
@@ -1281,10 +1310,8 @@
         } else {
           authStatus.textContent = "Google Sign-In is not configured.";
         }
-      } else {
-        legacyLoginFieldsEl.style.display = "";
-        googleLoginRootEl.style.display = "none";
       }
+      refreshLoginUi();
       return;
     } catch (_) {
       // Fallback keeps local/prod UI readable when talking to an older backend binary.
@@ -1603,17 +1630,7 @@
     if (token) headers["Authorization"] = "Bearer " + token;
     const res = await fetch(apiPath(path), { ...opts, headers });
     if (res.status === 401 && token) {
-      token = null;
-      myUserId = null;
-      selectedSnakeId = null;
-      watchedSnakeId = null;
-      localStorage.removeItem(TOKEN_STORAGE_KEY);
-      localStorage.removeItem(USER_ID_STORAGE_KEY);
-      localStorage.removeItem(SELECTED_SNAKE_STORAGE_KEY);
-      localStorage.removeItem(WATCHED_SNAKE_STORAGE_KEY);
-      authStatus.textContent = "Session expired. Please log in again.";
-      createSnakeBtn.disabled = true;
-      applyViewControlAuthState();
+      performLogout("Session expired. Please log in again.");
     }
     return res;
   }
@@ -1642,6 +1659,7 @@
 
     authStatus.textContent = `Logged in as user_id=${myUserId}`;
     createSnakeBtn.disabled = false;
+    refreshLoginUi();
     if (sessionStorage.getItem(LOGIN_RELOAD_FLAG) !== "1") {
       sessionStorage.setItem(LOGIN_RELOAD_FLAG, "1");
       setTimeout(() => window.location.reload(), 120);
@@ -1672,6 +1690,7 @@
     localStorage.setItem(USER_ID_STORAGE_KEY, String(myUserId));
     authStatus.textContent = `Logged in as user_id=${myUserId}`;
     createSnakeBtn.disabled = onboardingRequired;
+    refreshLoginUi();
     applyViewControlAuthState();
     restartStream();
     await loadMySnakes();
@@ -1686,6 +1705,7 @@
 
   function applyViewControlAuthState() {
     const isAuth = !!token;
+    refreshLoginUi();
     const canOperateWorld = isAuth && !onboardingRequired;
     zoomInBtn.disabled = !isAuth;
     zoomOutBtn.disabled = !isAuth;
@@ -1847,7 +1867,20 @@
   }
 
   async function attachCells(amountOverride = null) {
-    if (!token || !selectedSnakeId) return;
+    if (!token) return;
+    if (!selectedSnakeId) await loadMySnakes();
+    if (!selectedSnakeId) {
+      const me = await loadUserMe();
+      const starterId = Number(me && me.starter_snake_id);
+      if (Number.isFinite(starterId) && starterId > 0) {
+        selectedSnakeId = starterId;
+        localStorage.setItem(SELECTED_SNAKE_STORAGE_KEY, String(selectedSnakeId));
+      }
+    }
+    if (!selectedSnakeId) {
+      alert("Attach failed: no snake selected");
+      return;
+    }
     const raw = amountOverride == null ? Number(attachAmountEl.value) : Number(amountOverride);
     const amount = Math.floor(raw);
     if (!Number.isFinite(amount) || amount <= 0) return;
@@ -2052,16 +2085,9 @@
       return;
     }
     deleteAccountBackdropEl.style.display = "none";
-    token = null;
-    myUserId = null;
-    localStorage.removeItem(TOKEN_STORAGE_KEY);
-    localStorage.removeItem(USER_ID_STORAGE_KEY);
-    localStorage.removeItem(SELECTED_SNAKE_STORAGE_KEY);
-    localStorage.removeItem(WATCHED_SNAKE_STORAGE_KEY);
-    applyViewControlAuthState();
-    authStatus.textContent = "Account deleted";
-    restartStream();
+    performLogout("Account deleted");
   });
+  logoutBtn.onclick = () => performLogout("Logged out");
 
   function handleWsMessage(raw) {
     let msg = null;
@@ -2474,6 +2500,7 @@
 
   async function bootApp() {
     applyViewControlAuthState();
+    refreshLoginUi();
     await loadWorldEvolutionLog().catch(() => null);
     if (token && myUserId) {
       authStatus.textContent = `Logged in as user_id=${myUserId}`;

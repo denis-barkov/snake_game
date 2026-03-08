@@ -460,55 +460,7 @@ bool DynamoStorage::BorrowCellsAndTrackPeriod(const std::string& user_id,
     return false;
   }
 
-  Aws::DynamoDB::Model::TransactWriteItemsRequest tx;
-
-  Aws::DynamoDB::Model::Update user_update;
-  user_update.SetTableName(cfg_.users_table.c_str());
-  user_update.AddKey("user_id", S(user_id));
-  user_update.SetUpdateExpression("SET balance_mi = if_not_exists(balance_mi, :z) + :a");
-  user_update.SetConditionExpression("attribute_exists(user_id)");
-  user_update.AddExpressionAttributeValues(":z", N(0));
-  user_update.AddExpressionAttributeValues(":a", N(amount));
-
-  Aws::DynamoDB::Model::TransactWriteItem user_item;
-  user_item.SetUpdate(user_update);
-  tx.AddTransactItems(user_item);
-
-  Aws::DynamoDB::Model::Update period_update;
-  period_update.SetTableName(cfg_.economy_period_table.c_str());
-  period_update.AddKey("period_key", S(period_key));
-  period_update.SetUpdateExpression("ADD delta_m_buy :a");
-  period_update.AddExpressionAttributeValues(":a", N(amount));
-
-  Aws::DynamoDB::Model::TransactWriteItem period_item;
-  period_item.SetUpdate(period_update);
-  tx.AddTransactItems(period_item);
-
-  // Borrowing is treasury-backed: user assets increase while treasury decreases.
-  Aws::DynamoDB::Model::Update treasury_update;
-  treasury_update.SetTableName(cfg_.economy_params_table.c_str());
-  treasury_update.AddKey("params_id", S(treasury_params_id));
-  treasury_update.SetUpdateExpression("SET m_gov_reserve = if_not_exists(m_gov_reserve, :zero) - :a");
-  treasury_update.SetConditionExpression("attribute_exists(params_id) AND if_not_exists(m_gov_reserve, :zero) >= :a");
-  treasury_update.AddExpressionAttributeValues(":zero", N(0));
-  treasury_update.AddExpressionAttributeValues(":a", N(amount));
-
-  Aws::DynamoDB::Model::TransactWriteItem treasury_item;
-  treasury_item.SetUpdate(treasury_update);
-  tx.AddTransactItems(treasury_item);
-
-  auto tx_res = client_->TransactWriteItems(tx);
-  if (tx_res.IsSuccess()) {
-    const auto user = GetUserById(user_id);
-    if (!user.has_value()) {
-      if (out_error_code) *out_error_code = "internal_error";
-      return false;
-    }
-    out_balance_mi = user->balance_mi;
-    return true;
-  }
-
-  // Fallback for environments where TransactWriteItems is denied/unavailable:
+  // Deterministic critical path (no transaction dependency):
   // 1) decrement treasury with a non-negative guard
   // 2) increment user balance
   // 3) best-effort period accounting update
@@ -516,17 +468,17 @@ bool DynamoStorage::BorrowCellsAndTrackPeriod(const std::string& user_id,
   Aws::DynamoDB::Model::UpdateItemRequest treasury_debit;
   treasury_debit.SetTableName(cfg_.economy_params_table.c_str());
   treasury_debit.AddKey("params_id", S(treasury_params_id));
-  treasury_debit.SetConditionExpression("attribute_exists(params_id) AND if_not_exists(m_gov_reserve, :zero) >= :a");
-  treasury_debit.SetUpdateExpression("SET m_gov_reserve = if_not_exists(m_gov_reserve, :zero) - :a");
-  treasury_debit.AddExpressionAttributeValues(":zero", N(0));
+  treasury_debit.SetConditionExpression("attribute_exists(params_id) AND attribute_exists(m_gov_reserve) AND m_gov_reserve >= :a");
+  treasury_debit.SetUpdateExpression("ADD m_gov_reserve :neg");
   treasury_debit.AddExpressionAttributeValues(":a", N(amount));
+  treasury_debit.AddExpressionAttributeValues(":neg", N(-amount));
   auto treasury_debit_res = client_->UpdateItem(treasury_debit);
   if (!treasury_debit_res.IsSuccess()) {
     const auto exception_name = treasury_debit_res.GetError().GetExceptionName();
     if (out_error_code) {
       *out_error_code = (exception_name == "ConditionalCheckFailedException")
                             ? "insufficient_treasury"
-                            : "policy_rejected";
+                            : "persistence_write_failed";
     }
     return false;
   }
@@ -540,14 +492,19 @@ bool DynamoStorage::BorrowCellsAndTrackPeriod(const std::string& user_id,
   user_credit.AddExpressionAttributeValues(":a", N(amount));
   auto user_credit_res = client_->UpdateItem(user_credit);
   if (!user_credit_res.IsSuccess()) {
+    const auto exception_name = user_credit_res.GetError().GetExceptionName();
     Aws::DynamoDB::Model::UpdateItemRequest treasury_rollback;
     treasury_rollback.SetTableName(cfg_.economy_params_table.c_str());
     treasury_rollback.AddKey("params_id", S(treasury_params_id));
-    treasury_rollback.SetUpdateExpression("SET m_gov_reserve = if_not_exists(m_gov_reserve, :zero) + :a");
+    treasury_rollback.SetUpdateExpression("ADD m_gov_reserve :a");
     treasury_rollback.AddExpressionAttributeValues(":zero", N(0));
     treasury_rollback.AddExpressionAttributeValues(":a", N(amount));
     (void)client_->UpdateItem(treasury_rollback);
-    if (out_error_code) *out_error_code = "policy_rejected";
+    if (out_error_code) {
+      *out_error_code = (exception_name == "ConditionalCheckFailedException")
+                            ? "unauthorized"
+                            : "persistence_write_failed";
+    }
     return false;
   }
 

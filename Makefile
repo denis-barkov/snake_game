@@ -116,6 +116,9 @@ local-dynamo-seed:
 	DYNAMO_TABLE_USERS=$(LOCAL_DYNAMO_USERS) DYNAMO_TABLE_SNAKES=$(LOCAL_DYNAMO_SNAKES) DYNAMO_TABLE_WORLD_CHUNKS=$(LOCAL_DYNAMO_WORLD_CHUNKS) DYNAMO_TABLE_SNAKE_EVENTS=$(LOCAL_DYNAMO_SNAKE_EVENTS) DYNAMO_TABLE_SETTINGS=$(LOCAL_DYNAMO_SETTINGS) DYNAMO_TABLE_ECONOMY_PARAMS=$(LOCAL_DYNAMO_ECONOMY_PARAMS) DYNAMO_TABLE_ECONOMY_PERIOD=$(LOCAL_DYNAMO_ECONOMY_PERIOD) DYNAMO_TABLE_ECONOMY_PERIOD_USER=$(LOCAL_DYNAMO_ECONOMY_PERIOD_USER) \
 	python3 tools/seed_local.py
 
+smoke-economy-local:
+	python3 tools/smoke_economy_flow.py --base-url http://127.0.0.1:8080 --username user1 --password pass1
+
 local-run-native:
 	@echo "local-run-native is disabled (Docker build outputs Linux binary). Use: make local-run"
 	@exit 1

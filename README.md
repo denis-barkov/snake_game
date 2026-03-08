@@ -184,7 +184,7 @@ Gameplay code emits intents through `PersistenceCoordinator`; it does not write 
 
 - `GET /user/me` (auth) returns `balance_mi` (`liquid_assets` alias), deployed capital, and snake count.
 - `POST /user/borrow` (auth) with `{ "amount": <int> }` credits user liquid assets and debits treasury by the same amount.
-  - reject codes: `invalid_amount`, `insufficient_treasury`, `policy_rejected`, `unauthorized`, `internal_error`
+  - reject codes: `invalid_amount`, `insufficient_treasury`, `persistence_write_failed`, `unauthorized`, `user_not_found`, `internal_error`
 - `POST /snake/{snake_id}/attach` (auth) with `{ "amount": <int> }` moves cells from storage to selected snake.
 - `POST /economy/purchase` remains as an alias of `/user/borrow` for compatibility.
 
@@ -411,6 +411,34 @@ Expected:
 - `/health` -> `{"ok":true}`
 - `/economy/state` -> JSON with numeric `Y`, `K`, `L`, `alpha`, `A`, `M`, `P`, `pi`, `treasury_balance`, `period_ends_in_seconds`
   - includes validity flags: `price_index_valid`, `inflation_valid` (false in zero-output edge periods)
+
+### Minimal Economy/Player Smoke Test
+
+Run the critical auth/onboarding/borrow/attach flow locally:
+
+```bash
+make smoke-economy-local
+```
+
+Equivalent direct command:
+
+```bash
+python3 tools/smoke_economy_flow.py --base-url http://127.0.0.1:8080 --username user1 --password pass1
+```
+
+The script fails loudly if any of these fail:
+- login/onboarding
+- starter snake visibility
+- borrow `amount=1`
+- attach `amount=1` to starter snake
+
+### Prod Manual QA Checklist (Non-Destructive)
+
+1. Login with a fresh user and complete onboarding.
+2. Confirm `/me/snakes` returns at least one snake id.
+3. Borrow 1 cell and confirm user liquid assets increased by 1.
+4. Attach 1 cell to the selected snake and confirm snake length increased by 1.
+5. Confirm signed-in state hides Google sign-in and shows `Log out`.
 
 ## Watch camera / AOI-ready behavior
 
