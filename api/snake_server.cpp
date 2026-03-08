@@ -2506,6 +2506,11 @@ int main(int argc, char** argv) {
     int64_t balance_after = 0;
     const string user_id = std::to_string(*uid);
     const auto user_before = storage->GetUserById(user_id);
+    if (!user_before.has_value()) {
+      res.status = 404;
+      res.set_content("{\"error\":\"user_not_found\"}", "application/json");
+      return;
+    }
     const auto eco_before = economy.GetState();
     const string period_key = eco_before.period_id;
     if (eco_before.global.treasury_balance < *amount) {
@@ -2597,7 +2602,51 @@ int main(int argc, char** argv) {
       res.set_content("{\"error\":\"insufficient_cells\"}", "application/json");
       return;
     }
-    const auto snake = storage->GetSnakeById(snake_id_str);
+    auto snake = storage->GetSnakeById(snake_id_str);
+    // Backward-compatible fallback: if client sends a stale/default snake id
+    // (for example "/snake/1/attach"), try the user's starter snake id.
+    if (!snake.has_value() && !user->starter_snake_id.empty()) {
+      const auto starter = storage->GetSnakeById(user->starter_snake_id);
+      if (starter.has_value() && starter->owner_user_id == uid_str) {
+        try {
+          snake_id = std::stoi(starter->snake_id);
+          snake = starter;
+        } catch (...) {
+          // Ignore malformed legacy starter_snake_id and keep probing fallback paths.
+        }
+      }
+    }
+    if (!snake.has_value()) {
+      const auto user_snakes = game.list_user_snakes(*uid);
+      if (user_snakes.size() == 1) {
+        snake_id = user_snakes.front().id;
+        snake = storage->GetSnakeById(std::to_string(snake_id));
+      }
+    }
+    if (!snake.has_value()) {
+      // Runtime list can drift from DB after rebuild/restart windows; resolve via DB owner filter.
+      const auto all_snakes = storage->ListSnakes();
+      for (const auto& candidate : all_snakes) {
+        if (candidate.owner_user_id != uid_str) continue;
+        try {
+          snake_id = std::stoi(candidate.snake_id);
+          snake = candidate;
+          break;
+        } catch (...) {
+          continue;
+        }
+      }
+    }
+    if (!snake.has_value()) {
+      // Last-resort repair: create a starter snake for authenticated user that has none.
+      const auto created = game.create_snake_for_user(*uid, "#00ffaa");
+      if (created.has_value()) {
+        snake_id = *created;
+        game.flush_persistence_delta();
+        persistence_coordinator.FlushNow();
+        snake = storage->GetSnakeById(std::to_string(snake_id));
+      }
+    }
     if (!snake.has_value()) {
       res.status = 404;
       res.set_content("{\"error\":\"snake_not_found\"}", "application/json");
@@ -2608,10 +2657,11 @@ int main(int argc, char** argv) {
       res.set_content("{\"error\":\"forbidden\"}", "application/json");
       return;
     }
+    const std::string resolved_snake_id_str = std::to_string(snake_id);
 
     int64_t balance_after = 0;
     int64_t snake_len_after = 0;
-    if (!storage->AttachCellsToSnake(uid_str, snake_id_str, *amount, balance_after, snake_len_after)) {
+    if (!storage->AttachCellsToSnake(uid_str, resolved_snake_id_str, *amount, balance_after, snake_len_after)) {
       res.status = 409;
       res.set_content("{\"error\":\"attach_conflict\"}", "application/json");
       return;
@@ -2633,7 +2683,7 @@ int main(int argc, char** argv) {
     economy.InvalidateCache();
     const auto eco_after = economy.GetState();
     std::cerr << "[attach] success user_id=" << uid_str
-              << " snake_id=" << snake_id_str
+              << " snake_id=" << resolved_snake_id_str
               << " amount=" << *amount
               << " user_liquid_before=" << user->balance_mi
               << " user_liquid_after=" << balance_after

@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.8.4 - 2026-03-08
+- Hardened attach endpoint fallback resolution by checking DB-owned snakes and auto-creating a starter snake when none exists, preventing false `snake_not_found` failures after rebuilds.
+- Added explicit borrow pre-validation for missing authenticated user rows so borrow failures return `user_not_found` instead of generic policy errors.
+- Improved attach reliability when runtime snake cache lags behind persistence by resolving ownership from durable snake records first.
+
+## 2.8.3 - 2026-03-08
+- Fixed borrow flow reliability when `TransactWriteItems` is unavailable by adding a guarded fallback path with treasury rollback on partial failure.
+- Improved borrow rejection accuracy so treasury guard failures return `insufficient_treasury` instead of generic policy errors.
+- Hardened attach endpoint resolution to fall back to the authenticated user's starter/only snake when stale snake IDs are sent by clients.
+- Updated AWS IAM DynamoDB policy to include `dynamodb:TransactWriteItems` for clean rebuild compatibility.
+
 ## 2.8.2 - 2026-03-08
 - Fixed borrow transfer accounting to debit treasury and credit user liquidity atomically.
 - Added explicit borrow rejection reasons (`invalid_amount`, `insufficient_treasury`, `policy_rejected`, `internal_error`).

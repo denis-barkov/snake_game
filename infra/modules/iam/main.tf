@@ -20,7 +20,7 @@ data "aws_iam_policy_document" "ddb" {
     actions = [
       "dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:UpdateItem", "dynamodb:DeleteItem",
       "dynamodb:Query", "dynamodb:Scan", "dynamodb:BatchGetItem", "dynamodb:BatchWriteItem",
-      "dynamodb:DescribeTable"
+      "dynamodb:DescribeTable", "dynamodb:TransactWriteItems"
     ]
     resources = concat(
       var.dynamodb_table_arns,

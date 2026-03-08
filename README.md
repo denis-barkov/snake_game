@@ -286,6 +286,7 @@ python3 tools/seed_local.py
 ## AWS DynamoDB (EC2)
 
 Use instance role (no `DYNAMO_ENDPOINT`).
+Instance role must include `dynamodb:TransactWriteItems` in addition to standard DynamoDB read/write actions.
 
 ```bash
 export AWS_REGION=us-east-1
