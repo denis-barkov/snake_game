@@ -453,6 +453,19 @@ bool DynamoStorage::BorrowCellsAndTrackPeriod(const std::string& user_id,
   period_item.SetUpdate(period_update);
   tx.AddTransactItems(period_item);
 
+  // Borrowing is treasury-backed: user assets increase while treasury decreases.
+  Aws::DynamoDB::Model::Update treasury_update;
+  treasury_update.SetTableName(cfg_.economy_params_table.c_str());
+  treasury_update.AddKey("params_id", S("active"));
+  treasury_update.SetUpdateExpression("SET m_gov_reserve = if_not_exists(m_gov_reserve, :zero) - :a");
+  treasury_update.SetConditionExpression("attribute_exists(params_id) AND if_not_exists(m_gov_reserve, :zero) >= :a");
+  treasury_update.AddExpressionAttributeValues(":zero", N(0));
+  treasury_update.AddExpressionAttributeValues(":a", N(amount));
+
+  Aws::DynamoDB::Model::TransactWriteItem treasury_item;
+  treasury_item.SetUpdate(treasury_update);
+  tx.AddTransactItems(treasury_item);
+
   auto tx_res = client_->TransactWriteItems(tx);
   if (!tx_res.IsSuccess()) return false;
 

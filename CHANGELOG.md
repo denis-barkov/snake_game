@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.8.1 - 2026-03-08
+- Fixed borrow accounting so treasury is debited atomically when user liquid assets are credited.
+- Added treasury-liquidity rejection for borrow when reserve is insufficient.
+- Tightened labor counting to successful active snake advances only.
+- Raised auto-expansion target spatial ratio default from 2.6 to 3.2 for less crowded expansions.
+- Added global economy visibility for field size, free space, system reserve, spatial ratio, and stabilization status.
+- Improved client handling after expansion by forcing live mask/cache refresh on expansion events.
+
 ## 2.8.0 - 2026-03-08
 - Added an automatic spatial and monetary stabilization engine with derived reserve accounting.
 - Added scheduled fast spatial checks tied to configurable economic period duration.

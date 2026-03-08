@@ -145,6 +145,12 @@ static string json_number(double v) {
   return s;
 }
 
+static std::string stabilization_status_ui(const economy::StabilizationRuntimeState& st) {
+  if (st.liquidity_constraint_mode_active) return "Liquidity Tightening";
+  if (st.expansion_recent_checks_remaining > 0) return "Expanding";
+  return "Stable";
+}
+
 static string rand_token(size_t n = 32) {
   static const char* chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
   static thread_local mt19937 rng(static_cast<uint32_t>(random_device{}()));
@@ -747,8 +753,8 @@ class EconomyService {
     const int64_t playable_cells =
         has_world_snapshot ? std::max<int64_t>(0, world_snap.playable_cells) : economy_world_area(params, economy::EconomySnapshot{});
     const int64_t free_space_on_field = std::max<int64_t>(0, playable_cells - occupied_cells);
-    const auto derived_close =
-        stabilization_engine_.Derive(sum_mi + params.m_gov_reserve, params.k_land, capital.total_capital, free_space_on_field);
+    const auto derived_close = stabilization_engine_.Derive(
+        sum_mi + params.m_gov_reserve, params.k_land, capital.total_capital, playable_cells, free_space_on_field);
     const auto close_decision = stabilization_engine_.EvaluatePeriodClose(period_id, derived_close, sum_mi + params.m_gov_reserve);
     std::optional<storage::EconomyParams> stabilized_params;
     if (!close_decision.already_handled_for_period) {
@@ -936,7 +942,7 @@ class EconomyService {
     const int64_t occupied_cells = has_world_snapshot ? economy::StabilizationEngine::ComputeOccupiedSnakeCells(world_snap) : out.k_snakes;
     const int64_t playable_cells = has_world_snapshot ? std::max<int64_t>(0, world_snap.playable_cells) : economy_world_area(out.params, out.global);
     const int64_t free_space = std::max<int64_t>(0, playable_cells - occupied_cells);
-    out.stabilization = stabilization_engine_.Derive(out.global.m, out.params.k_land, out.k_snakes, free_space);
+    out.stabilization = stabilization_engine_.Derive(out.global.m, out.params.k_land, out.k_snakes, playable_cells, free_space);
     out.stabilization_runtime = stabilization_engine_.runtime_state();
     const auto now = std::chrono::steady_clock::now();
     if (next_fast_check_at_ > now) {
@@ -1882,6 +1888,7 @@ int main(int argc, char** argv) {
 
       if (now >= next_economy_send) {
         const auto eco = economy.GetState();
+        const std::string stabilization_status = stabilization_status_ui(eco.stabilization_runtime);
         ostringstream out;
         out << "{"
             << "\"type\":\"economy_world\","
@@ -1897,6 +1904,11 @@ int main(int argc, char** argv) {
             << "\"P\":" << json_number(eco.global.p) << ","
             << "\"pi\":" << json_number(eco.global.pi) << ","
             << "\"treasury_balance\":" << eco.global.treasury_balance << ","
+            << "\"field_size\":" << eco.stabilization.field_size << ","
+            << "\"free_space_on_field\":" << eco.stabilization.free_space_on_field << ","
+            << "\"system_white_space_reserve\":" << eco.stabilization.treasury_white_space << ","
+            << "\"spatial_ratio_r\":" << json_number(eco.stabilization.spatial_ratio_r) << ","
+            << "\"stabilization_status\":\"" << json_escape(stabilization_status) << "\","
             << "\"period_ends_in_seconds\":" << eco.period_ends_in_seconds << ","
             << "\"snapshot_status\":\"" << json_escape(eco.global.snapshot_status) << "\","
             << "\"A_world\":" << economy_world_area(eco.params, eco.global)
@@ -2108,6 +2120,10 @@ int main(int argc, char** argv) {
       << "\"M_white\":" << m_white << ","
       << "\"R\":" << json_number(s.stabilization.spatial_ratio_r) << ","
       << "\"LCR\":" << json_number(s.stabilization.lcr) << ","
+      << "\"field_size\":" << s.stabilization.field_size << ","
+      << "\"free_space_on_field\":" << s.stabilization.free_space_on_field << ","
+      << "\"system_white_space_reserve\":" << s.stabilization.treasury_white_space << ","
+      << "\"stabilization_status\":\"" << json_escape(stabilization_status_ui(s.stabilization_runtime)) << "\","
       << "\"treasury_white_space\":" << s.stabilization.treasury_white_space << ","
       << "\"treasury_balance\":" << s.global.treasury_balance << ","
       << "\"alpha_bootstrap\":" << (s.global.alpha_bootstrap ? "true" : "false") << ","
@@ -2180,12 +2196,13 @@ int main(int argc, char** argv) {
       << "\"flush_interval_sec\":" << dbg.flush_interval_sec << ","
       << "\"seconds_since_last_flush\":" << dbg.seconds_since_last_flush << ","
       << "\"stabilization\":{"
+      << "\"field_size\":" << eco.stabilization.field_size << ","
+      << "\"free_space_on_field\":" << eco.stabilization.free_space_on_field << ","
       << "\"spatial_ratio_r\":" << json_number(eco.stabilization.spatial_ratio_r) << ","
       << "\"lcr\":" << json_number(eco.stabilization.lcr) << ","
       << "\"treasury_white_space\":" << eco.stabilization.treasury_white_space << ","
       << "\"failures_this_period\":" << eco.stabilization_runtime.spatial_expansion_failures_current_period << ","
-      << "\"mode\":\""
-      << (eco.stabilization_runtime.liquidity_constraint_mode_active ? "liquidity_constraint" : "normal") << "\","
+      << "\"mode\":\"" << json_escape(stabilization_status_ui(eco.stabilization_runtime)) << "\","
       << "\"last_action_period_id\":\"" << json_escape(eco.stabilization_runtime.last_stabilization_action_period_id) << "\","
       << "\"last_action_type\":\"" << json_escape(eco.stabilization_runtime.last_stabilization_action_type) << "\","
       << "\"next_fast_check_in_seconds\":" << eco.next_fast_check_in_seconds
@@ -2205,7 +2222,7 @@ int main(int argc, char** argv) {
     const auto s = economy.GetState();
     const auto p = storage->GetEconomyPeriod(s.period_id).value_or(storage::EconomyPeriod{});
     const int64_t a_world = economy_world_area(s.params, s.global);
-    const std::string mode = s.stabilization_runtime.liquidity_constraint_mode_active ? "liquidity_constraint" : "normal";
+    const std::string stabilization_status = stabilization_status_ui(s.stabilization_runtime);
     std::ostringstream o;
     o << "{"
       << "\"period_id\":\"" << json_escape(s.period_id) << "\","
@@ -2222,11 +2239,15 @@ int main(int argc, char** argv) {
       << "\"pi\":" << json_number(s.global.pi) << ","
       << "\"A_world\":" << a_world << ","
       << "\"M_white\":" << std::max<int64_t>(0, a_world - s.global.k) << ","
+      << "\"field_size\":" << s.stabilization.field_size << ","
+      << "\"free_space_on_field\":" << s.stabilization.free_space_on_field << ","
+      << "\"system_white_space_reserve\":" << s.stabilization.treasury_white_space << ","
       << "\"spatial_ratio_r\":" << json_number(s.stabilization.spatial_ratio_r) << ","
       << "\"lcr\":" << json_number(s.stabilization.lcr) << ","
       << "\"treasury_white_space\":" << s.stabilization.treasury_white_space << ","
       << "\"failures_this_period\":" << s.stabilization_runtime.spatial_expansion_failures_current_period << ","
-      << "\"stabilization_mode\":\"" << json_escape(mode) << "\","
+      << "\"stabilization_mode\":\"" << json_escape(stabilization_status) << "\","
+      << "\"stabilization_status\":\"" << json_escape(stabilization_status) << "\","
       << "\"last_stabilization_action_period_id\":\""
       << json_escape(s.stabilization_runtime.last_stabilization_action_period_id) << "\","
       << "\"last_stabilization_action_type\":\""
@@ -2447,10 +2468,16 @@ int main(int argc, char** argv) {
 
     int64_t balance_after = 0;
     const string user_id = std::to_string(*uid);
-    const string period_key = economy.GetState().period_id;
+    const auto eco_before = economy.GetState();
+    const string period_key = eco_before.period_id;
+    if (eco_before.global.treasury_balance < *amount) {
+      res.status = 409;
+      res.set_content("{\"error\":\"insufficient_treasury_liquidity\"}", "application/json");
+      return;
+    }
     if (!storage->BorrowCellsAndTrackPeriod(user_id, *amount, period_key, balance_after)) {
-      res.status = 500;
-      res.set_content("{\"error\":\"borrow_failed\"}", "application/json");
+      res.status = 409;
+      res.set_content("{\"error\":\"borrow_rejected\"}", "application/json");
       return;
     }
 

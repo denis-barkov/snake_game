@@ -11,7 +11,7 @@ namespace economy {
 struct StabilizationConfig {
   bool auto_expansion_enabled = true;
   double auto_expansion_trigger_ratio = 2.0;
-  double target_spatial_ratio = 2.6;
+  double target_spatial_ratio = 3.2;
   int auto_expansion_checks_per_period = 48;
   double target_lcr = 1.2;
   double lcr_stress_threshold = 0.7;
@@ -23,6 +23,7 @@ struct StabilizationDerived {
   int64_t money_supply = 0;
   int64_t k_lend = 1;
   int64_t deployed_capital = 0;
+  int64_t field_size = 0;
   int64_t free_space_on_field = 0;
   int64_t total_theoretical_space = 0;
   int64_t treasury_white_space = 0;
@@ -36,6 +37,7 @@ struct StabilizationRuntimeState {
   bool liquidity_constraint_mode_active = false;
   std::string last_stabilization_action_period_id;
   std::string last_stabilization_action_type;
+  int expansion_recent_checks_remaining = 0;
 };
 
 struct FastCheckDecision {
@@ -63,6 +65,7 @@ class StabilizationEngine {
   StabilizationDerived Derive(int64_t money_supply,
                               int64_t k_lend,
                               int64_t deployed_capital,
+                              int64_t field_size,
                               int64_t free_space_on_field) const;
 
   FastCheckDecision EvaluateFastSpatialCheck(const StabilizationDerived& d);
@@ -73,6 +76,7 @@ class StabilizationEngine {
 
   void OnSpatialExpansionApplied();
   void ResetForNewPeriod();
+  std::string UiStatus() const;
 
   const StabilizationRuntimeState& runtime_state() const { return state_; }
 

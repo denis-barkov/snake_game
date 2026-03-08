@@ -220,6 +220,10 @@ void World::Tick() {
     if (!s.alive || s.body.empty()) continue;
     auto it = before_heads.find(s.id);
     if (it == before_heads.end()) continue;
+    auto it_state = before_dir_pause.find(s.id);
+    if (it_state == before_dir_pause.end()) continue;
+    const bool active_before = !it_state->second.second && it_state->second.first != Dir::Stop;
+    if (!active_before) continue;
     if (!(it->second == s.body.front())) {
       pending_movement_ticks_ += 1;
       pending_movement_ticks_by_user_[s.user_id] += 1;

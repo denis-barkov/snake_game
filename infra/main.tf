@@ -134,7 +134,7 @@ module "compute" {
     ECONOMY_PERIOD_HISTORY_DAYS = "90"
     AUTO_EXPANSION_ENABLED     = "true"
     AUTO_EXPANSION_TRIGGER_RATIO = "2.0"
-    TARGET_SPATIAL_RATIO       = "2.6"
+    TARGET_SPATIAL_RATIO       = "3.2"
     AUTO_EXPANSION_CHECKS_PER_PERIOD = "48"
     TARGET_LCR                 = "1.2"
     LCR_STRESS_THRESHOLD       = "0.7"

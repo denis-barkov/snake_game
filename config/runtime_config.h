@@ -35,7 +35,7 @@ struct RuntimeConfig {
   int economy_period_history_days = 90;
   bool auto_expansion_enabled = true;
   double auto_expansion_trigger_ratio = 2.0;
-  double target_spatial_ratio = 2.6;
+  double target_spatial_ratio = 3.2;
   int auto_expansion_checks_per_period = 48;
   double target_lcr = 1.2;
   double lcr_stress_threshold = 0.7;

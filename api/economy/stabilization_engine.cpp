@@ -36,11 +36,13 @@ int64_t StabilizationEngine::ComputeOccupiedSnakeCells(const world::WorldSnapsho
 StabilizationDerived StabilizationEngine::Derive(int64_t money_supply,
                                                  int64_t k_lend,
                                                  int64_t deployed_capital,
+                                                 int64_t field_size,
                                                  int64_t free_space_on_field) const {
   StabilizationDerived out;
   out.money_supply = std::max<int64_t>(0, money_supply);
   out.k_lend = std::max<int64_t>(1, k_lend);
   out.deployed_capital = std::max<int64_t>(0, deployed_capital);
+  out.field_size = std::max<int64_t>(0, field_size);
   out.free_space_on_field = std::max<int64_t>(0, free_space_on_field);
   out.total_theoretical_space = out.k_lend * out.money_supply;
   out.treasury_white_space =
@@ -52,6 +54,9 @@ StabilizationDerived StabilizationEngine::Derive(int64_t money_supply,
 
 FastCheckDecision StabilizationEngine::EvaluateFastSpatialCheck(const StabilizationDerived& d) {
   FastCheckDecision out;
+  if (state_.expansion_recent_checks_remaining > 0) {
+    state_.expansion_recent_checks_remaining -= 1;
+  }
   if (!cfg_.auto_expansion_enabled) {
     state_.liquidity_constraint_mode_active = false;
     return out;
@@ -125,11 +130,19 @@ PeriodCloseDecision StabilizationEngine::EvaluatePeriodClose(const std::string& 
 void StabilizationEngine::OnSpatialExpansionApplied() {
   state_.liquidity_constraint_mode_active = false;
   state_.last_stabilization_action_type = "spatial_expansion";
+  state_.expansion_recent_checks_remaining = 2;
 }
 
 void StabilizationEngine::ResetForNewPeriod() {
   state_.spatial_expansion_failures_current_period = 0;
   state_.liquidity_constraint_mode_active = false;
+  state_.expansion_recent_checks_remaining = 0;
+}
+
+std::string StabilizationEngine::UiStatus() const {
+  if (state_.liquidity_constraint_mode_active) return "Liquidity Tightening";
+  if (state_.expansion_recent_checks_remaining > 0) return "Expanding";
+  return "Stable";
 }
 
 }  // namespace economy

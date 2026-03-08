@@ -51,7 +51,7 @@ Simulation internals are structured in `api/world`:
 - `ECONOMY_PERIOD_HISTORY_DAYS` (default `90`, retention policy knob)
 - `AUTO_EXPANSION_ENABLED` (default `true`)
 - `AUTO_EXPANSION_TRIGGER_RATIO` (default `2.0`)
-- `TARGET_SPATIAL_RATIO` (default `2.6`)
+- `TARGET_SPATIAL_RATIO` (default `3.2`)
 - `AUTO_EXPANSION_CHECKS_PER_PERIOD` (default `48`)
 - `TARGET_LCR` (default `1.2`)
 - `LCR_STRESS_THRESHOLD` (default `0.7`)
@@ -183,7 +183,7 @@ Gameplay code emits intents through `PersistenceCoordinator`; it does not write 
 ### Economy/game write paths (Step 10)
 
 - `GET /user/me` (auth) returns `balance_mi` (`liquid_assets` alias), deployed capital, and snake count.
-- `POST /user/borrow` (auth) with `{ "amount": <int> }` credits storage and economy period buys.
+- `POST /user/borrow` (auth) with `{ "amount": <int> }` credits user liquid assets and debits treasury by the same amount.
 - `POST /snake/{snake_id}/attach` (auth) with `{ "amount": <int> }` moves cells from storage to selected snake.
 - `POST /economy/purchase` remains as an alias of `/user/borrow` for compatibility.
 
@@ -191,6 +191,7 @@ UI terminology:
 - User-facing label `Storage/Balance` is shown as `Liquid Assets`.
 - Snake cards show `Deployed Capital: <cells>` as the per-snake capital proxy.
 - Economy panels use `Extracted Output (Y)` naming while gameplay still uses food mechanics.
+- Food is treated as extracted output: harvesting mints new value into the economy and does not debit treasury.
 
 Gameplay update:
 - Food events credit owner storage (`FOOD_REWARD_CELLS`) instead of auto-growing snake length.
@@ -458,6 +459,8 @@ Expected:
   - `check_interval_seconds = ECONOMIC_PERIOD_DURATION_SECONDS / AUTO_EXPANSION_CHECKS_PER_PERIOD`
 - `snakecli economy status` now includes stabilization metrics:
   - `R`, `LCR`, `treasury_white_space`, `failures_this_period`, current mode, next fast-check ETA, next period-close ETA
+- Global Economy panel includes:
+  - `Field Size`, `Free Space on Field`, `System White Space Reserve`, `Spatial Ratio (R)`, `Stabilization Status`
 - Admin status endpoint (`GET /admin/economy/status`) exposes the same stabilization fields for automation tooling.
 
 ## Changelog CI rules
