@@ -49,6 +49,13 @@ Simulation internals are structured in `api/world`:
 - `ECONOMIC_PERIOD_MODE` (`fixed_seconds` local, `prod_midnight_nyc` prod)
 - `ECONOMY_FLUSH_SECONDS` (default `10`, buffered raw economy flush interval)
 - `ECONOMY_PERIOD_HISTORY_DAYS` (default `90`, retention policy knob)
+- `AUTO_EXPANSION_ENABLED` (default `true`)
+- `AUTO_EXPANSION_TRIGGER_RATIO` (default `2.0`)
+- `TARGET_SPATIAL_RATIO` (default `2.6`)
+- `AUTO_EXPANSION_CHECKS_PER_PERIOD` (default `48`)
+- `TARGET_LCR` (default `1.2`)
+- `LCR_STRESS_THRESHOLD` (default `0.7`)
+- `MAX_AUTO_MONEY_GROWTH` (default `0.08`)
 - `ECONOMY_CACHE_MS` (default `2000`, min `500`, max `10000`) for `/economy/state` read cache
 - `PERSISTENCE_PROFILE` (`minimal|standard|payments_safe|strict`, default `minimal`)
 - `PERSISTENCE_SQLITE_PATH` (default `/var/lib/snake/persistence.db`)
@@ -404,7 +411,7 @@ Expected:
 ## Watch camera / AOI-ready behavior
 
 - Runtime stream uses a single WebSocket endpoint: `GET /ws`.
-- Frontend sends runtime messages over WS (`auth`, `input`, `camera_set`) and receives `world_snapshot`, `economy_world`, `user_state`.
+- Frontend sends runtime messages over WS (`auth`, `input`, `camera_set`) and receives `world_snapshot`, `economy_world`, `user_state`, `system_message`.
 - Frontend renderer is WebGL canvas-based (no DOM cell grid), with map-style zoom.
 - Runtime endpoints:
   - local: `ws://127.0.0.1:8080/ws`
@@ -444,6 +451,14 @@ Expected:
   - `WORLD_MASK_SEED=<int>`
   - `WORLD_MASK_STYLE=jagged`
   - playable cells stay tied to economy target area (`A_world`), with non-playable cells pushed to deterministic torn edges.
+
+## Stabilization Automation
+
+- Fast spatial check cadence is derived from period length:
+  - `check_interval_seconds = ECONOMIC_PERIOD_DURATION_SECONDS / AUTO_EXPANSION_CHECKS_PER_PERIOD`
+- `snakecli economy status` now includes stabilization metrics:
+  - `R`, `LCR`, `treasury_white_space`, `failures_this_period`, current mode, next fast-check ETA, next period-close ETA
+- Admin status endpoint (`GET /admin/economy/status`) exposes the same stabilization fields for automation tooling.
 
 ## Changelog CI rules
 

@@ -33,6 +33,13 @@ struct RuntimeConfig {
   std::string econ_period_align = "rolling";
   int economy_flush_seconds = 10;
   int economy_period_history_days = 90;
+  bool auto_expansion_enabled = true;
+  double auto_expansion_trigger_ratio = 2.0;
+  double target_spatial_ratio = 2.6;
+  int auto_expansion_checks_per_period = 48;
+  double target_lcr = 1.2;
+  double lcr_stress_threshold = 0.7;
+  double max_auto_money_growth = 0.08;
   std::string persistence_profile = "minimal";
   std::string persistence_sqlite_path = "/var/lib/snake/persistence.db";
   int persistence_sqlite_max_mb = 256;

@@ -1,6 +1,17 @@
 {
-  "current_version": "2.7.0",
+  "current_version": "2.8.0",
   "entries": [
+    {
+      "version": "2.8.0",
+      "release_date": "2026-03-08",
+      "notes": [
+        "Added an automatic spatial and monetary stabilization engine with derived reserve accounting.",
+        "Added scheduled fast spatial checks tied to configurable economic period duration.",
+        "Added liquidity-constraint mode transitions with deduplicated global system notifications.",
+        "Added period-close monetary stabilization with capped treasury-only automatic expansion.",
+        "Added stabilization telemetry to admin economy status and `snakecli economy status`."
+      ]
+    },
     {
       "version": "2.7.0",
       "release_date": "2026-03-07",

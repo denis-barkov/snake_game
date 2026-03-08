@@ -1052,6 +1052,7 @@
   const loginTransitionTipEl = document.getElementById("login-transition-tip");
   const ecoStatusEl = document.getElementById("ecoStatus");
   const authStatus = document.getElementById("authStatus");
+  let systemStatusResetTimer = null;
   const mySnakesEl = document.getElementById("mySnakes");
   const legacyLoginFieldsEl = document.getElementById("legacy-login-fields");
   const googleLoginRootEl = document.getElementById("google-login-root");
@@ -2125,6 +2126,18 @@
       showPeriodSummaryIfNeeded(periodId);
       if (latestUserMetrics) updateMicroEconomyFromMetrics(latestUserMetrics);
       ecoStatusEl.textContent = "Economy: live";
+      return;
+    }
+
+    if (msg.type === "system_message") {
+      const text = typeof msg.message === "string" ? msg.message : "";
+      if (!text) return;
+      const compact = text.replace(/\s+/g, " ").trim();
+      ecoStatusEl.textContent = compact || "Economy: live";
+      if (systemStatusResetTimer) clearTimeout(systemStatusResetTimer);
+      systemStatusResetTimer = setTimeout(() => {
+        ecoStatusEl.textContent = "Economy: live";
+      }, 12000);
       return;
     }
 

@@ -16,6 +16,7 @@
 #include <iostream>
 #include <memory>
 #include <mutex>
+#include <limits>
 #include <optional>
 #include <random>
 #include <regex>
@@ -37,6 +38,7 @@
 #include <aws/core/utils/StringUtils.h>
 
 #include "economy/economy_v1.h"
+#include "economy/stabilization_engine.h"
 #include "economy_engine/compute.h"
 #include "httplib.h"
 #include "persistence/coordinator/persistence_coordinator.h"
@@ -189,6 +191,7 @@ struct ClientSession {
   optional<int> watched_snake_id;
   bool is_watcher = true;
   uint64_t last_camera_update_ms = 0;
+  uint64_t last_system_message_id = 0;
   uint64_t updated_at_ms = 0;
 };
 
@@ -199,6 +202,44 @@ struct PublicViewState {
   int chunk_cy = 0;
   uint64_t last_switch_tick = 0;
   bool initialized = false;
+};
+
+struct SystemMessage {
+  uint64_t id = 0;
+  std::string level = "info";
+  std::string text;
+  int64_t created_at = 0;
+};
+
+class SystemMessageBus {
+ public:
+  uint64_t Publish(const std::string& level, const std::string& text) {
+    std::lock_guard<std::mutex> lock(mu_);
+    SystemMessage msg;
+    msg.id = ++next_id_;
+    msg.level = level.empty() ? "info" : level;
+    msg.text = text;
+    msg.created_at = static_cast<int64_t>(time(nullptr));
+    messages_.push_back(std::move(msg));
+    if (messages_.size() > 64) {
+      messages_.erase(messages_.begin(), messages_.begin() + static_cast<long>(messages_.size() - 64));
+    }
+    return next_id_;
+  }
+
+  std::vector<SystemMessage> GetSince(uint64_t last_seen_id) const {
+    std::lock_guard<std::mutex> lock(mu_);
+    std::vector<SystemMessage> out;
+    for (const auto& m : messages_) {
+      if (m.id > last_seen_id) out.push_back(m);
+    }
+    return out;
+  }
+
+ private:
+  mutable std::mutex mu_;
+  uint64_t next_id_ = 0;
+  std::vector<SystemMessage> messages_;
 };
 
 class GameService {
@@ -289,6 +330,21 @@ class GameService {
 
   void resize_world(int width, int height) {
     world_.ResizeWorld(width, height);
+  }
+
+  // Expands playable space via the existing resize/mask pipeline at a safe call site.
+  int64_t expand_playable_cells(int64_t cells_to_add, double aspect_ratio) {
+    if (cells_to_add <= 0) return 0;
+    const auto before = world_.Snapshot();
+    const int64_t target_playable = std::max<int64_t>(0, before.playable_cells) + cells_to_add;
+    const int64_t current_area = static_cast<int64_t>(before.w) * static_cast<int64_t>(before.h);
+    if (target_playable > current_area) {
+      const auto dims = dims_from_area(target_playable, aspect_ratio);
+      world_.ResizeWorld(dims.first, dims.second);
+    }
+    world_.SetPlayableCellTarget(target_playable);
+    const auto after = world_.Snapshot();
+    return std::max<int64_t>(0, after.playable_cells - before.playable_cells);
   }
 
   // Writes only event-driven deltas. No per-tick checkpoint persistence.
@@ -414,10 +470,29 @@ class GameService {
 
 class EconomyService {
  public:
+  struct StabilizationActions {
+    std::function<int64_t(int64_t)> expand_playable_cells;
+    std::function<void(const std::string&, const std::string&, const std::string&)> emit_system_message;
+    std::function<world::WorldSnapshot()> current_world_snapshot;
+  };
+
   explicit EconomyService(storage::IStorage& storage, const RuntimeConfig& runtime_cfg)
       : storage_(storage),
         period_cfg_{std::max(60, runtime_cfg.econ_period_seconds), runtime_cfg.econ_period_align},
         flush_interval_sec_(std::max(2, runtime_cfg.economy_flush_seconds)),
+        stabilization_cfg_{runtime_cfg.auto_expansion_enabled,
+                           runtime_cfg.auto_expansion_trigger_ratio,
+                           runtime_cfg.target_spatial_ratio,
+                           runtime_cfg.auto_expansion_checks_per_period,
+                           runtime_cfg.target_lcr,
+                           runtime_cfg.lcr_stress_threshold,
+                           runtime_cfg.max_auto_money_growth},
+        stabilization_engine_(stabilization_cfg_),
+        fast_check_interval_ms_(std::max<int64_t>(
+            1000,
+            static_cast<int64_t>(std::llround(
+                (1000.0 * static_cast<double>(std::max(60, runtime_cfg.econ_period_seconds))) /
+                static_cast<double>(std::max(1, runtime_cfg.auto_expansion_checks_per_period)))))),
         cache_ttl_ms_([] {
           const char* env = getenv("ECONOMY_CACHE_MS");
           if (!env) return 2000;
@@ -430,6 +505,7 @@ class EconomyService {
       tzset();
 #endif
     }
+    next_fast_check_at_ = std::chrono::steady_clock::now() + std::chrono::milliseconds(fast_check_interval_ms_);
   }
 
   struct Snapshot {
@@ -439,7 +515,15 @@ class EconomyService {
     int64_t k_snakes = 0;
     std::string period_id;
     int64_t period_ends_in_seconds = 0;
+    economy::StabilizationDerived stabilization;
+    economy::StabilizationRuntimeState stabilization_runtime;
+    int64_t next_fast_check_in_seconds = 0;
   };
+
+  void SetStabilizationActions(StabilizationActions actions) {
+    lock_guard<mutex> lock(mu_);
+    stabilization_actions_ = std::move(actions);
+  }
 
   void OnActivity(const EconomyActivityDelta& d) {
     if (d.empty()) {
@@ -461,6 +545,58 @@ class EconomyService {
     }
     MaybeFlushPendingLocked(false);
     cache_valid_ = false;
+  }
+
+  void TickStabilization() {
+    using clock = std::chrono::steady_clock;
+    const auto now = clock::now();
+    lock_guard<mutex> lock(mu_);
+    EnsurePeriodLocked();
+    if (now < next_fast_check_at_) return;
+    MaybeFlushPendingLocked(false);
+    next_fast_check_at_ = now + std::chrono::milliseconds(fast_check_interval_ms_);
+    if (!stabilization_cfg_.auto_expansion_enabled) return;
+
+    auto state = ComputeFresh(std::nullopt);
+    const auto decision = stabilization_engine_.EvaluateFastSpatialCheck(state.stabilization);
+    if (!decision.triggered) return;
+
+    if (decision.should_expand && decision.required_expansion_cells > 0) {
+      if (stabilization_actions_.expand_playable_cells) {
+        const int64_t expanded_cells = stabilization_actions_.expand_playable_cells(decision.required_expansion_cells);
+        if (expanded_cells > 0) {
+          stabilization_engine_.OnSpatialExpansionApplied();
+          cache_valid_ = false;
+          if (stabilization_actions_.emit_system_message) {
+            stabilization_actions_.emit_system_message(
+                "spatial_expansion",
+                "info",
+                u8"🌍 World Expansion Event\nSpatial liquidity dropped below safe levels.\nThe Central Authority has expanded the world boundaries.");
+          }
+          storage::SnakeEvent event;
+          event.snake_id = "system";
+          event.event_id = std::to_string(static_cast<int64_t>(time(nullptr))) + "#spatial_expansion";
+          event.event_type = "SYSTEM_SPATIAL_EXPANSION";
+          event.delta_length = static_cast<int>(std::min<int64_t>(expanded_cells, static_cast<int64_t>(std::numeric_limits<int>::max())));
+          event.created_at = static_cast<int64_t>(time(nullptr));
+          (void)storage_.AppendSnakeEvent(event);
+        }
+      }
+      return;
+    }
+
+    if (decision.entered_liquidity_constraint_mode && stabilization_actions_.emit_system_message) {
+      stabilization_actions_.emit_system_message(
+          "liquidity_constraint",
+          "warning",
+          u8"⚠ Economic Liquidity Tightening\nThe Central Authority has exhausted its spatial reserves.\nExpansion is temporarily paused until the next monetary cycle.");
+      storage::SnakeEvent event;
+      event.snake_id = "system";
+      event.event_id = std::to_string(static_cast<int64_t>(time(nullptr))) + "#liquidity_constraint";
+      event.event_type = "SYSTEM_LIQUIDITY_CONSTRAINT";
+      event.created_at = static_cast<int64_t>(time(nullptr));
+      (void)storage_.AppendSnakeEvent(event);
+    }
   }
 
   Snapshot GetState(std::optional<int> user_id = std::nullopt) {
@@ -553,6 +689,8 @@ class EconomyService {
     pending_user_harvested_.clear();
     pending_user_real_output_.clear();
     pending_user_movement_.clear();
+    stabilization_engine_.ResetForNewPeriod();
+    next_fast_check_at_ = std::chrono::steady_clock::now() + std::chrono::milliseconds(fast_check_interval_ms_);
   }
 
   void MaybeFlushPendingLocked(bool force) {
@@ -598,14 +736,68 @@ class EconomyService {
     int64_t sum_mi = 0;
     for (const auto& u : users) sum_mi += u.balance_mi;
     const auto capital = economy_engine::AggregateProductiveCapital(snakes);
+    world::WorldSnapshot world_snap;
+    bool has_world_snapshot = false;
+    if (stabilization_actions_.current_world_snapshot) {
+      world_snap = stabilization_actions_.current_world_snapshot();
+      has_world_snapshot = true;
+    }
+    const int64_t occupied_cells =
+        has_world_snapshot ? economy::StabilizationEngine::ComputeOccupiedSnakeCells(world_snap) : capital.total_capital;
+    const int64_t playable_cells =
+        has_world_snapshot ? std::max<int64_t>(0, world_snap.playable_cells) : economy_world_area(params, economy::EconomySnapshot{});
+    const int64_t free_space_on_field = std::max<int64_t>(0, playable_cells - occupied_cells);
+    const auto derived_close =
+        stabilization_engine_.Derive(sum_mi + params.m_gov_reserve, params.k_land, capital.total_capital, free_space_on_field);
+    const auto close_decision = stabilization_engine_.EvaluatePeriodClose(period_id, derived_close, sum_mi + params.m_gov_reserve);
+    std::optional<storage::EconomyParams> stabilized_params;
+    if (!close_decision.already_handled_for_period) {
+      if (close_decision.should_expand_money && close_decision.actual_money_expansion > 0) {
+        stabilized_params = params;
+        stabilized_params->m_gov_reserve += close_decision.actual_money_expansion;
+        stabilized_params->updated_at = static_cast<int64_t>(time(nullptr));
+        stabilized_params->updated_by = "stabilization_engine";
+        (void)storage_.PutEconomyParamsActiveAndVersioned(*stabilized_params, stabilized_params->updated_by);
+        if (stabilization_actions_.emit_system_message) {
+          stabilization_actions_.emit_system_message(
+              "monetary_expansion",
+              "info",
+              u8"💰 Monetary Adjustment\nReserve coverage fell below stability threshold.\nThe monetary base has been expanded to restore liquidity.");
+        }
+        storage::SnakeEvent event;
+        event.snake_id = "system";
+        event.event_id = std::to_string(static_cast<int64_t>(time(nullptr))) + "#monetary_expansion";
+        event.event_type = "SYSTEM_MONETARY_EXPANSION";
+        event.delta_length = static_cast<int>(
+            std::min<int64_t>(close_decision.actual_money_expansion, static_cast<int64_t>(std::numeric_limits<int>::max())));
+        event.created_at = static_cast<int64_t>(time(nullptr));
+        (void)storage_.AppendSnakeEvent(event);
+      } else if (close_decision.should_emit_no_adjustment) {
+        if (stabilization_actions_.emit_system_message) {
+          stabilization_actions_.emit_system_message(
+              "monetary_stable",
+              "info",
+              u8"🏛 Monetary Base Stable\nReserve levels remain sufficient. No adjustment required.");
+        }
+        storage::SnakeEvent event;
+        event.snake_id = "system";
+        event.event_id = std::to_string(static_cast<int64_t>(time(nullptr))) + "#monetary_stable";
+        event.event_type = "SYSTEM_MONETARY_STABLE";
+        event.created_at = static_cast<int64_t>(time(nullptr));
+        (void)storage_.AppendSnakeEvent(event);
+      }
+    }
+    const auto active_params_after_stabilization =
+        stabilized_params.has_value() ? *stabilized_params : params;
 
     economy::EconomyPeriodRaw raw;
     raw.harvested_food = period.harvested_food;
     raw.real_output = period.real_output > 0 ? period.real_output : period.harvested_food;
     raw.movement_ticks = period.movement_ticks;
-    raw.deployed_cells = capital.total_capital + params.delta_k_obs;
-    raw.alpha_bootstrap_default = params.alpha_bootstrap_default;
-    auto global = economy_engine::ComputeGlobal(raw, last_closed_global_, sum_mi, params.m_gov_reserve);
+    raw.deployed_cells = capital.total_capital + active_params_after_stabilization.delta_k_obs;
+    raw.alpha_bootstrap_default = active_params_after_stabilization.alpha_bootstrap_default;
+    auto global =
+        economy_engine::ComputeGlobal(raw, last_closed_global_, sum_mi, active_params_after_stabilization.m_gov_reserve);
     global.period_id = period_id;
     global.snapshot_status = "cached";
 
@@ -631,7 +823,7 @@ class EconomyService {
     period.computed_pi = static_cast<int64_t>(period.inflation_rate * 1000000.0);
     period.computed_world_area = global.m;  // legacy unused by v1 core
     period.computed_white = 0;
-    const int64_t expected_m = sum_mi + params.m_gov_reserve;
+    const int64_t expected_m = sum_mi + active_params_after_stabilization.m_gov_reserve;
     if (period.money_supply != expected_m) {
       static int64_t last_warn_ts = 0;
       const int64_t now_ts = static_cast<int64_t>(time(nullptr));
@@ -662,7 +854,7 @@ class EconomyService {
       } else {
         user_raw.deployed_cells = 0;
       }
-      user_raw.alpha_bootstrap_default = params.alpha_bootstrap_default;
+      user_raw.alpha_bootstrap_default = active_params_after_stabilization.alpha_bootstrap_default;
       std::optional<economy::EconomyUserSnapshot> prev_user;
       auto it_prev = last_closed_users_.find(u.user_id);
       if (it_prev != last_closed_users_.end()) prev_user = it_prev->second;
@@ -735,12 +927,35 @@ class EconomyService {
         out.user = economy_engine::ComputeUser(uraw, prev_u, user->balance_mi, out.global.y, current_period_id_, uid);
       }
     }
+    world::WorldSnapshot world_snap;
+    bool has_world_snapshot = false;
+    if (stabilization_actions_.current_world_snapshot) {
+      world_snap = stabilization_actions_.current_world_snapshot();
+      has_world_snapshot = true;
+    }
+    const int64_t occupied_cells = has_world_snapshot ? economy::StabilizationEngine::ComputeOccupiedSnakeCells(world_snap) : out.k_snakes;
+    const int64_t playable_cells = has_world_snapshot ? std::max<int64_t>(0, world_snap.playable_cells) : economy_world_area(out.params, out.global);
+    const int64_t free_space = std::max<int64_t>(0, playable_cells - occupied_cells);
+    out.stabilization = stabilization_engine_.Derive(out.global.m, out.params.k_land, out.k_snakes, free_space);
+    out.stabilization_runtime = stabilization_engine_.runtime_state();
+    const auto now = std::chrono::steady_clock::now();
+    if (next_fast_check_at_ > now) {
+      out.next_fast_check_in_seconds = static_cast<int64_t>(
+          std::chrono::duration_cast<std::chrono::seconds>(next_fast_check_at_ - now).count());
+    } else {
+      out.next_fast_check_in_seconds = 0;
+    }
     return out;
   }
 
   storage::IStorage& storage_;
   economy::PeriodConfig period_cfg_;
   int flush_interval_sec_ = 10;
+  economy::StabilizationConfig stabilization_cfg_{};
+  economy::StabilizationEngine stabilization_engine_;
+  int64_t fast_check_interval_ms_ = 1000;
+  std::chrono::steady_clock::time_point next_fast_check_at_{};
+  StabilizationActions stabilization_actions_{};
   int cache_ttl_ms_ = 2000;
   mutex mu_;
   bool cache_valid_ = false;
@@ -1110,6 +1325,13 @@ int main(int argc, char** argv) {
        << ", ECON_PERIOD_ALIGN=" << runtime_cfg.econ_period_align
        << ", ECONOMY_FLUSH_SECONDS=" << runtime_cfg.economy_flush_seconds
        << ", ECONOMY_PERIOD_HISTORY_DAYS=" << runtime_cfg.economy_period_history_days
+       << ", AUTO_EXPANSION_ENABLED=" << (runtime_cfg.auto_expansion_enabled ? "true" : "false")
+       << ", AUTO_EXPANSION_TRIGGER_RATIO=" << runtime_cfg.auto_expansion_trigger_ratio
+       << ", TARGET_SPATIAL_RATIO=" << runtime_cfg.target_spatial_ratio
+       << ", AUTO_EXPANSION_CHECKS_PER_PERIOD=" << runtime_cfg.auto_expansion_checks_per_period
+       << ", TARGET_LCR=" << runtime_cfg.target_lcr
+       << ", LCR_STRESS_THRESHOLD=" << runtime_cfg.lcr_stress_threshold
+       << ", MAX_AUTO_MONEY_GROWTH=" << runtime_cfg.max_auto_money_growth
        << ", PERSISTENCE_PROFILE=" << runtime_cfg.persistence_profile
        << ", PERSISTENCE_SQLITE_PATH=" << runtime_cfg.persistence_sqlite_path
        << ", GOOGLE_AUTH_ENABLED=" << (runtime_cfg.google_auth_enabled ? "true" : "false")
@@ -1170,6 +1392,7 @@ int main(int argc, char** argv) {
   game.set_aoi_pad_chunks(runtime_cfg.aoi_pad_chunks);
   game.configure_mask(runtime_cfg.world_mask_mode, runtime_cfg.world_mask_seed, runtime_cfg.world_mask_style);
   EconomyService economy(*storage, runtime_cfg);
+  SystemMessageBus system_message_bus;
   game.load_from_storage_or_seed_positions();
   {
     const auto eco = economy.GetState();
@@ -1192,6 +1415,24 @@ int main(int argc, char** argv) {
     game.flush_persistence_delta();
     persistence_coordinator.FlushNow();
   };
+
+  EconomyService::StabilizationActions stabilization_actions;
+  stabilization_actions.expand_playable_cells = [&](int64_t cells) -> int64_t {
+    const int64_t expanded = game.expand_playable_cells(cells, runtime_cfg.world_aspect_ratio);
+    if (expanded > 0) {
+      game.flush_persistence_delta();
+      persistence_coordinator.FlushNow();
+    }
+    return expanded;
+  };
+  stabilization_actions.emit_system_message = [&](const std::string& dedupe_key,
+                                                  const std::string& level,
+                                                  const std::string& text) {
+    (void)dedupe_key;
+    system_message_bus.Publish(level, text);
+  };
+  stabilization_actions.current_world_snapshot = [&]() { return game.snapshot(); };
+  economy.SetStabilizationActions(std::move(stabilization_actions));
 
   if (mode == "reset") {
     if (!storage->ResetForDev()) {
@@ -1343,6 +1584,8 @@ int main(int argc, char** argv) {
       if ((now - next_broadcast) > (spectator_dt * 5)) {
         next_broadcast = now + spectator_dt;
       }
+
+      economy.TickStabilization();
 
       if (runtime_cfg.debug_tps && now >= next_log_at) {
         cout << "[rate] ticks/5s=" << ticks_since_log << ", broadcasts/5s=" << broadcasts_since_log << "\n";
@@ -1521,6 +1764,8 @@ int main(int argc, char** argv) {
     auto next_world_send = chrono::steady_clock::now();
     auto next_economy_send = chrono::steady_clock::now();
     auto next_private_send = chrono::steady_clock::now();
+    auto next_system_send = chrono::steady_clock::now();
+    uint64_t last_system_message_id = 0;
 
     while (alive.load() && ws.is_open()) {
       ClientSession session = get_or_create_session(sid);
@@ -1695,6 +1940,26 @@ int main(int argc, char** argv) {
         next_private_send = now + chrono::seconds(1);
       }
 
+      if (now >= next_system_send) {
+        const auto messages = system_message_bus.GetSince(last_system_message_id);
+        for (const auto& m : messages) {
+          std::ostringstream out;
+          out << "{"
+              << "\"type\":\"system_message\","
+              << "\"id\":" << m.id << ","
+              << "\"level\":\"" << json_escape(m.level) << "\","
+              << "\"message\":\"" << json_escape(m.text) << "\","
+              << "\"created_at\":" << m.created_at
+              << "}";
+          if (!ws.send(out.str())) {
+            alive.store(false);
+            break;
+          }
+          last_system_message_id = m.id;
+        }
+        next_system_send = now + chrono::milliseconds(250);
+      }
+
       this_thread::sleep_for(chrono::milliseconds(10));
     }
 
@@ -1841,6 +2106,9 @@ int main(int argc, char** argv) {
       << "\"pi\":" << json_number(s.global.pi) << ","
       << "\"A_world\":" << a_world << ","
       << "\"M_white\":" << m_white << ","
+      << "\"R\":" << json_number(s.stabilization.spatial_ratio_r) << ","
+      << "\"LCR\":" << json_number(s.stabilization.lcr) << ","
+      << "\"treasury_white_space\":" << s.stabilization.treasury_white_space << ","
       << "\"treasury_balance\":" << s.global.treasury_balance << ","
       << "\"alpha_bootstrap\":" << (s.global.alpha_bootstrap ? "true" : "false") << ","
       << "\"inputs\":{"
@@ -1911,6 +2179,17 @@ int main(int argc, char** argv) {
       << "},"
       << "\"flush_interval_sec\":" << dbg.flush_interval_sec << ","
       << "\"seconds_since_last_flush\":" << dbg.seconds_since_last_flush << ","
+      << "\"stabilization\":{"
+      << "\"spatial_ratio_r\":" << json_number(eco.stabilization.spatial_ratio_r) << ","
+      << "\"lcr\":" << json_number(eco.stabilization.lcr) << ","
+      << "\"treasury_white_space\":" << eco.stabilization.treasury_white_space << ","
+      << "\"failures_this_period\":" << eco.stabilization_runtime.spatial_expansion_failures_current_period << ","
+      << "\"mode\":\""
+      << (eco.stabilization_runtime.liquidity_constraint_mode_active ? "liquidity_constraint" : "normal") << "\","
+      << "\"last_action_period_id\":\"" << json_escape(eco.stabilization_runtime.last_stabilization_action_period_id) << "\","
+      << "\"last_action_type\":\"" << json_escape(eco.stabilization_runtime.last_stabilization_action_type) << "\","
+      << "\"next_fast_check_in_seconds\":" << eco.next_fast_check_in_seconds
+      << "},"
       << "\"snapshot_status\":\"" << json_escape(eco.global.snapshot_status) << "\""
       << "}";
     res.set_content(o.str(), "application/json");
@@ -1925,6 +2204,8 @@ int main(int argc, char** argv) {
     }
     const auto s = economy.GetState();
     const auto p = storage->GetEconomyPeriod(s.period_id).value_or(storage::EconomyPeriod{});
+    const int64_t a_world = economy_world_area(s.params, s.global);
+    const std::string mode = s.stabilization_runtime.liquidity_constraint_mode_active ? "liquidity_constraint" : "normal";
     std::ostringstream o;
     o << "{"
       << "\"period_id\":\"" << json_escape(s.period_id) << "\","
@@ -1939,6 +2220,18 @@ int main(int argc, char** argv) {
       << "\"M\":" << s.global.m << ","
       << "\"P\":" << json_number(s.global.p) << ","
       << "\"pi\":" << json_number(s.global.pi) << ","
+      << "\"A_world\":" << a_world << ","
+      << "\"M_white\":" << std::max<int64_t>(0, a_world - s.global.k) << ","
+      << "\"spatial_ratio_r\":" << json_number(s.stabilization.spatial_ratio_r) << ","
+      << "\"lcr\":" << json_number(s.stabilization.lcr) << ","
+      << "\"treasury_white_space\":" << s.stabilization.treasury_white_space << ","
+      << "\"failures_this_period\":" << s.stabilization_runtime.spatial_expansion_failures_current_period << ","
+      << "\"stabilization_mode\":\"" << json_escape(mode) << "\","
+      << "\"last_stabilization_action_period_id\":\""
+      << json_escape(s.stabilization_runtime.last_stabilization_action_period_id) << "\","
+      << "\"last_stabilization_action_type\":\""
+      << json_escape(s.stabilization_runtime.last_stabilization_action_type) << "\","
+      << "\"next_fast_check_in_seconds\":" << s.next_fast_check_in_seconds << ","
       << "\"period_ends_in_seconds\":" << s.period_ends_in_seconds
       << "}";
     res.set_content(o.str(), "application/json");
@@ -2035,6 +2328,12 @@ int main(int argc, char** argv) {
     economy.InvalidateCache();
     auto snap = economy.GetState();
     maybe_resize_world_from_economy(snap);
+    storage::SnakeEvent event;
+    event.snake_id = "system";
+    event.event_id = std::to_string(static_cast<int64_t>(time(nullptr))) + "#admin_economy_set#" + *param;
+    event.event_type = "ADMIN_OVERRIDE_ECONOMY_SET";
+    event.created_at = static_cast<int64_t>(time(nullptr));
+    (void)storage->AppendSnakeEvent(event);
     res.set_content("{\"ok\":true}", "application/json");
   });
 
@@ -2061,6 +2360,13 @@ int main(int argc, char** argv) {
       return;
     }
     economy.InvalidateCache();
+    storage::SnakeEvent event;
+    event.snake_id = "system";
+    event.event_id = std::to_string(static_cast<int64_t>(time(nullptr))) + "#admin_treasury_set";
+    event.event_type = "ADMIN_OVERRIDE_TREASURY_SET";
+    event.delta_length = p.m_gov_reserve > std::numeric_limits<int>::max() ? std::numeric_limits<int>::max() : static_cast<int>(p.m_gov_reserve);
+    event.created_at = static_cast<int64_t>(time(nullptr));
+    (void)storage->AppendSnakeEvent(event);
     res.set_content("{\"ok\":true}", "application/json");
   });
 

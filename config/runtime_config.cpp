@@ -110,6 +110,18 @@ RuntimeConfig RuntimeConfig::FromEnv() {
   cfg.economy_flush_seconds = clamp_int(getenv_int("ECONOMY_FLUSH_SECONDS", cfg.economy_flush_seconds), 2, 60);
   cfg.economy_period_history_days =
       clamp_int(getenv_int("ECONOMY_PERIOD_HISTORY_DAYS", cfg.economy_period_history_days), 7, 3650);
+  cfg.auto_expansion_enabled = getenv_bool("AUTO_EXPANSION_ENABLED", cfg.auto_expansion_enabled);
+  cfg.auto_expansion_trigger_ratio =
+      std::max(0.1, std::min(1000.0, getenv_double("AUTO_EXPANSION_TRIGGER_RATIO", cfg.auto_expansion_trigger_ratio)));
+  cfg.target_spatial_ratio =
+      std::max(0.1, std::min(1000.0, getenv_double("TARGET_SPATIAL_RATIO", cfg.target_spatial_ratio)));
+  cfg.auto_expansion_checks_per_period =
+      clamp_int(getenv_int("AUTO_EXPANSION_CHECKS_PER_PERIOD", cfg.auto_expansion_checks_per_period), 1, 86400);
+  cfg.target_lcr = std::max(0.0, std::min(1000.0, getenv_double("TARGET_LCR", cfg.target_lcr)));
+  cfg.lcr_stress_threshold =
+      std::max(0.0, std::min(1000.0, getenv_double("LCR_STRESS_THRESHOLD", cfg.lcr_stress_threshold)));
+  cfg.max_auto_money_growth =
+      std::max(0.0, std::min(1.0, getenv_double("MAX_AUTO_MONEY_GROWTH", cfg.max_auto_money_growth)));
   cfg.persistence_profile = getenv_string("PERSISTENCE_PROFILE", cfg.persistence_profile);
   cfg.persistence_sqlite_path = getenv_string("PERSISTENCE_SQLITE_PATH", cfg.persistence_sqlite_path);
   cfg.persistence_sqlite_max_mb =

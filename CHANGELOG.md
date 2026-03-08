@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.8.0 - 2026-03-08
+- Added an automatic spatial and monetary stabilization engine with derived reserve accounting.
+- Added scheduled fast spatial checks tied to configurable economic period duration.
+- Added liquidity-constraint mode transitions with deduplicated global system notifications.
+- Added period-close monetary stabilization with capped treasury-only automatic expansion.
+- Added stabilization telemetry to admin economy status and `snakecli economy status`.
+
 ## 2.7.0 - 2026-03-07
 - Added Google Sign-In as the live player entry path.
 - Added first-time onboarding with company naming, starter snake naming, and starter liquid assets.
