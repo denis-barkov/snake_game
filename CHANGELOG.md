@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.8.14 - 2026-03-09
+- Fixed global snake-name uniqueness regression that allowed duplicate names under buffered persistence timing.
+- Added runtime+durable global snake-name existence checks for onboarding/create/rename validation paths.
+- Fixed buffered SQLite snake snapshot schema/flush path to persist `snake_name` and `snake_name_normalized` fields, including backward-compatible column migration.
+
+## 2.8.13 - 2026-03-09
+- Added a shared snake action resolver used by `attach`, `rename`, and `delete` to remove PROD/local lookup drift and stop false `snake_not_found` on visible owned snakes.
+- Added structured action lookup diagnostics for snake actions, including panel-visible IDs vs action-lookup IDs and lookup layer/profile details.
+- Replaced `Create Snake` browser `prompt()` with an in-app modal matching rename/delete modal behavior.
+
 ## 2.8.12 - 2026-03-09
 - Fixed onboarding starter snake race in prod where immediate durable read could fail and return `starter_snake_visibility_failed` despite successful runtime creation.
 - Switched onboarding starter verification to runtime owned-snake visibility first, with durable fallback only for legacy-existing starter records.

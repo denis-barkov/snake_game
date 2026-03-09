@@ -451,6 +451,8 @@ The script fails loudly if any of these fail:
    - snake is removed from world and `/me/snakes`
    - liquid assets increase by deleted snake length
    - deleted snake name becomes available for reuse.
+9. Confirm Create Snake uses the app modal (not browser `prompt`) and supports inline validation/retry.
+10. Confirm duplicate snake names are rejected immediately even for rapid consecutive creates/renames.
 
 ## Watch camera / AOI-ready behavior
 

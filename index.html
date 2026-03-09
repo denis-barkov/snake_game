@@ -690,6 +690,17 @@
       </div>
     </div>
   </div>
+  <div id="snake-create-backdrop" class="app-modal-backdrop" role="dialog" aria-modal="true" aria-label="Create Snake">
+    <div class="app-modal-card">
+      <h3>Create Snake</h3>
+      <div class="row"><input id="snakeCreateInput" placeholder="Snake Name" /></div>
+      <div id="snakeCreateError" class="app-modal-error"></div>
+      <div class="app-modal-actions">
+        <button id="snakeCreateCancelBtn" type="button">Cancel</button>
+        <button id="snakeCreateConfirmBtn" type="button">Create</button>
+      </div>
+    </div>
+  </div>
 
 <script>
   const API_BASE = window.location.protocol === "file:" ? "http://127.0.0.1:8080" : "";
@@ -1151,6 +1162,11 @@
   const snakeDeleteErrorEl = document.getElementById("snakeDeleteError");
   const snakeDeleteCancelBtn = document.getElementById("snakeDeleteCancelBtn");
   const snakeDeleteConfirmBtn = document.getElementById("snakeDeleteConfirmBtn");
+  const snakeCreateBackdropEl = document.getElementById("snake-create-backdrop");
+  const snakeCreateInputEl = document.getElementById("snakeCreateInput");
+  const snakeCreateErrorEl = document.getElementById("snakeCreateError");
+  const snakeCreateCancelBtn = document.getElementById("snakeCreateCancelBtn");
+  const snakeCreateConfirmBtn = document.getElementById("snakeCreateConfirmBtn");
   const onboardingBackdropEl = document.getElementById("onboarding-backdrop");
   const onboardingTitleEl = document.getElementById("onboarding-title");
   const onboardingCopyEl = document.getElementById("onboarding-copy");
@@ -1196,6 +1212,7 @@
   let debugPublicChunk = { cx: 0, cy: 0 };
   let pendingRenameSnakeId = null;
   let pendingDeleteSnakeId = null;
+  let createSnakeModalOpen = false;
   let wsHandle = null;
   let wsBackoffMs = 1000;
   let wsConnected = false;
@@ -1905,6 +1922,49 @@
     await loadUserMe();
   }
 
+  function closeSnakeCreateModal() {
+    createSnakeModalOpen = false;
+    snakeCreateBackdropEl.style.display = "none";
+    snakeCreateErrorEl.textContent = "";
+  }
+
+  function openSnakeCreateModal() {
+    createSnakeModalOpen = true;
+    snakeCreateInputEl.value = "";
+    snakeCreateErrorEl.textContent = "";
+    snakeCreateBackdropEl.style.display = "flex";
+    snakeCreateInputEl.focus();
+  }
+
+  async function submitSnakeCreate() {
+    if (!token) return;
+    const snakeNameTrimmed = String(snakeCreateInputEl.value || "").trim();
+    if (!isValidGameName(snakeNameTrimmed)) {
+      snakeCreateErrorEl.textContent = "Invalid snake name format.";
+      return;
+    }
+    const color = "#" + Math.floor(Math.random() * 16777215).toString(16).padStart(6, "0");
+    const res = await api("/me/snakes", { method: "POST", body: JSON.stringify({ color, snake_name: snakeNameTrimmed }) });
+    if (!res.ok) {
+      const t = await res.text();
+      if (t.includes("\"snake_name_taken\"")) {
+        snakeCreateErrorEl.textContent = "This snake name is already taken. Please choose another name.";
+        return;
+      }
+      snakeCreateErrorEl.textContent = `Create snake failed: ${t}`;
+      return;
+    }
+    const data = await res.json().catch(() => ({}));
+    const liquidAssets = Number.isFinite(Number(data.liquid_assets)) ? Number(data.liquid_assets) : Number(data.balance_mi);
+    if (Number.isFinite(liquidAssets)) {
+      myBalance = liquidAssets;
+      myBalanceEl.textContent = fmtInt(myBalance);
+    }
+    closeSnakeCreateModal();
+    await loadMySnakes();
+    await loadUserMe();
+  }
+
   async function loadMySnakes() {
     if (!token) return;
     const res = await api("/me/snakes");
@@ -2110,33 +2170,7 @@
 
   async function createSnake() {
     if (!token) return;
-    const snakeName = prompt("New snake name");
-    if (snakeName == null) return;
-    const snakeNameTrimmed = String(snakeName).trim();
-    if (!isValidGameName(snakeNameTrimmed)) {
-      alert("Invalid snake name format.");
-      return;
-    }
-    // random-ish color
-    const color = "#" + Math.floor(Math.random()*16777215).toString(16).padStart(6,'0');
-    const res = await api("/me/snakes", { method:"POST", body: JSON.stringify({ color, snake_name: snakeNameTrimmed }) });
-    if (!res.ok) {
-      const t = await res.text();
-      if (t.includes("\"snake_name_taken\"")) {
-        alert("This snake name is already taken.\nPlease choose another name.");
-        return;
-      }
-      alert("Create snake failed: " + t);
-      return;
-    }
-    const data = await res.json().catch(() => ({}));
-    const liquidAssets = Number.isFinite(Number(data.liquid_assets)) ? Number(data.liquid_assets) : Number(data.balance_mi);
-    if (Number.isFinite(liquidAssets)) {
-      myBalance = liquidAssets;
-      myBalanceEl.textContent = fmtInt(myBalance);
-    }
-    await loadMySnakes();
-    await loadUserMe();
+    openSnakeCreateModal();
   }
 
   async function setDir(dir) {
@@ -2209,6 +2243,8 @@
   snakeRenameSaveBtn.onclick = saveSnakeRename;
   snakeDeleteCancelBtn.onclick = closeSnakeDeleteModal;
   snakeDeleteConfirmBtn.onclick = confirmSnakeDelete;
+  snakeCreateCancelBtn.onclick = closeSnakeCreateModal;
+  snakeCreateConfirmBtn.onclick = submitSnakeCreate;
   snakeRenameInputEl.addEventListener("keydown", (ev) => {
     if (ev.key === "Enter") {
       ev.preventDefault();
@@ -2221,6 +2257,19 @@
   });
   snakeRenameBackdropEl.addEventListener("click", (ev) => {
     if (ev.target === snakeRenameBackdropEl) closeSnakeRenameModal();
+  });
+  snakeCreateBackdropEl.addEventListener("click", (ev) => {
+    if (ev.target === snakeCreateBackdropEl) closeSnakeCreateModal();
+  });
+  snakeCreateInputEl.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter") {
+      ev.preventDefault();
+      submitSnakeCreate();
+    }
+    if (ev.key === "Escape") {
+      ev.preventDefault();
+      closeSnakeCreateModal();
+    }
   });
   borrowAmountEl.addEventListener("input", updateActionButtons);
   attachAmountEl.addEventListener("input", updateActionButtons);

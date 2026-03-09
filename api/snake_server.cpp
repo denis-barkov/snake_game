@@ -2637,6 +2637,90 @@ int main(int argc, char** argv) {
   srv.Post("/user/borrow", handle_borrow_cells);
   srv.Post("/economy/purchase", handle_borrow_cells);
 
+  struct ActionSnakeResolution {
+    bool ok = false;
+    bool forbidden = false;
+    std::string reason = "snake_not_found";
+    storage::Snake snake;
+    std::string panel_ids;
+    std::string lookup_ids;
+    std::string lookup_layer = "durable_storage";
+  };
+
+  auto resolve_owned_snake_or_error = [&](int uid, int snake_id, const std::string& action) -> ActionSnakeResolution {
+    ActionSnakeResolution out;
+    const std::string uid_str = std::to_string(uid);
+    const std::string snake_id_str = std::to_string(snake_id);
+
+    auto append_id = [](std::ostringstream& oss, bool& first, const std::string& id) {
+      if (!first) oss << ",";
+      first = false;
+      oss << id;
+    };
+
+    std::ostringstream panel_ids;
+    bool first_panel = true;
+    for (const auto& s : game.list_user_snakes(uid)) {
+      append_id(panel_ids, first_panel, std::to_string(s.id));
+    }
+    out.panel_ids = panel_ids.str();
+
+    auto snake = storage->GetSnakeById(snake_id_str);
+    if (!snake.has_value()) {
+      game.flush_persistence_delta();
+      persistence_coordinator.FlushNow();
+      snake = storage->GetSnakeById(snake_id_str);
+      if (snake.has_value()) out.lookup_layer = "durable_storage_after_flush";
+    }
+
+    std::ostringstream lookup_ids;
+    bool first_lookup = true;
+    for (const auto& s : storage->ListSnakes()) {
+      if (s.owner_user_id != uid_str) continue;
+      append_id(lookup_ids, first_lookup, s.snake_id);
+    }
+    out.lookup_ids = lookup_ids.str();
+
+    if (!snake.has_value()) {
+      out.reason = "snake_not_found";
+      std::cerr << "[snake_action_lookup] action=" << action
+                << " user_id=" << uid_str
+                << " snake_id_requested=" << snake_id_str
+                << " snake_ids_visible_in_user_panel_source=" << out.panel_ids
+                << " snake_ids_found_in_action_lookup_source=" << out.lookup_ids
+                << " persistence_profile=" << runtime_cfg.persistence_profile
+                << " lookup_layer_or_repository=" << out.lookup_layer
+                << " lookup_result=snake_not_found\n";
+      return out;
+    }
+    if (snake->owner_user_id != uid_str) {
+      out.forbidden = true;
+      out.reason = "forbidden";
+      std::cerr << "[snake_action_lookup] action=" << action
+                << " user_id=" << uid_str
+                << " snake_id_requested=" << snake_id_str
+                << " snake_ids_visible_in_user_panel_source=" << out.panel_ids
+                << " snake_ids_found_in_action_lookup_source=" << out.lookup_ids
+                << " persistence_profile=" << runtime_cfg.persistence_profile
+                << " lookup_layer_or_repository=" << out.lookup_layer
+                << " lookup_result=forbidden\n";
+      return out;
+    }
+
+    out.ok = true;
+    out.reason = "resolved";
+    out.snake = *snake;
+    std::cerr << "[snake_action_lookup] action=" << action
+              << " user_id=" << uid_str
+              << " snake_id_requested=" << snake_id_str
+              << " snake_ids_visible_in_user_panel_source=" << out.panel_ids
+              << " snake_ids_found_in_action_lookup_source=" << out.lookup_ids
+              << " persistence_profile=" << runtime_cfg.persistence_profile
+              << " lookup_layer_or_repository=" << out.lookup_layer
+              << " lookup_result=resolved\n";
+    return out;
+  };
+
   srv.Post(R"(/snake/(\d+)/attach)", [&](const httplib::Request& req, httplib::Response& res) {
     add_cors(res);
     res.set_header("X-Snake-Attach-Api", "v2");
@@ -2656,7 +2740,6 @@ int main(int argc, char** argv) {
     }
 
     const std::string uid_str = std::to_string(*uid);
-    const std::string snake_id_str = std::to_string(snake_id);
     const auto eco_before = economy.GetState();
     const auto user = storage->GetUserById(uid_str);
     if (!user.has_value()) {
@@ -2669,46 +2752,17 @@ int main(int argc, char** argv) {
       res.set_content("{\"error\":\"insufficient_cells\"}", "application/json");
       return;
     }
-    const auto snake = storage->GetSnakeById(snake_id_str);
-    if (!snake.has_value()) {
-      res.status = 404;
-      std::ostringstream visible_ids;
-      bool first = true;
-      for (const auto& s : storage->ListSnakes()) {
-        if (s.owner_user_id != uid_str) continue;
-        if (!first) visible_ids << ",";
-        first = false;
-        visible_ids << s.snake_id;
-      }
-      std::cerr << "[economy_action] action=attach"
-                << " user_id=" << uid_str
-                << " snake_id_requested=" << snake_id_str
-                << " snake_ids_visible_to_user=" << visible_ids.str()
-                << " profile=" << runtime_cfg.persistence_profile
-                << " read_layer_path_used=durable_storage"
-                << " write_layer_path_used_for_snake_creation=none"
-                << " attach_lookup_result=snake_not_found\n";
-      std::cerr << "[attach_trace] action=attach route=/snake/{id}/attach"
-                << " user_id=" << uid_str
-                << " snake_id_requested=" << snake_id_str
-                << " amount=" << *amount
-                << " profile=" << runtime_cfg.persistence_profile
-                << " lookup_source=durable_storage"
-                << " snake_lookup_succeeded=false"
-                << " create_snake_invoked=false"
-                << " response_code=404"
-                << " error=snake_not_found\n";
-      res.set_content("{\"error\":\"snake_not_found\"}", "application/json");
+    const auto resolved = resolve_owned_snake_or_error(*uid, snake_id, "attach");
+    if (!resolved.ok) {
+      res.status = resolved.forbidden ? 403 : 404;
+      const std::string err = resolved.forbidden ? "forbidden" : "snake_not_found";
+      res.set_content("{\"error\":\"" + err + "\"}", "application/json");
       return;
     }
-    if (!snake->alive || !snake->is_on_field || snake->length_k <= 0) {
+    const auto& snake = resolved.snake;
+    if (!snake.alive || !snake.is_on_field || snake.length_k <= 0) {
       res.status = 409;
       res.set_content("{\"error\":\"snake_not_attachable\"}", "application/json");
-      return;
-    }
-    if (snake->owner_user_id != uid_str) {
-      res.status = 403;
-      res.set_content("{\"error\":\"forbidden\"}", "application/json");
       return;
     }
     const std::string resolved_snake_id_str = std::to_string(snake_id);
@@ -2719,7 +2773,7 @@ int main(int argc, char** argv) {
       res.status = 409;
       std::cerr << "[attach_trace] action=attach route=/snake/{id}/attach"
                 << " user_id=" << uid_str
-                << " snake_id_requested=" << snake_id_str
+                << " snake_id_requested=" << std::to_string(snake_id)
                 << " amount=" << *amount
                 << " profile=" << runtime_cfg.persistence_profile
                 << " lookup_source=durable_storage"
@@ -2751,7 +2805,7 @@ int main(int argc, char** argv) {
               << " amount=" << *amount
               << " user_liquid_before=" << user->balance_mi
               << " user_liquid_after=" << balance_after
-              << " snake_length_before=" << snake->length_k
+              << " snake_length_before=" << snake.length_k
               << " snake_length_after=" << *world_len_after
               << " total_capital_before=" << eco_before.global.k
               << " total_capital_after=" << eco_after.global.k
@@ -2761,7 +2815,7 @@ int main(int argc, char** argv) {
               << " money_supply_after=" << eco_after.global.m << "\n";
     std::cerr << "[economy_action] action=attach"
               << " user_id=" << uid_str
-              << " snake_id_requested=" << snake_id_str
+              << " snake_id_requested=" << std::to_string(snake_id)
               << " snake_ids_visible_to_user=" << resolved_snake_id_str
               << " profile=" << runtime_cfg.persistence_profile
               << " read_layer_path_used=durable_storage"
@@ -2769,7 +2823,7 @@ int main(int argc, char** argv) {
               << " attach_lookup_result=resolved\n";
     std::cerr << "[attach_trace] action=attach route=/snake/{id}/attach"
               << " user_id=" << uid_str
-              << " snake_id_requested=" << snake_id_str
+              << " snake_id_requested=" << std::to_string(snake_id)
               << " amount=" << *amount
               << " profile=" << runtime_cfg.persistence_profile
               << " lookup_source=durable_storage"
@@ -2798,21 +2852,18 @@ int main(int argc, char** argv) {
     }
 
     const int snake_id = stoi(req.matches[1]);
-    const std::string snake_id_str = std::to_string(snake_id);
     const std::string uid_str = std::to_string(*uid);
-    const auto snake = storage->GetSnakeById(snake_id_str);
-    if (!snake.has_value()) {
-      res.status = 404;
-      res.set_content("{\"error\":\"snake_not_found\"}", "application/json");
+    const auto resolved = resolve_owned_snake_or_error(*uid, snake_id, "delete");
+    if (!resolved.ok) {
+      res.status = resolved.forbidden ? 403 : 404;
+      const std::string err = resolved.forbidden ? "forbidden" : "snake_not_found";
+      res.set_content("{\"error\":\"" + err + "\"}", "application/json");
       return;
     }
-    if (snake->owner_user_id != uid_str) {
-      res.status = 403;
-      res.set_content("{\"error\":\"forbidden\"}", "application/json");
-      return;
-    }
+    const auto& snake = resolved.snake;
+    const std::string snake_id_str = snake.snake_id;
 
-    int refund_cells = std::max(0, snake->length_k);
+    int refund_cells = std::max(0, snake.length_k);
     for (const auto& ws : game.list_user_snakes(*uid)) {
       if (ws.id == snake_id) {
         refund_cells = std::max(refund_cells, static_cast<int>(ws.body.size()));
@@ -3176,6 +3227,18 @@ int main(int argc, char** argv) {
     res.set_content(o.str(), "application/json");
   });
 
+  auto snake_name_exists_globally = [&](const std::string& snake_name_normalized,
+                                        const std::string& exclude_snake_id = "") -> bool {
+    if (snake_name_normalized.empty()) return false;
+    if (storage->SnakeNameExistsNormalized(snake_name_normalized, exclude_snake_id)) return true;
+    for (const auto& s : game.snapshot().snakes) {
+      if (s.snake_name_normalized != snake_name_normalized) continue;
+      if (!exclude_snake_id.empty() && std::to_string(s.id) == exclude_snake_id) continue;
+      return true;
+    }
+    return false;
+  };
+
   srv.Get("/names/check-company", [&](const httplib::Request& req, httplib::Response& res) {
     add_cors(res);
     if (!req.has_param("name")) {
@@ -3203,7 +3266,7 @@ int main(int argc, char** argv) {
     const string name = req.get_param_value("name");
     const bool valid = is_valid_game_name(name);
     const string norm = normalize_name(name);
-    const bool taken = valid ? storage->SnakeNameExistsNormalized(norm) : false;
+    const bool taken = valid ? snake_name_exists_globally(norm) : false;
     ostringstream o;
     o << "{\"valid\":" << (valid ? "true" : "false")
       << ",\"taken\":" << (taken ? "true" : "false") << "}";
@@ -3244,7 +3307,7 @@ int main(int argc, char** argv) {
       res.set_content("{\"error\":\"company_name_taken\"}", "application/json");
       return;
     }
-    if (storage->SnakeNameExistsNormalized(snake_norm)) {
+    if (snake_name_exists_globally(snake_norm)) {
       res.status = 409;
       res.set_content("{\"error\":\"snake_name_taken\"}", "application/json");
       return;
@@ -3321,7 +3384,7 @@ int main(int argc, char** argv) {
         starter_snake->snake_name_normalized = snake_norm;
         starter_snake->updated_at = static_cast<int64_t>(time(nullptr));
         if (!storage->PutSnake(*starter_snake)) {
-          if (storage->SnakeNameExistsNormalized(snake_norm, std::to_string(starter_snake_id))) {
+          if (snake_name_exists_globally(snake_norm, std::to_string(starter_snake_id))) {
             res.status = 409;
             res.set_content("{\"error\":\"snake_name_taken\"}", "application/json");
             return;
@@ -3547,27 +3610,24 @@ int main(int argc, char** argv) {
       return;
     }
     const std::string snake_name_norm = normalize_name(*snake_name);
-    auto snake = storage->GetSnakeById(std::to_string(snake_id));
-    if (!snake.has_value()) {
-      res.status = 404;
-      res.set_content("{\"error\":\"snake_not_found\"}", "application/json");
+    const auto resolved = resolve_owned_snake_or_error(*uid, snake_id, "rename");
+    if (!resolved.ok) {
+      res.status = resolved.forbidden ? 403 : 404;
+      const std::string err = resolved.forbidden ? "forbidden" : "snake_not_found";
+      res.set_content("{\"error\":\"" + err + "\"}", "application/json");
       return;
     }
-    if (snake->owner_user_id != std::to_string(*uid)) {
-      res.status = 403;
-      res.set_content("{\"error\":\"forbidden\"}", "application/json");
-      return;
-    }
-    if (storage->SnakeNameExistsNormalized(snake_name_norm, std::to_string(snake_id))) {
+    auto snake = resolved.snake;
+    if (snake_name_exists_globally(snake_name_norm, std::to_string(snake_id))) {
       res.status = 409;
       res.set_content("{\"error\":\"snake_name_taken\"}", "application/json");
       return;
     }
-    snake->snake_name = *snake_name;
-    snake->snake_name_normalized = snake_name_norm;
-    snake->updated_at = static_cast<int64_t>(time(nullptr));
-    if (!storage->PutSnake(*snake)) {
-      if (storage->SnakeNameExistsNormalized(snake_name_norm, std::to_string(snake_id))) {
+    snake.snake_name = *snake_name;
+    snake.snake_name_normalized = snake_name_norm;
+    snake.updated_at = static_cast<int64_t>(time(nullptr));
+    if (!storage->PutSnake(snake)) {
+      if (snake_name_exists_globally(snake_name_norm, std::to_string(snake_id))) {
         res.status = 409;
         res.set_content("{\"error\":\"snake_name_taken\"}", "application/json");
         return;
@@ -3580,7 +3640,7 @@ int main(int argc, char** argv) {
     o << "{"
       << "\"ok\":true,"
       << "\"id\":" << snake_id << ","
-      << "\"name\":\"" << json_escape(snake->snake_name) << "\""
+      << "\"name\":\"" << json_escape(snake.snake_name) << "\""
       << "}";
     res.set_content(o.str(), "application/json");
   });
@@ -3651,7 +3711,7 @@ int main(int argc, char** argv) {
       return;
     }
     const string snake_name_norm = normalize_name(*snake_name);
-    if (storage->SnakeNameExistsNormalized(snake_name_norm)) {
+    if (snake_name_exists_globally(snake_name_norm)) {
       std::cerr << "[me_snakes_create] user_id=" << uid_str
                 << " snake_name=" << json_escape(*snake_name)
                 << " reason=snake_create_uniqueness_failed\n";

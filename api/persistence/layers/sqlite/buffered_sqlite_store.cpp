@@ -20,6 +20,22 @@ bool bind_text(sqlite3_stmt* stmt, int idx, const std::string& s) {
   return sqlite3_bind_text(stmt, idx, s.c_str(), -1, SQLITE_TRANSIENT) == SQLITE_OK;
 }
 
+bool ColumnExists(sqlite3* db, const std::string& table, const std::string& column) {
+  const std::string sql = "PRAGMA table_info(" + table + ")";
+  sqlite3_stmt* stmt = nullptr;
+  if (sqlite3_prepare_v2(db, sql.c_str(), -1, &stmt, nullptr) != SQLITE_OK) return false;
+  bool found = false;
+  while (sqlite3_step(stmt) == SQLITE_ROW) {
+    const char* col_name = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+    if (col_name && column == col_name) {
+      found = true;
+      break;
+    }
+  }
+  sqlite3_finalize(stmt);
+  return found;
+}
+
 }  // namespace
 
 BufferedSqliteStore::BufferedSqliteStore(std::string sqlite_path)
@@ -85,6 +101,8 @@ bool BufferedSqliteStore::EnsureSchema() {
              "CREATE TABLE IF NOT EXISTS buffered_snake_snapshots("
              "snake_id TEXT PRIMARY KEY,"
              "owner_user_id TEXT NOT NULL,"
+             "snake_name TEXT NOT NULL DEFAULT '',"
+             "snake_name_normalized TEXT NOT NULL DEFAULT '',"
              "alive INTEGER NOT NULL,"
              "is_on_field INTEGER NOT NULL,"
              "head_x INTEGER NOT NULL,"
@@ -126,20 +144,27 @@ bool BufferedSqliteStore::EnsureSchema() {
              "movement_ticks_delta INTEGER NOT NULL DEFAULT 0,"
              "updated_ms INTEGER NOT NULL,"
              "PRIMARY KEY(period_key,user_id)"
-             ");");
+             ");") &&
+         // Backward-compatible migrations for existing local/prod buffered DB files.
+         (ColumnExists(db_, "buffered_snake_snapshots", "snake_name") ||
+          Exec("ALTER TABLE buffered_snake_snapshots ADD COLUMN snake_name TEXT NOT NULL DEFAULT ''")) &&
+         (ColumnExists(db_, "buffered_snake_snapshots", "snake_name_normalized") ||
+          Exec("ALTER TABLE buffered_snake_snapshots ADD COLUMN snake_name_normalized TEXT NOT NULL DEFAULT ''"));
 }
 
 bool BufferedSqliteStore::UpsertSnakeSnapshot(const storage::Snake& s, bool deleted) {
   sqlite3_stmt* stmt = nullptr;
   const char* sql =
-      "INSERT INTO buffered_snake_snapshots(snake_id,owner_user_id,alive,is_on_field,head_x,head_y,direction,paused,length_k,body_compact,color,last_event_id,created_at,updated_at,deleted,updated_ms) "
-      "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+      "INSERT INTO buffered_snake_snapshots(snake_id,owner_user_id,snake_name,snake_name_normalized,alive,is_on_field,head_x,head_y,direction,paused,length_k,body_compact,color,last_event_id,created_at,updated_at,deleted,updated_ms) "
+      "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
       "ON CONFLICT(snake_id) DO UPDATE SET "
-      "owner_user_id=excluded.owner_user_id,alive=excluded.alive,is_on_field=excluded.is_on_field,head_x=excluded.head_x,head_y=excluded.head_y,direction=excluded.direction,paused=excluded.paused,length_k=excluded.length_k,body_compact=excluded.body_compact,color=excluded.color,last_event_id=excluded.last_event_id,created_at=excluded.created_at,updated_at=excluded.updated_at,deleted=excluded.deleted,updated_ms=excluded.updated_ms";
+      "owner_user_id=excluded.owner_user_id,snake_name=excluded.snake_name,snake_name_normalized=excluded.snake_name_normalized,alive=excluded.alive,is_on_field=excluded.is_on_field,head_x=excluded.head_x,head_y=excluded.head_y,direction=excluded.direction,paused=excluded.paused,length_k=excluded.length_k,body_compact=excluded.body_compact,color=excluded.color,last_event_id=excluded.last_event_id,created_at=excluded.created_at,updated_at=excluded.updated_at,deleted=excluded.deleted,updated_ms=excluded.updated_ms";
   if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) return false;
   int i = 1;
   bind_text(stmt, i++, s.snake_id);
   bind_text(stmt, i++, s.owner_user_id);
+  bind_text(stmt, i++, s.snake_name);
+  bind_text(stmt, i++, s.snake_name_normalized);
   sqlite3_bind_int(stmt, i++, s.alive ? 1 : 0);
   sqlite3_bind_int(stmt, i++, s.is_on_field ? 1 : 0);
   sqlite3_bind_int(stmt, i++, s.head_x);
@@ -317,7 +342,7 @@ bool BufferedSqliteStore::FlushSnakeSnapshots(IPermanentStore& permanent, int fl
 
   sqlite3_stmt* stmt = nullptr;
   const char* sql =
-      "SELECT snake_id,owner_user_id,alive,is_on_field,head_x,head_y,direction,paused,length_k,body_compact,color,COALESCE(last_event_id,''),created_at,updated_at,deleted "
+      "SELECT snake_id,owner_user_id,COALESCE(snake_name,''),COALESCE(snake_name_normalized,''),alive,is_on_field,head_x,head_y,direction,paused,length_k,body_compact,color,COALESCE(last_event_id,''),created_at,updated_at,deleted "
       "FROM buffered_snake_snapshots LIMIT 500";
   if (sqlite3_prepare_v2(db_, sql, -1, &stmt, nullptr) != SQLITE_OK) return false;
 
@@ -326,19 +351,21 @@ bool BufferedSqliteStore::FlushSnakeSnapshots(IPermanentStore& permanent, int fl
     storage::Snake s;
     s.snake_id = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
     s.owner_user_id = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
-    s.alive = sqlite3_column_int(stmt, 2) != 0;
-    s.is_on_field = sqlite3_column_int(stmt, 3) != 0;
-    s.head_x = sqlite3_column_int(stmt, 4);
-    s.head_y = sqlite3_column_int(stmt, 5);
-    s.direction = sqlite3_column_int(stmt, 6);
-    s.paused = sqlite3_column_int(stmt, 7) != 0;
-    s.length_k = sqlite3_column_int(stmt, 8);
-    s.body_compact = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 9));
-    s.color = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 10));
-    s.last_event_id = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 11));
-    s.created_at = sqlite3_column_int64(stmt, 12);
-    s.updated_at = sqlite3_column_int64(stmt, 13);
-    const bool deleted = sqlite3_column_int(stmt, 14) != 0;
+    s.snake_name = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
+    s.snake_name_normalized = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 3));
+    s.alive = sqlite3_column_int(stmt, 4) != 0;
+    s.is_on_field = sqlite3_column_int(stmt, 5) != 0;
+    s.head_x = sqlite3_column_int(stmt, 6);
+    s.head_y = sqlite3_column_int(stmt, 7);
+    s.direction = sqlite3_column_int(stmt, 8);
+    s.paused = sqlite3_column_int(stmt, 9) != 0;
+    s.length_k = sqlite3_column_int(stmt, 10);
+    s.body_compact = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 11));
+    s.color = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 12));
+    s.last_event_id = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 13));
+    s.created_at = sqlite3_column_int64(stmt, 14);
+    s.updated_at = sqlite3_column_int64(stmt, 15);
+    const bool deleted = sqlite3_column_int(stmt, 16) != 0;
 
     PersistenceIntent intent;
     intent.type = deleted ? IntentType::SnakeSnapshotDeleted : IntentType::SnakeSnapshotUpdated;
