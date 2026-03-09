@@ -325,13 +325,21 @@ class GameService {
     return world_.ListUserSnakes(user_id);
   }
 
-  optional<int> create_snake_for_user(int user_id, const string& color) {
-    return world_.CreateSnakeForUser(user_id, color);
+  optional<int> create_snake_for_user(int user_id,
+                                      const string& color,
+                                      const string& snake_name = "",
+                                      const string& snake_name_normalized = "") {
+    return world_.CreateSnakeForUser(user_id, color, snake_name, snake_name_normalized);
   }
 
   optional<int> attach_cells_to_snake(int user_id, int snake_id, int amount) {
     ensure_loaded_from_storage_if_empty();
     return world_.AttachCellsForUser(user_id, snake_id, amount);
+  }
+
+  optional<int> delete_snake_for_user(int user_id, int snake_id) {
+    ensure_loaded_from_storage_if_empty();
+    return world_.DeleteSnakeForUser(user_id, snake_id);
   }
 
   void resize_world(int width, int height) {
@@ -1275,8 +1283,8 @@ static void seed(storage::IStorage& storage, GameService& game) {
   }
 
   game.load_from_storage_or_seed_positions();
-  if (game.list_user_snakes(1).empty()) game.create_snake_for_user(1, "#00ff00");
-  if (game.list_user_snakes(2).empty()) game.create_snake_for_user(2, "#00aaff");
+  if (game.list_user_snakes(1).empty()) game.create_snake_for_user(1, "#00ff00", "SeedAlpha", "seedalpha");
+  if (game.list_user_snakes(2).empty()) game.create_snake_for_user(2, "#00aaff", "SeedBeta", "seedbeta");
   game.flush_persistence_delta();
   game.load_from_storage_or_seed_positions();
   cout << "Seeded users: user1/pass1, user2/pass2 (1 snake each)\n";
@@ -2780,6 +2788,73 @@ int main(int argc, char** argv) {
     res.set_content(o.str(), "application/json");
   });
 
+  srv.Post(R"(/snake/(\d+)/delete)", [&](const httplib::Request& req, httplib::Response& res) {
+    add_cors(res);
+    auto uid = require_auth_user(auth, req);
+    if (!uid) {
+      res.status = 401;
+      res.set_content("{\"error\":\"unauthorized\"}", "application/json");
+      return;
+    }
+
+    const int snake_id = stoi(req.matches[1]);
+    const std::string snake_id_str = std::to_string(snake_id);
+    const std::string uid_str = std::to_string(*uid);
+    const auto snake = storage->GetSnakeById(snake_id_str);
+    if (!snake.has_value()) {
+      res.status = 404;
+      res.set_content("{\"error\":\"snake_not_found\"}", "application/json");
+      return;
+    }
+    if (snake->owner_user_id != uid_str) {
+      res.status = 403;
+      res.set_content("{\"error\":\"forbidden\"}", "application/json");
+      return;
+    }
+
+    int refund_cells = std::max(0, snake->length_k);
+    for (const auto& ws : game.list_user_snakes(*uid)) {
+      if (ws.id == snake_id) {
+        refund_cells = std::max(refund_cells, static_cast<int>(ws.body.size()));
+        break;
+      }
+    }
+
+    if (!storage->IncrementUserBalance(uid_str, refund_cells)) {
+      res.status = 500;
+      res.set_content("{\"error\":\"balance_update_failed\"}", "application/json");
+      return;
+    }
+
+    bool deleted = storage->DeleteSnakeEventsBySnakeId(snake_id_str) && storage->DeleteSnake(snake_id_str);
+    if (!deleted) {
+      (void)storage->IncrementUserBalance(uid_str, -refund_cells);
+      std::cerr << "[snake_delete] user_id=" << uid_str
+                << " snake_id=" << snake_id
+                << " reason=snake_create_persist_failed"
+                << " step=delete_snake\n";
+      res.status = 500;
+      res.set_content("{\"error\":\"snake_delete_failed\"}", "application/json");
+      return;
+    }
+
+    (void)game.delete_snake_for_user(*uid, snake_id);
+    game.flush_persistence_delta();
+    game.load_from_storage_or_seed_positions();
+    economy.InvalidateCache();
+    const auto user_after = storage->GetUserById(uid_str);
+    const int64_t balance_after = user_after ? user_after->balance_mi : 0;
+
+    ostringstream o;
+    o << "{"
+      << "\"ok\":true,"
+      << "\"refunded_cells\":" << refund_cells << ","
+      << "\"balance_mi\":" << balance_after << ","
+      << "\"liquid_assets\":" << balance_after
+      << "}";
+    res.set_content(o.str(), "application/json");
+  });
+
   srv.Post("/game/camera", [&](const httplib::Request& req, httplib::Response& res) {
     add_cors(res);
     auto uid = require_auth_user(auth, req);
@@ -3182,7 +3257,7 @@ int main(int argc, char** argv) {
       starter_snake_id = existing.front().id;
     } else {
       const string color = "#00ffaa";
-      auto created = game.create_snake_for_user(uid, color);
+      auto created = game.create_snake_for_user(uid, color, *snake_name, snake_norm);
       if (!created.has_value()) {
         res.status = 500;
         res.set_content("{\"error\":\"starter_snake_create_failed\"}", "application/json");
@@ -3195,17 +3270,27 @@ int main(int argc, char** argv) {
     }
 
     auto starter_snake = storage->GetSnakeById(std::to_string(starter_snake_id));
-    if (starter_snake.has_value()) {
+    if (!starter_snake.has_value()) {
+      res.status = 500;
+      res.set_content("{\"error\":\"starter_snake_visibility_failed\"}", "application/json");
+      return;
+    }
+    if (starter_snake_created_now) {
+      // Creation must be atomic with naming: no post-create rename fallback.
+      if (starter_snake->snake_name != *snake_name || starter_snake->snake_name_normalized != snake_norm) {
+        (void)storage->DeleteSnake(std::to_string(starter_snake_id));
+        game.load_from_storage_or_seed_positions();
+        res.status = 500;
+        res.set_content("{\"error\":\"starter_snake_name_persist_failed\"}", "application/json");
+        return;
+      }
+    } else if (starter_snake->snake_name.empty()) {
+      // Existing unnamed starter from legacy/test state: apply requested onboarding name.
       starter_snake->snake_name = *snake_name;
       starter_snake->snake_name_normalized = snake_norm;
       starter_snake->updated_at = static_cast<int64_t>(time(nullptr));
       if (!storage->PutSnake(*starter_snake)) {
         if (storage->SnakeNameExistsNormalized(snake_norm, std::to_string(starter_snake_id))) {
-          // Best-effort rollback for a starter snake created in this request.
-          if (starter_snake_created_now) {
-            (void)storage->DeleteSnake(std::to_string(starter_snake_id));
-            game.load_from_storage_or_seed_positions();
-          }
           res.status = 409;
           res.set_content("{\"error\":\"snake_name_taken\"}", "application/json");
           return;
@@ -3301,6 +3386,8 @@ int main(int argc, char** argv) {
         storage::Snake s;
         s.snake_id = std::to_string(rs.id);
         s.owner_user_id = uid_str;
+        s.snake_name = rs.snake_name;
+        s.snake_name_normalized = rs.snake_name_normalized;
         s.color = rs.color;
         s.paused = rs.paused;
         s.length_k = static_cast<int>(rs.body.size());
@@ -3391,8 +3478,14 @@ int main(int argc, char** argv) {
       } catch (...) {
         continue;
       }
-      const std::string snake_name =
-          !snakes[i].snake_name.empty() ? snakes[i].snake_name : ("Snake #" + std::to_string(snake_id_num));
+      if (snakes[i].snake_name.empty()) {
+        // Hard invariant: unnamed snakes are invalid for user-facing lists.
+        std::cerr << "[me_snakes] user_id=" << std::to_string(*uid)
+                  << " reason=owned_snake_serialization_failed"
+                  << " snake_id=" << snakes[i].snake_id << "\n";
+        continue;
+      }
+      const std::string snake_name = snakes[i].snake_name;
       if (!first_written) o << ",";
       first_written = false;
       o << "{" << "\"id\":" << snake_id_num << ","
@@ -3518,12 +3611,17 @@ int main(int argc, char** argv) {
     string color = c ? *c : "#ff00ff";
     const string uid_str = std::to_string(*uid);
     if (!snake_name || !is_valid_game_name(*snake_name)) {
+      std::cerr << "[me_snakes_create] user_id=" << uid_str
+                << " reason=snake_create_name_validation_failed\n";
       res.status = 400;
       res.set_content("{\"error\":\"invalid_snake_name\"}", "application/json");
       return;
     }
     const string snake_name_norm = normalize_name(*snake_name);
     if (storage->SnakeNameExistsNormalized(snake_name_norm)) {
+      std::cerr << "[me_snakes_create] user_id=" << uid_str
+                << " snake_name=" << json_escape(*snake_name)
+                << " reason=snake_create_uniqueness_failed\n";
       res.status = 409;
       res.set_content("{\"error\":\"snake_name_taken\"}", "application/json");
       return;
@@ -3541,15 +3639,31 @@ int main(int argc, char** argv) {
       return;
     }
     if (!storage->IncrementUserBalance(uid_str, -1)) {
+      std::cerr << "[me_snakes_create] user_id=" << uid_str
+                << " reason=snake_create_persist_failed"
+                << " step=debit_user_balance\n";
       res.status = 500;
       res.set_content("{\"error\":\"balance_update_failed\"}", "application/json");
       return;
     }
 
-    auto id = game.create_snake_for_user(*uid, color);
+    auto rollback_created_snake = [&](int created_id) {
+      (void)game.delete_snake_for_user(*uid, created_id);
+      game.flush_persistence_delta();
+      (void)storage->DeleteSnakeEventsBySnakeId(std::to_string(created_id));
+      (void)storage->DeleteSnake(std::to_string(created_id));
+      (void)storage->IncrementUserBalance(uid_str, 1);
+      game.load_from_storage_or_seed_positions();
+      economy.InvalidateCache();
+    };
+
+    auto id = game.create_snake_for_user(*uid, color, *snake_name, snake_name_norm);
     if (!id) {
       // Roll back storage debit when snake creation fails (limit/placement/etc).
       storage->IncrementUserBalance(uid_str, 1);
+      std::cerr << "[me_snakes_create] user_id=" << uid_str
+                << " reason=snake_create_persist_failed"
+                << " step=create_snake_runtime\n";
       res.status = 429;
       res.set_content("{\"error\":\"snake_limit\"}", "application/json");
       return;
@@ -3558,14 +3672,15 @@ int main(int argc, char** argv) {
     persistence_coordinator.FlushNow();
     std::string snake_view_reason;
     const auto visible_snakes = build_owned_snake_view(*uid, &snake_view_reason);
-    bool visible_in_view = false;
+    const storage::Snake* created_snake_in_view = nullptr;
     for (const auto& s : visible_snakes) {
       if (s.snake_id == std::to_string(*id)) {
-        visible_in_view = true;
+        created_snake_in_view = &s;
         break;
       }
     }
-    if (!visible_in_view) {
+    if (!created_snake_in_view) {
+      rollback_created_snake(*id);
       res.status = 500;
       std::cerr << "[me_snakes_create] user_id=" << uid_str
                 << " snake_id=" << *id
@@ -3575,30 +3690,26 @@ int main(int argc, char** argv) {
       res.set_content("{\"error\":\"snake_visibility_failed\"}", "application/json");
       return;
     }
-    auto created_snake = storage->GetSnakeById(std::to_string(*id));
-    if (created_snake.has_value()) {
-      created_snake->snake_name = *snake_name;
-      created_snake->snake_name_normalized = snake_name_norm;
-      created_snake->updated_at = static_cast<int64_t>(time(nullptr));
-      if (!storage->PutSnake(*created_snake)) {
-        if (storage->SnakeNameExistsNormalized(snake_name_norm, std::to_string(*id))) {
-          // Roll back snake create on uniqueness conflict so callers can retry cleanly.
-          (void)storage->DeleteSnake(std::to_string(*id));
-          (void)storage->IncrementUserBalance(uid_str, 1);
-          game.load_from_storage_or_seed_positions();
-          economy.InvalidateCache();
-          res.status = 409;
-          res.set_content("{\"error\":\"snake_name_taken\"}", "application/json");
-          return;
-        }
-        std::cerr << "[me_snakes_create] user_id=" << uid_str
-                  << " snake_id=" << *id
-                  << " reason=owned_snake_serialization_failed\n";
-      }
-    } else {
+    if (created_snake_in_view->snake_name.empty() ||
+        created_snake_in_view->snake_name_normalized.empty()) {
+      rollback_created_snake(*id);
+      res.status = 500;
       std::cerr << "[me_snakes_create] user_id=" << uid_str
                 << " snake_id=" << *id
-                << " reason=owned_snake_query_failed\n";
+                << " reason=owned_snake_serialization_failed\n";
+      res.set_content("{\"error\":\"snake_name_persist_failed\"}", "application/json");
+      return;
+    }
+    if (created_snake_in_view->snake_name != *snake_name ||
+        created_snake_in_view->snake_name_normalized != snake_name_norm) {
+      // Strict create contract: snake must be born with the real validated name.
+      rollback_created_snake(*id);
+      std::cerr << "[me_snakes_create] user_id=" << uid_str
+                << " snake_id=" << *id
+                << " reason=owned_snake_serialization_failed\n";
+      res.status = 500;
+      res.set_content("{\"error\":\"snake_name_persist_failed\"}", "application/json");
+      return;
     }
     economy.InvalidateCache();
 
@@ -3608,7 +3719,7 @@ int main(int argc, char** argv) {
     ostringstream o;
     o << "{"
       << "\"id\":" << *id << ","
-      << "\"name\":\"" << json_escape(*snake_name) << "\","
+      << "\"name\":\"" << json_escape(created_snake_in_view->snake_name) << "\","
       << "\"balance_mi\":" << balance_after << ","
       << "\"liquid_assets\":" << balance_after
       << "}";

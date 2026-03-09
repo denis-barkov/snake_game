@@ -116,6 +116,8 @@ void World::LoadFromStorage(const std::vector<storage::Snake>& stored_snakes,
     Snake s;
     s.id = ToInt(ss.snake_id);
     s.user_id = ToInt(ss.owner_user_id);
+    s.snake_name = ss.snake_name;
+    s.snake_name_normalized = ss.snake_name_normalized;
     s.alive = ss.alive;
     s.dir = static_cast<Dir>(ss.direction);
     s.paused = ss.paused;
@@ -399,8 +401,13 @@ std::vector<Snake> World::ListUserSnakes(int user_id) const {
   return out;
 }
 
-std::optional<int> World::CreateSnakeForUser(int user_id, const std::string& color) {
+std::optional<int> World::CreateSnakeForUser(int user_id,
+                                             const std::string& color,
+                                             const std::string& snake_name,
+                                             const std::string& snake_name_normalized) {
   std::lock_guard<std::mutex> lock(mu_);
+  // Hard invariant: world never creates unnamed snakes.
+  if (snake_name.empty() || snake_name_normalized.empty()) return std::nullopt;
 
   int count = 0;
   for (const auto& s : snakes_) {
@@ -411,6 +418,8 @@ std::optional<int> World::CreateSnakeForUser(int user_id, const std::string& col
   Snake s;
   s.id = next_snake_id_++;
   s.user_id = user_id;
+  s.snake_name = snake_name;
+  s.snake_name_normalized = snake_name_normalized;
   s.color = color;
   s.dir = Dir::Stop;
   s.paused = false;
@@ -454,6 +463,22 @@ std::optional<int> World::AttachCellsForUser(int user_id, int snake_id, int amou
   MarkSnakeDirtyLocked(s->id);
   chunk_manager_.Rebuild(snakes_, foods_, obstacles_, tick_);
   return static_cast<int>(s->body.size());
+}
+
+std::optional<int> World::DeleteSnakeForUser(int user_id, int snake_id) {
+  std::lock_guard<std::mutex> lock(mu_);
+  for (auto it = snakes_.begin(); it != snakes_.end(); ++it) {
+    if (it->id != snake_id) continue;
+    if (it->user_id != user_id) return std::nullopt;
+    const int refunded_cells = static_cast<int>(it->body.size());
+    deleted_snake_ids_.insert(snake_id);
+    dirty_snake_ids_.erase(snake_id);
+    snakes_.erase(it);
+    snake_created_at_ms_.erase(snake_id);
+    chunk_manager_.Rebuild(snakes_, foods_, obstacles_, tick_);
+    return std::max(0, refunded_cells);
+  }
+  return std::nullopt;
 }
 
 void World::ResizeWorld(int new_width, int new_height) {
@@ -528,6 +553,8 @@ PersistenceDelta World::DrainPersistenceDelta(int64_t ts_ms) {
     storage::Snake out;
     out.snake_id = std::to_string(s->id);
     out.owner_user_id = std::to_string(s->user_id);
+    out.snake_name = s->snake_name;
+    out.snake_name_normalized = s->snake_name_normalized;
     out.alive = s->alive;
     out.is_on_field = s->alive;
     out.head_x = s->body.empty() ? 0 : s->body[0].x;

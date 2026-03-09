@@ -446,6 +446,11 @@ The script fails loudly if any of these fail:
 6. Confirm snake names are globally unique:
    - creating/renaming to an existing snake name returns `409 {"error":"snake_name_taken"}`
    - UI shows: `This snake name is already taken. Please choose another name.`
+7. Confirm newly created snakes keep the exact user-provided name immediately (no `Snake #N` fallback labels).
+8. Confirm snake delete works from the three-dots menu:
+   - snake is removed from world and `/me/snakes`
+   - liquid assets increase by deleted snake length
+   - deleted snake name becomes available for reuse.
 
 ## Watch camera / AOI-ready behavior
 

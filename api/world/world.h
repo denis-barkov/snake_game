@@ -86,8 +86,12 @@ class World {
   bool QueuePauseToggle(int user_id, int snake_id);
 
   std::vector<Snake> ListUserSnakes(int user_id) const;
-  std::optional<int> CreateSnakeForUser(int user_id, const std::string& color);
+  std::optional<int> CreateSnakeForUser(int user_id,
+                                        const std::string& color,
+                                        const std::string& snake_name = "",
+                                        const std::string& snake_name_normalized = "");
   std::optional<int> AttachCellsForUser(int user_id, int snake_id, int amount);
+  std::optional<int> DeleteSnakeForUser(int user_id, int snake_id);
   void ResizeWorld(int new_width, int new_height);
 
   // Drains only meaningful state mutations (no per-tick movement writes).

@@ -367,6 +367,40 @@
       gap: 8px;
       justify-content: flex-end;
     }
+    .app-modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.45);
+      z-index: 74;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 12px;
+    }
+    .app-modal-card {
+      width: min(460px, calc(100vw - 24px));
+      background: #fff;
+      border-radius: 12px;
+      border: 1px solid #d7dde2;
+      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.22);
+      padding: 16px;
+    }
+    .app-modal-card h3 {
+      margin: 0 0 8px;
+      font-size: 18px;
+    }
+    .app-modal-actions {
+      display: flex;
+      gap: 8px;
+      justify-content: flex-end;
+      margin-top: 10px;
+    }
+    .app-modal-error {
+      min-height: 18px;
+      font-size: 12px;
+      color: #b42318;
+      margin-top: 6px;
+    }
     #login-transition-backdrop {
       position: fixed;
       inset: 0;
@@ -631,6 +665,28 @@
       <div class="row" style="display:flex; gap:8px; justify-content:flex-end;">
         <button id="deleteAccountCancelBtn">Cancel</button>
         <button id="deleteAccountConfirmBtn">Delete Permanently</button>
+      </div>
+    </div>
+  </div>
+  <div id="snake-rename-backdrop" class="app-modal-backdrop" role="dialog" aria-modal="true" aria-label="Rename Snake">
+    <div class="app-modal-card">
+      <h3>Rename Snake</h3>
+      <div class="row"><input id="snakeRenameInput" placeholder="Snake Name" /></div>
+      <div id="snakeRenameError" class="app-modal-error"></div>
+      <div class="app-modal-actions">
+        <button id="snakeRenameCancelBtn" type="button">Cancel</button>
+        <button id="snakeRenameSaveBtn" type="button">Save</button>
+      </div>
+    </div>
+  </div>
+  <div id="snake-delete-backdrop" class="app-modal-backdrop" role="dialog" aria-modal="true" aria-label="Delete Snake">
+    <div class="app-modal-card">
+      <h3>Delete Snake</h3>
+      <p id="snakeDeleteMessage">This action removes the snake permanently.</p>
+      <div id="snakeDeleteError" class="app-modal-error"></div>
+      <div class="app-modal-actions">
+        <button id="snakeDeleteCancelBtn" type="button">Cancel</button>
+        <button id="snakeDeleteConfirmBtn" type="button">Delete</button>
       </div>
     </div>
   </div>
@@ -1085,6 +1141,16 @@
   const deleteAccountCancelBtn = document.getElementById("deleteAccountCancelBtn");
   const deleteAccountConfirmBtn = document.getElementById("deleteAccountConfirmBtn");
   const deleteCompanyConfirmInputEl = document.getElementById("deleteCompanyConfirmInput");
+  const snakeRenameBackdropEl = document.getElementById("snake-rename-backdrop");
+  const snakeRenameInputEl = document.getElementById("snakeRenameInput");
+  const snakeRenameErrorEl = document.getElementById("snakeRenameError");
+  const snakeRenameCancelBtn = document.getElementById("snakeRenameCancelBtn");
+  const snakeRenameSaveBtn = document.getElementById("snakeRenameSaveBtn");
+  const snakeDeleteBackdropEl = document.getElementById("snake-delete-backdrop");
+  const snakeDeleteMessageEl = document.getElementById("snakeDeleteMessage");
+  const snakeDeleteErrorEl = document.getElementById("snakeDeleteError");
+  const snakeDeleteCancelBtn = document.getElementById("snakeDeleteCancelBtn");
+  const snakeDeleteConfirmBtn = document.getElementById("snakeDeleteConfirmBtn");
   const onboardingBackdropEl = document.getElementById("onboarding-backdrop");
   const onboardingTitleEl = document.getElementById("onboarding-title");
   const onboardingCopyEl = document.getElementById("onboarding-copy");
@@ -1128,6 +1194,8 @@
   let serverMask = { mode: "none", style: "jagged", seed: 0, playable_cells: 0, unplayable_cells: 0 };
   let debugModeLabel = "PUBLIC";
   let debugPublicChunk = { cx: 0, cy: 0 };
+  let pendingRenameSnakeId = null;
+  let pendingDeleteSnakeId = null;
   let wsHandle = null;
   let wsBackoffMs = 1000;
   let wsConnected = false;
@@ -1762,6 +1830,81 @@
     borrowBtn.disabled = !(isAuth && Number.isFinite(borrowAmount) && borrowAmount > 0);
   }
 
+  function closeSnakeRenameModal() {
+    pendingRenameSnakeId = null;
+    snakeRenameBackdropEl.style.display = "none";
+    snakeRenameErrorEl.textContent = "";
+  }
+
+  function openSnakeRenameModal(snakeId, currentName) {
+    pendingRenameSnakeId = snakeId;
+    snakeRenameInputEl.value = String(currentName || "");
+    snakeRenameErrorEl.textContent = "";
+    snakeRenameBackdropEl.style.display = "flex";
+    snakeRenameInputEl.focus();
+    snakeRenameInputEl.select();
+  }
+
+  async function saveSnakeRename() {
+    if (!pendingRenameSnakeId) return;
+    const candidate = String(snakeRenameInputEl.value || "").trim();
+    if (!isValidGameName(candidate)) {
+      snakeRenameErrorEl.textContent = "Invalid snake name format.";
+      return;
+    }
+    const sid = pendingRenameSnakeId;
+    const res = await api(`/snake/${sid}/rename`, {
+      method: "POST",
+      body: JSON.stringify({ snake_name: candidate })
+    });
+    if (!res.ok) {
+      const t = await res.text();
+      if (t.includes("\"snake_name_taken\"")) {
+        snakeRenameErrorEl.textContent = "This snake name is already taken. Please choose another name.";
+        return;
+      }
+      snakeRenameErrorEl.textContent = `Rename failed: ${t}`;
+      return;
+    }
+    closeSnakeRenameModal();
+    await loadMySnakes();
+  }
+
+  function closeSnakeDeleteModal() {
+    pendingDeleteSnakeId = null;
+    snakeDeleteBackdropEl.style.display = "none";
+    snakeDeleteErrorEl.textContent = "";
+  }
+
+  function openSnakeDeleteModal(snakeId, snakeName, snakeLen) {
+    pendingDeleteSnakeId = snakeId;
+    const len = Number.isFinite(Number(snakeLen)) ? Math.max(0, Number(snakeLen)) : 0;
+    snakeDeleteMessageEl.textContent =
+      `Delete "${snakeName}"? The snake will be removed, ${len} cells will return to your liquid assets, and this action cannot be undone instantly.`;
+    snakeDeleteErrorEl.textContent = "";
+    snakeDeleteBackdropEl.style.display = "flex";
+  }
+
+  async function confirmSnakeDelete() {
+    if (!pendingDeleteSnakeId) return;
+    const sid = pendingDeleteSnakeId;
+    const res = await api(`/snake/${sid}/delete`, { method: "POST" });
+    if (!res.ok) {
+      const t = await res.text();
+      snakeDeleteErrorEl.textContent = `Delete failed: ${t}`;
+      return;
+    }
+    const data = await res.json().catch(() => ({}));
+    const liquidAssets = Number.isFinite(Number(data.liquid_assets)) ? Number(data.liquid_assets) : Number(data.balance_mi);
+    if (Number.isFinite(liquidAssets)) {
+      myBalance = liquidAssets;
+      myBalanceEl.textContent = fmtInt(myBalance);
+    }
+    closeSnakeDeleteModal();
+    await loadMySnakes();
+    await loadUserMe();
+  }
+
   async function loadMySnakes() {
     if (!token) return;
     const res = await api("/me/snakes");
@@ -1786,9 +1929,10 @@
 
     mySnakesEl.innerHTML = "";
     for (const s of data.snakes) {
+      if (!(typeof s.name === "string" && s.name.trim())) continue;
       const isSelected = s.id === selectedSnakeId;
       const isWatched = s.id === watchedSnakeId;
-      const safeName = (typeof s.name === "string" && s.name.trim()) ? s.name.trim() : `Snake #${s.id}`;
+      const safeName = s.name.trim();
       const div = document.createElement("div");
       div.className = "snake-item" + (isSelected ? " active" : "");
       div.onclick = () => {
@@ -1819,6 +1963,7 @@
             <button class="snake-menu-btn" data-sid="${s.id}" title="Snake actions">⋯</button>
             <div class="snake-menu" data-sid="${s.id}" style="display:none; position:absolute; right:0; top:22px; z-index:8; background:#fff; border:1px solid #d7dfd5; border-radius:6px; min-width:120px;">
               <button class="snake-rename-btn" data-sid="${s.id}" data-sname="${safeName.replace(/"/g, '&quot;')}" style="width:100%; text-align:left; border:0; background:#fff; padding:8px;">Rename Snake</button>
+              <button class="snake-delete-btn" data-sid="${s.id}" data-sname="${safeName.replace(/"/g, '&quot;')}" data-slen="${Number(s.len) || 0}" style="width:100%; text-align:left; border:0; background:#fff; padding:8px;">Delete Snake</button>
             </div>
           </div>
         </span>
@@ -1863,27 +2008,16 @@
         ev.stopPropagation();
         const sid = Number(ev.currentTarget.getAttribute("data-sid"));
         const currentName = ev.currentTarget.getAttribute("data-sname") || "";
-        const nextName = prompt("Rename snake", currentName);
-        if (nextName == null) return;
-        const candidate = String(nextName).trim();
-        if (!isValidGameName(candidate)) {
-          alert("Invalid snake name format.");
-          return;
-        }
-        const res = await api(`/snake/${sid}/rename`, {
-          method: "POST",
-          body: JSON.stringify({ snake_name: candidate })
-        });
-        if (!res.ok) {
-          const t = await res.text();
-          if (t.includes("\"snake_name_taken\"")) {
-            alert("This snake name is already taken.\nPlease choose another name.");
-            return;
-          }
-          alert("Rename failed: " + t);
-          return;
-        }
-        await loadMySnakes();
+        openSnakeRenameModal(sid, currentName);
+      });
+    });
+    mySnakesEl.querySelectorAll(".snake-delete-btn").forEach((el) => {
+      el.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        const sid = Number(ev.currentTarget.getAttribute("data-sid"));
+        const snakeName = ev.currentTarget.getAttribute("data-sname") || "Snake";
+        const snakeLen = Number(ev.currentTarget.getAttribute("data-slen") || "0");
+        openSnakeDeleteModal(sid, snakeName, snakeLen);
       });
     });
     updateActionButtons();
@@ -2071,6 +2205,23 @@
   attach1Btn.onclick = () => attachCells(1);
   attach10Btn.onclick = () => attachCells(10);
   attach50Btn.onclick = () => attachCells(50);
+  snakeRenameCancelBtn.onclick = closeSnakeRenameModal;
+  snakeRenameSaveBtn.onclick = saveSnakeRename;
+  snakeDeleteCancelBtn.onclick = closeSnakeDeleteModal;
+  snakeDeleteConfirmBtn.onclick = confirmSnakeDelete;
+  snakeRenameInputEl.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter") {
+      ev.preventDefault();
+      saveSnakeRename();
+    }
+    if (ev.key === "Escape") {
+      ev.preventDefault();
+      closeSnakeRenameModal();
+    }
+  });
+  snakeRenameBackdropEl.addEventListener("click", (ev) => {
+    if (ev.target === snakeRenameBackdropEl) closeSnakeRenameModal();
+  });
   borrowAmountEl.addEventListener("input", updateActionButtons);
   attachAmountEl.addEventListener("input", updateActionButtons);
   companyNameInputEl.addEventListener("input", () => {

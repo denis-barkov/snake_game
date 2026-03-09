@@ -29,6 +29,9 @@ Vec2 StepWrapped(Vec2 p, Dir d, int width, int height);
 struct Snake {
   int id = 0;
   int user_id = 0;
+  // Persisted identity fields used by user-owned snake lists.
+  std::string snake_name;
+  std::string snake_name_normalized;
   std::string color = "#00ff00";
   Dir dir = Dir::Stop;
   bool paused = false;

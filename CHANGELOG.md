@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.8.11 - 2026-03-08
+- Fixed snake creation atomicity: `/me/snakes` now validates visibility/name via owned-snake view and rolls back on failure so no orphan snake remains after an error.
+- Enforced no-unnamed-snake creation invariant in world/service create path and user-facing list serialization.
+- Added snake deletion endpoint (`POST /snake/{id}/delete`) with ownership checks, liquid-asset refund, and name release for future reuse.
+- Replaced browser-native rename/delete snake dialogs with app-styled custom modals in the My Snakes menu.
+
+## 2.8.10 - 2026-03-08
+- Fixed snake creation naming persistence: onboarding and manual create now persist the user-provided snake name in the initial create snapshot (no create-then-rename path).
+- Added strict create-time verification so create fails if the newly created snake is not stored with the requested validated name.
+- Updated runtime snake snapshots to carry `snake_name` and `snake_name_normalized`, improving immediate `/me/snakes` name visibility without numeric fallback labels.
+
 ## 2.8.9 - 2026-03-08
 - Enforced global snake-name uniqueness across onboarding, create, and rename flows using `snake_name_normalized` checks end-to-end.
 - Added a DynamoDB snake-name lookup index (`gsi_snake_name_normalized`) with backward-compatible scan fallback for older tables.
