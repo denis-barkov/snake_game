@@ -259,6 +259,16 @@
       align-items: center;
       gap: 4px;
     }
+    .snake-menu-btn {
+      border: 1px solid #c9d6c5;
+      border-radius: 6px;
+      background: #fff;
+      width: 26px;
+      height: 24px;
+      line-height: 20px;
+      padding: 0;
+      font-weight: 700;
+    }
     .snake-item input.watch-toggle {
       max-width: 100%;
     }
@@ -481,6 +491,7 @@
 
     <div class="panel">
       <div class="row"><strong>My Snakes</strong></div>
+      <div class="row"><small>Company: <span id="myCompanyName">—</span></small></div>
       <div id="mySnakes"></div>
       <div class="row"><button id="createSnakeBtn" disabled>Create Snake</button></div>
       <div class="row"><strong>Liquid Assets</strong></div>
@@ -1084,6 +1095,7 @@
   const snakeNameHintEl = document.getElementById("snakeNameHint");
   const completeOnboardingBtn = document.getElementById("completeOnboardingBtn");
   const createSnakeBtn = document.getElementById("createSnakeBtn");
+  const myCompanyNameEl = document.getElementById("myCompanyName");
   const myBalanceEl = document.getElementById("myBalance");
   const mySnakeCountEl = document.getElementById("mySnakeCount");
   const borrowAmountEl = document.getElementById("borrowAmount");
@@ -1731,6 +1743,7 @@
     if (!isAuth) {
       myBalanceEl.textContent = "—";
       mySnakeCountEl.textContent = "—";
+      myCompanyNameEl.textContent = "—";
       applySpectatorDefaults(gridW, gridH, true);
     }
     updateActionButtons();
@@ -1775,6 +1788,7 @@
     for (const s of data.snakes) {
       const isSelected = s.id === selectedSnakeId;
       const isWatched = s.id === watchedSnakeId;
+      const safeName = (typeof s.name === "string" && s.name.trim()) ? s.name.trim() : `Snake #${s.id}`;
       const div = document.createElement("div");
       div.className = "snake-item" + (isSelected ? " active" : "");
       div.onclick = () => {
@@ -1791,7 +1805,7 @@
       };
       div.innerHTML = `
         <span>
-          <span><span class="badge" style="background:${s.color}"></span>Snake #${s.id}</span><br />
+          <span><span class="badge" style="background:${s.color}"></span>${safeName}</span><br />
           <small>
             <label>
               <input class="watch-toggle" type="checkbox" data-sid="${s.id}" ${isWatched ? "checked" : ""} ${isSelected ? "" : "disabled"} />
@@ -1799,7 +1813,15 @@
             </label>
           </small>
         </span>
-        <small>${s.paused ? "paused" : "moving"} · Deployed Capital: ${s.len} cells</small>
+        <span style="display:flex; align-items:center; gap:8px;">
+          <small>${s.paused ? "paused" : "moving"} · Deployed Capital: ${s.len} cells</small>
+          <div style="position:relative;">
+            <button class="snake-menu-btn" data-sid="${s.id}" title="Snake actions">⋯</button>
+            <div class="snake-menu" data-sid="${s.id}" style="display:none; position:absolute; right:0; top:22px; z-index:8; background:#fff; border:1px solid #d7dfd5; border-radius:6px; min-width:120px;">
+              <button class="snake-rename-btn" data-sid="${s.id}" data-sname="${safeName.replace(/"/g, '&quot;')}" style="width:100%; text-align:left; border:0; background:#fff; padding:8px;">Rename Snake</button>
+            </div>
+          </div>
+        </span>
       `;
       mySnakesEl.appendChild(div);
     }
@@ -1823,6 +1845,43 @@
     mySnakesEl.querySelectorAll("label").forEach((el) => {
       el.addEventListener("click", (ev) => ev.stopPropagation());
     });
+    mySnakesEl.querySelectorAll(".snake-menu-btn").forEach((el) => {
+      el.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        const sid = ev.currentTarget.getAttribute("data-sid");
+        mySnakesEl.querySelectorAll(".snake-menu").forEach((m) => {
+          if (m.getAttribute("data-sid") === sid) {
+            m.style.display = (m.style.display === "none" || !m.style.display) ? "block" : "none";
+          } else {
+            m.style.display = "none";
+          }
+        });
+      });
+    });
+    mySnakesEl.querySelectorAll(".snake-rename-btn").forEach((el) => {
+      el.addEventListener("click", async (ev) => {
+        ev.stopPropagation();
+        const sid = Number(ev.currentTarget.getAttribute("data-sid"));
+        const currentName = ev.currentTarget.getAttribute("data-sname") || "";
+        const nextName = prompt("Rename snake", currentName);
+        if (nextName == null) return;
+        const candidate = String(nextName).trim();
+        if (!isValidGameName(candidate)) {
+          alert("Invalid snake name format.");
+          return;
+        }
+        const res = await api(`/snake/${sid}/rename`, {
+          method: "POST",
+          body: JSON.stringify({ snake_name: candidate })
+        });
+        if (!res.ok) {
+          const t = await res.text();
+          alert("Rename failed: " + t);
+          return;
+        }
+        await loadMySnakes();
+      });
+    });
     updateActionButtons();
   }
 
@@ -1835,6 +1894,9 @@
     myBalance = Number.isFinite(liquidAssets) ? liquidAssets : 0;
     myBalanceEl.textContent = fmtInt(myBalance);
     mySnakeCountEl.textContent = fmtInt(Number(data.snake_count));
+    myCompanyNameEl.textContent = (typeof data.company_name === "string" && data.company_name.trim())
+      ? data.company_name.trim()
+      : "—";
     if (latestUserMetrics) {
       latestUserMetrics.liquid_assets = myBalance;
       updateMicroEconomyFromMetrics(latestUserMetrics);
@@ -1910,9 +1972,16 @@
 
   async function createSnake() {
     if (!token) return;
+    const snakeName = prompt("New snake name");
+    if (snakeName == null) return;
+    const snakeNameTrimmed = String(snakeName).trim();
+    if (!isValidGameName(snakeNameTrimmed)) {
+      alert("Invalid snake name format.");
+      return;
+    }
     // random-ish color
     const color = "#" + Math.floor(Math.random()*16777215).toString(16).padStart(6,'0');
-    const res = await api("/me/snakes", { method:"POST", body: JSON.stringify({color}) });
+    const res = await api("/me/snakes", { method:"POST", body: JSON.stringify({ color, snake_name: snakeNameTrimmed }) });
     if (!res.ok) {
       const t = await res.text();
       alert("Create snake failed: " + t);
@@ -2463,6 +2532,9 @@
     ecoTipPopEl.style.display = "none";
   });
   document.addEventListener("click", (ev) => {
+    if (mySnakesEl && !mySnakesEl.contains(ev.target)) {
+      mySnakesEl.querySelectorAll(".snake-menu").forEach((m) => { m.style.display = "none"; });
+    }
     if (periodSummaryPopEl.style.display !== "block") return;
     if (periodSummaryPopEl.contains(ev.target)) return;
     periodSummaryPopEl.style.display = "none";

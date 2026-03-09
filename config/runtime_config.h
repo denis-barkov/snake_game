@@ -52,6 +52,7 @@ struct RuntimeConfig {
   bool google_auth_enabled = false;
   std::string google_client_id;
   int64_t starter_liquid_assets = 25;
+  bool auto_seed_on_start = false;
 
   static RuntimeConfig FromEnv();
   int TickIntervalMs() const;

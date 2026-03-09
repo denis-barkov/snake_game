@@ -1,6 +1,17 @@
 {
-  "current_version": "2.8.7",
+  "current_version": "2.8.8",
   "entries": [
+    {
+      "version": "2.8.8",
+      "release_date": "2026-03-08",
+      "notes": [
+        "Fixed attach regression by removing create-on-miss fallback: `/snake/{id}/attach` now fails cleanly without creating new snakes.",
+        "Switched `GET /me/snakes` to a durable-first read path for snake id/name consistency across runtime and buffered persistence layers.",
+        "Added named snake creation (`POST /me/snakes` with `snake_name`) and snake rename endpoint (`POST /snake/{id}/rename`).",
+        "Updated player sidebar identity UX to show Company Name and render stored snake names instead of numeric fallback labels.",
+        "Added runtime config `AUTO_SEED_ON_START` (default `false`) to keep local startup behavior clean and production-like by default."
+      ]
+    },
     {
       "version": "2.8.7",
       "release_date": "2026-03-08",

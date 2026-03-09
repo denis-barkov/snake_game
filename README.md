@@ -69,6 +69,7 @@ Simulation internals are structured in `api/world`:
 - `GOOGLE_AUTH_ENABLED` (`true`/`false`, default `false`)
 - `GOOGLE_CLIENT_ID` (Google Web OAuth client id, required when Google auth is enabled)
 - `STARTER_LIQUID_ASSETS` (default `25`)
+- `AUTO_SEED_ON_START` (`true`/`false`, default `false`)
 
 Default run values in Make:
 - `TICK_HZ=10`
@@ -186,6 +187,9 @@ Gameplay code emits intents through `PersistenceCoordinator`; it does not write 
 - `POST /user/borrow` (auth) with `{ "amount": <int> }` credits user liquid assets and debits treasury by the same amount.
   - reject codes: `invalid_amount`, `insufficient_treasury`, `persistence_write_failed`, `unauthorized`, `user_not_found`, `internal_error`
 - `POST /snake/{snake_id}/attach` (auth) with `{ "amount": <int> }` moves cells from storage to selected snake.
+  - if snake id is missing/not-owned/not-attachable, request fails and does **not** create any snake.
+- `POST /me/snakes` (auth) with `{ "snake_name": "...", "color": "#RRGGBB" }` creates a new named snake.
+- `POST /snake/{snake_id}/rename` (auth) with `{ "snake_name": "..." }` renames an owned snake.
 - `POST /economy/purchase` remains as an alias of `/user/borrow` for compatibility.
 
 UI terminology:
