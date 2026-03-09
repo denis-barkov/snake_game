@@ -3277,6 +3277,88 @@ int main(int argc, char** argv) {
     res.set_content("{\"ok\":true}", "application/json");
   });
 
+  auto build_owned_snake_view = [&](int uid,
+                                    std::string* out_reason = nullptr) -> std::vector<storage::Snake> {
+    std::unordered_map<int, storage::Snake> merged_by_id;
+    const std::string uid_str = std::to_string(uid);
+    if (out_reason) out_reason->clear();
+
+    try {
+      const auto runtime_snakes = game.list_user_snakes(uid);
+      for (const auto& rs : runtime_snakes) {
+        storage::Snake s;
+        s.snake_id = std::to_string(rs.id);
+        s.owner_user_id = uid_str;
+        s.color = rs.color;
+        s.paused = rs.paused;
+        s.length_k = static_cast<int>(rs.body.size());
+        merged_by_id[rs.id] = s;
+      }
+    } catch (const std::exception& ex) {
+      std::cerr << "[me_snakes] user_id=" << uid_str
+                << " reason=owned_snake_query_failed"
+                << " layer=runtime"
+                << " error=" << ex.what() << "\n";
+      if (out_reason) *out_reason = "owned_snake_query_failed";
+    } catch (...) {
+      std::cerr << "[me_snakes] user_id=" << uid_str
+                << " reason=owned_snake_query_failed"
+                << " layer=runtime"
+                << " error=unknown\n";
+      if (out_reason) *out_reason = "owned_snake_query_failed";
+    }
+
+    try {
+      for (const auto& s : storage->ListSnakes()) {
+        if (s.owner_user_id != uid_str) continue;
+        int snake_id_num = 0;
+        try {
+          snake_id_num = std::stoi(s.snake_id);
+        } catch (...) {
+          std::cerr << "[me_snakes] user_id=" << uid_str
+                    << " reason=owned_snake_hydration_failed"
+                    << " snake_id_raw=" << s.snake_id << "\n";
+          continue;
+        }
+        auto it = merged_by_id.find(snake_id_num);
+        if (it == merged_by_id.end()) {
+          merged_by_id.emplace(snake_id_num, s);
+        } else {
+          // Prefer durable name metadata, keep runtime length when larger/newer.
+          if (!s.snake_name.empty()) it->second.snake_name = s.snake_name;
+          if (!s.snake_name_normalized.empty()) it->second.snake_name_normalized = s.snake_name_normalized;
+          if (!s.color.empty()) it->second.color = s.color;
+          it->second.paused = s.paused;
+          it->second.length_k = std::max(it->second.length_k, s.length_k);
+        }
+      }
+    } catch (const std::exception& ex) {
+      std::cerr << "[me_snakes] user_id=" << uid_str
+                << " reason=owned_snake_query_failed"
+                << " layer=durable"
+                << " error=" << ex.what() << "\n";
+      if (out_reason) *out_reason = "owned_snake_query_failed";
+    } catch (...) {
+      std::cerr << "[me_snakes] user_id=" << uid_str
+                << " reason=owned_snake_query_failed"
+                << " layer=durable"
+                << " error=unknown\n";
+      if (out_reason) *out_reason = "owned_snake_query_failed";
+    }
+
+    std::vector<storage::Snake> snakes;
+    snakes.reserve(merged_by_id.size());
+    for (auto& kv : merged_by_id) snakes.push_back(std::move(kv.second));
+    std::sort(snakes.begin(), snakes.end(), [](const storage::Snake& a, const storage::Snake& b) {
+      try {
+        return std::stoi(a.snake_id) < std::stoi(b.snake_id);
+      } catch (...) {
+        return a.snake_id < b.snake_id;
+      }
+    });
+    return snakes;
+  };
+
   srv.Get("/me/snakes", [&](const httplib::Request& req, httplib::Response& res) {
     add_cors(res);
     auto uid = require_auth_user(auth, req);
@@ -3286,19 +3368,7 @@ int main(int argc, char** argv) {
       return;
     }
 
-    // Durable-first read path for ownership/name/id consistency across profiles.
-    std::vector<storage::Snake> snakes;
-    const std::string uid_str = std::to_string(*uid);
-    for (const auto& s : storage->ListSnakes()) {
-      if (s.owner_user_id == uid_str) snakes.push_back(s);
-    }
-    std::sort(snakes.begin(), snakes.end(), [](const storage::Snake& a, const storage::Snake& b) {
-      try {
-        return std::stoi(a.snake_id) < std::stoi(b.snake_id);
-      } catch (...) {
-        return a.snake_id < b.snake_id;
-      }
-    });
+    const auto snakes = build_owned_snake_view(*uid);
     ostringstream o;
     o << "{\"snakes\":[";
     bool first_written = true;
@@ -3469,19 +3539,39 @@ int main(int argc, char** argv) {
     }
     game.flush_persistence_delta();
     persistence_coordinator.FlushNow();
-    auto created_snake = storage->GetSnakeById(std::to_string(*id));
-    if (!created_snake.has_value()) {
+    std::string snake_view_reason;
+    const auto visible_snakes = build_owned_snake_view(*uid, &snake_view_reason);
+    bool visible_in_view = false;
+    for (const auto& s : visible_snakes) {
+      if (s.snake_id == std::to_string(*id)) {
+        visible_in_view = true;
+        break;
+      }
+    }
+    if (!visible_in_view) {
       res.status = 500;
+      std::cerr << "[me_snakes_create] user_id=" << uid_str
+                << " snake_id=" << *id
+                << " reason="
+                << (snake_view_reason.empty() ? "owned_snake_visibility_failed" : snake_view_reason)
+                << "\n";
       res.set_content("{\"error\":\"snake_visibility_failed\"}", "application/json");
       return;
     }
-    created_snake->snake_name = *snake_name;
-    created_snake->snake_name_normalized = snake_name_norm;
-    created_snake->updated_at = static_cast<int64_t>(time(nullptr));
-    if (!storage->PutSnake(*created_snake)) {
-      res.status = 500;
-      res.set_content("{\"error\":\"snake_name_persist_failed\"}", "application/json");
-      return;
+    auto created_snake = storage->GetSnakeById(std::to_string(*id));
+    if (created_snake.has_value()) {
+      created_snake->snake_name = *snake_name;
+      created_snake->snake_name_normalized = snake_name_norm;
+      created_snake->updated_at = static_cast<int64_t>(time(nullptr));
+      if (!storage->PutSnake(*created_snake)) {
+        std::cerr << "[me_snakes_create] user_id=" << uid_str
+                  << " snake_id=" << *id
+                  << " reason=owned_snake_serialization_failed\n";
+      }
+    } else {
+      std::cerr << "[me_snakes_create] user_id=" << uid_str
+                << " snake_id=" << *id
+                << " reason=owned_snake_query_failed\n";
     }
     economy.InvalidateCache();
 
