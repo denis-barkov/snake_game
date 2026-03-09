@@ -3269,35 +3269,68 @@ int main(int argc, char** argv) {
       persistence_coordinator.FlushNow();
     }
 
-    auto starter_snake = storage->GetSnakeById(std::to_string(starter_snake_id));
-    if (!starter_snake.has_value()) {
+    const auto runtime_snakes = game.list_user_snakes(uid);
+    const world::Snake* starter_runtime = nullptr;
+    for (const auto& s : runtime_snakes) {
+      if (s.id == starter_snake_id) {
+        starter_runtime = &s;
+        break;
+      }
+    }
+    if (!starter_runtime) {
+      if (starter_snake_created_now) {
+        (void)storage->DeleteSnake(std::to_string(starter_snake_id));
+        game.load_from_storage_or_seed_positions();
+      }
+      std::cerr << "[onboarding] user_id=" << user_id
+                << " snake_id=" << starter_snake_id
+                << " reason=owned_snake_query_failed\n";
       res.status = 500;
       res.set_content("{\"error\":\"starter_snake_visibility_failed\"}", "application/json");
       return;
     }
-    if (starter_snake_created_now) {
-      // Creation must be atomic with naming: no post-create rename fallback.
-      if (starter_snake->snake_name != *snake_name || starter_snake->snake_name_normalized != snake_norm) {
+    if (starter_runtime->snake_name.empty() || starter_runtime->snake_name_normalized.empty()) {
+      if (starter_snake_created_now) {
         (void)storage->DeleteSnake(std::to_string(starter_snake_id));
         game.load_from_storage_or_seed_positions();
-        res.status = 500;
-        res.set_content("{\"error\":\"starter_snake_name_persist_failed\"}", "application/json");
-        return;
       }
-    } else if (starter_snake->snake_name.empty()) {
-      // Existing unnamed starter from legacy/test state: apply requested onboarding name.
-      starter_snake->snake_name = *snake_name;
-      starter_snake->snake_name_normalized = snake_norm;
-      starter_snake->updated_at = static_cast<int64_t>(time(nullptr));
-      if (!storage->PutSnake(*starter_snake)) {
-        if (storage->SnakeNameExistsNormalized(snake_norm, std::to_string(starter_snake_id))) {
-          res.status = 409;
-          res.set_content("{\"error\":\"snake_name_taken\"}", "application/json");
+      std::cerr << "[onboarding] user_id=" << user_id
+                << " snake_id=" << starter_snake_id
+                << " reason=owned_snake_serialization_failed\n";
+      res.status = 500;
+      res.set_content("{\"error\":\"starter_snake_name_persist_failed\"}", "application/json");
+      return;
+    }
+    if (starter_runtime->snake_name != *snake_name ||
+        starter_runtime->snake_name_normalized != snake_norm) {
+      if (starter_snake_created_now) {
+        (void)storage->DeleteSnake(std::to_string(starter_snake_id));
+        game.load_from_storage_or_seed_positions();
+      } else {
+        // Existing unnamed starter from legacy/test state: apply requested onboarding name.
+        auto starter_snake = storage->GetSnakeById(std::to_string(starter_snake_id));
+        if (!starter_snake.has_value()) {
+          std::cerr << "[onboarding] user_id=" << user_id
+                    << " snake_id=" << starter_snake_id
+                    << " reason=owned_snake_query_failed\n";
+          res.status = 500;
+          res.set_content("{\"error\":\"starter_snake_visibility_failed\"}", "application/json");
           return;
         }
-        res.status = 500;
-        res.set_content("{\"error\":\"starter_snake_update_failed\"}", "application/json");
-        return;
+        starter_snake->snake_name = *snake_name;
+        starter_snake->snake_name_normalized = snake_norm;
+        starter_snake->updated_at = static_cast<int64_t>(time(nullptr));
+        if (!storage->PutSnake(*starter_snake)) {
+          if (storage->SnakeNameExistsNormalized(snake_norm, std::to_string(starter_snake_id))) {
+            res.status = 409;
+            res.set_content("{\"error\":\"snake_name_taken\"}", "application/json");
+            return;
+          }
+          res.status = 500;
+          res.set_content("{\"error\":\"starter_snake_update_failed\"}", "application/json");
+          return;
+        }
+        game.load_from_storage_or_seed_positions();
       }
     }
 

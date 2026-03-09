@@ -1,6 +1,15 @@
 {
-  "current_version": "2.8.11",
+  "current_version": "2.8.12",
   "entries": [
+    {
+      "version": "2.8.12",
+      "release_date": "2026-03-09",
+      "notes": [
+        "Fixed onboarding starter snake race in prod where immediate durable read could fail and return `starter_snake_visibility_failed` despite successful runtime creation.",
+        "Switched onboarding starter verification to runtime owned-snake visibility first, with durable fallback only for legacy-existing starter records.",
+        "Added rollback/logging guards so failed starter verification does not leave silent partial onboarding state."
+      ]
+    },
     {
       "version": "2.8.11",
       "release_date": "2026-03-08",

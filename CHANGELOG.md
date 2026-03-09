@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.8.12 - 2026-03-09
+- Fixed onboarding starter snake race in prod where immediate durable read could fail and return `starter_snake_visibility_failed` despite successful runtime creation.
+- Switched onboarding starter verification to runtime owned-snake visibility first, with durable fallback only for legacy-existing starter records.
+- Added rollback/logging guards so failed starter verification does not leave silent partial onboarding state.
+
 ## 2.8.11 - 2026-03-08
 - Fixed snake creation atomicity: `/me/snakes` now validates visibility/name via owned-snake view and rolls back on failure so no orphan snake remains after an error.
 - Enforced no-unnamed-snake creation invariant in world/service create path and user-facing list serialization.
