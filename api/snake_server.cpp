@@ -3176,6 +3176,7 @@ int main(int argc, char** argv) {
     }
 
     int starter_snake_id = 0;
+    bool starter_snake_created_now = false;
     auto existing = game.list_user_snakes(uid);
     if (!existing.empty()) {
       starter_snake_id = existing.front().id;
@@ -3188,6 +3189,7 @@ int main(int argc, char** argv) {
         return;
       }
       starter_snake_id = *created;
+      starter_snake_created_now = true;
       game.flush_persistence_delta();
       persistence_coordinator.FlushNow();
     }
@@ -3198,6 +3200,16 @@ int main(int argc, char** argv) {
       starter_snake->snake_name_normalized = snake_norm;
       starter_snake->updated_at = static_cast<int64_t>(time(nullptr));
       if (!storage->PutSnake(*starter_snake)) {
+        if (storage->SnakeNameExistsNormalized(snake_norm, std::to_string(starter_snake_id))) {
+          // Best-effort rollback for a starter snake created in this request.
+          if (starter_snake_created_now) {
+            (void)storage->DeleteSnake(std::to_string(starter_snake_id));
+            game.load_from_storage_or_seed_positions();
+          }
+          res.status = 409;
+          res.set_content("{\"error\":\"snake_name_taken\"}", "application/json");
+          return;
+        }
         res.status = 500;
         res.set_content("{\"error\":\"starter_snake_update_failed\"}", "application/json");
         return;
@@ -3429,6 +3441,11 @@ int main(int argc, char** argv) {
     snake->snake_name_normalized = snake_name_norm;
     snake->updated_at = static_cast<int64_t>(time(nullptr));
     if (!storage->PutSnake(*snake)) {
+      if (storage->SnakeNameExistsNormalized(snake_name_norm, std::to_string(snake_id))) {
+        res.status = 409;
+        res.set_content("{\"error\":\"snake_name_taken\"}", "application/json");
+        return;
+      }
       res.status = 500;
       res.set_content("{\"error\":\"rename_failed\"}", "application/json");
       return;
@@ -3564,6 +3581,16 @@ int main(int argc, char** argv) {
       created_snake->snake_name_normalized = snake_name_norm;
       created_snake->updated_at = static_cast<int64_t>(time(nullptr));
       if (!storage->PutSnake(*created_snake)) {
+        if (storage->SnakeNameExistsNormalized(snake_name_norm, std::to_string(*id))) {
+          // Roll back snake create on uniqueness conflict so callers can retry cleanly.
+          (void)storage->DeleteSnake(std::to_string(*id));
+          (void)storage->IncrementUserBalance(uid_str, 1);
+          game.load_from_storage_or_seed_positions();
+          economy.InvalidateCache();
+          res.status = 409;
+          res.set_content("{\"error\":\"snake_name_taken\"}", "application/json");
+          return;
+        }
         std::cerr << "[me_snakes_create] user_id=" << uid_str
                   << " snake_id=" << *id
                   << " reason=owned_snake_serialization_failed\n";

@@ -30,6 +30,16 @@ resource "aws_dynamodb_table" "snakes" {
     name = "snake_id"
     type = "S"
   }
+  attribute {
+    name = "snake_name_normalized"
+    type = "S"
+  }
+
+  global_secondary_index {
+    name            = "gsi_snake_name_normalized"
+    hash_key        = "snake_name_normalized"
+    projection_type = "ALL"
+  }
 
   tags = merge(var.tags, { Name = "${var.name_prefix}-snakes" })
 }

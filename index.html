@@ -1876,6 +1876,10 @@
         });
         if (!res.ok) {
           const t = await res.text();
+          if (t.includes("\"snake_name_taken\"")) {
+            alert("This snake name is already taken.\nPlease choose another name.");
+            return;
+          }
           alert("Rename failed: " + t);
           return;
         }
@@ -1984,6 +1988,10 @@
     const res = await api("/me/snakes", { method:"POST", body: JSON.stringify({ color, snake_name: snakeNameTrimmed }) });
     if (!res.ok) {
       const t = await res.text();
+      if (t.includes("\"snake_name_taken\"")) {
+        alert("This snake name is already taken.\nPlease choose another name.");
+        return;
+      }
       alert("Create snake failed: " + t);
       return;
     }
@@ -2124,6 +2132,10 @@
     });
     if (!res.ok) {
       const t = await res.text();
+      if (t.includes("\"snake_name_taken\"")) {
+        setNameHint(snakeNameHintEl, "This snake name is already taken. Please choose another name.", false);
+        return;
+      }
       setNameHint(companyNameHintEl, `Onboarding failed: ${t}`, false);
       return;
     }

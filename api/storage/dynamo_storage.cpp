@@ -594,6 +594,11 @@ std::optional<Snake> DynamoStorage::GetSnakeById(const std::string& snake_id) {
 }
 
 bool DynamoStorage::PutSnake(const Snake& s) {
+  if (!s.snake_name_normalized.empty() &&
+      SnakeNameExistsNormalized(s.snake_name_normalized, s.snake_id)) {
+    return false;
+  }
+
   Aws::DynamoDB::Model::PutItemRequest req;
   req.SetTableName(cfg_.snakes_table.c_str());
   req.AddItem("snake_id", S(s.snake_id));
@@ -618,13 +623,30 @@ bool DynamoStorage::PutSnake(const Snake& s) {
 bool DynamoStorage::SnakeNameExistsNormalized(const std::string& snake_name_normalized,
                                               const std::string& exclude_snake_id) {
   if (snake_name_normalized.empty()) return false;
+  Aws::DynamoDB::Model::QueryRequest q;
+  q.SetTableName(cfg_.snakes_table.c_str());
+  q.SetIndexName("gsi_snake_name_normalized");
+  q.SetKeyConditionExpression("snake_name_normalized = :n");
+  q.AddExpressionAttributeValues(":n", S(snake_name_normalized));
+  q.SetLimit(10);
+  auto out_q = client_->Query(q);
+  if (out_q.IsSuccess()) {
+    for (const auto& item : out_q.GetResult().GetItems()) {
+      const auto sid = GetString(item, "snake_id");
+      if (!exclude_snake_id.empty() && sid == exclude_snake_id) continue;
+      return true;
+    }
+    return false;
+  }
+
+  // Backward-compatible fallback while older tables without the GSI still exist.
   Aws::DynamoDB::Model::ScanRequest scan;
   scan.SetTableName(cfg_.snakes_table.c_str());
   scan.SetFilterExpression("snake_name_normalized = :n");
   scan.AddExpressionAttributeValues(":n", S(snake_name_normalized));
-  auto out = client_->Scan(scan);
-  if (!out.IsSuccess()) return false;
-  for (const auto& item : out.GetResult().GetItems()) {
+  auto out_s = client_->Scan(scan);
+  if (!out_s.IsSuccess()) return false;
+  for (const auto& item : out_s.GetResult().GetItems()) {
     const auto sid = GetString(item, "snake_id");
     if (!exclude_snake_id.empty() && sid == exclude_snake_id) continue;
     return true;

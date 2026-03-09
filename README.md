@@ -443,6 +443,9 @@ The script fails loudly if any of these fail:
 3. Borrow 1 cell and confirm user liquid assets increased by 1.
 4. Attach 1 cell to the selected snake and confirm snake length increased by 1.
 5. Confirm signed-in state hides Google sign-in and shows `Log out`.
+6. Confirm snake names are globally unique:
+   - creating/renaming to an existing snake name returns `409 {"error":"snake_name_taken"}`
+   - UI shows: `This snake name is already taken. Please choose another name.`
 
 ## Watch camera / AOI-ready behavior
 

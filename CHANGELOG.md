@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.8.9 - 2026-03-08
+- Enforced global snake-name uniqueness across onboarding, create, and rename flows using `snake_name_normalized` checks end-to-end.
+- Added a DynamoDB snake-name lookup index (`gsi_snake_name_normalized`) with backward-compatible scan fallback for older tables.
+- Hardened name persistence conflict handling so API returns `409 {"error":"snake_name_taken"}` consistently (including post-create rollback path).
+- Updated frontend create/rename/onboarding handling to show a clear retry message when a snake name is already taken.
+
 ## 2.8.8 - 2026-03-08
 - Fixed attach regression by removing create-on-miss fallback: `/snake/{id}/attach` now fails cleanly without creating new snakes.
 - Switched `GET /me/snakes` to a durable-first read path for snake id/name consistency across runtime and buffered persistence layers.
