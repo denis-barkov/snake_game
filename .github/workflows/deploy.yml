@@ -50,5 +50,5 @@ jobs:
             --output json || true
 
       - name: Deploy To Tagged Environment
-        timeout-minutes: 1
+        timeout-minutes: 3
         run: bash infra/scripts/deploy_app.sh
