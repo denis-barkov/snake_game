@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.8.17 - 2026-03-11
+- Switched production TLS architecture to ACM + ALB termination: Terraform now looks up an existing tagged `ISSUED` ACM certificate and attaches it to an HTTPS listener.
+- Added dual-subnet public VPC layout and ALB target-group wiring to ASG instances; Route53 now aliases the game domain to the ALB.
+- Tightened EC2 ingress so app traffic is accepted from ALB security group on HTTP only (public 443 no longer terminates on instance).
+- Added explicit ACM lifecycle tooling: `make ssl-cert-create` and `make ssl-cert-delete` with fixed `project=snake-game` tagging and env/domain tags.
+- Updated runtime proxy configs to HTTP listener mode behind ALB, eliminating per-rebuild certificate issuance on EC2.
+- Updated documentation for the new manual certificate workflow and Terraform certificate discovery behavior.
+
 ## 2.8.16 - 2026-03-11
 - Removed remaining password-auth artifacts from core storage/domain flow (no username/password fields or username lookup path in server storage logic).
 - Removed runtime seed modes and smartseed/admin seed commands; `snake_server` now supports only `serve|reset` and `snakecli app` supports only `reset|reload`.

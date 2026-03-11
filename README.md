@@ -135,6 +135,36 @@ Notes:
 - With default rollout flags (`SINGLE_CHUNK_MODE=true`, `AOI_ENABLED=false`) behavior stays equivalent to previous full-world snapshots.
 - AOI can be enabled later without changing frontend payload schema.
 
+### SSL Certificate Setup (AWS ACM)
+
+Terraform now consumes an existing ACM certificate (it does not create certificates).
+
+1. Create certificate (once per env/domain):
+```bash
+make ssl-cert-create ENV=prod DOMAIN=terrariumsnake.com
+# optional wildcard SAN (*.domain + root domain):
+make ssl-cert-create ENV=prod DOMAIN=terrariumsnake.com WILDCARD=--wildcard
+```
+2. Add DNS validation records in Route53 (from command output).
+3. Wait until ACM status is `ISSUED`.
+4. Run infrastructure apply/deploy:
+```bash
+make aws-apply BRANCH=main
+```
+(`aws-plan`/`aws-apply` now run a certificate pre-check and fail fast with a clear message if cert is missing or not `ISSUED`.)
+
+Notes:
+- Certificates are tagged and discovered by:
+  - `project=snake-game`
+  - `environment=<ENV>`
+  - `domain=<DOMAIN>`
+- Delete a certificate explicitly if needed:
+```bash
+make ssl-cert-delete ENV=prod DOMAIN=terrariumsnake.com
+```
+- ACM auto-renews certificates roughly every ~198 days; renewal starts around ~45 days before expiry.
+- Renewal remains automatic only while DNS validation records stay present.
+
 ### Persistence matrix
 
 Persistence is routed through `api/persistence` using typed intents and an active profile:

@@ -1,6 +1,18 @@
 {
-  "current_version": "2.8.16",
+  "current_version": "2.8.17",
   "entries": [
+    {
+      "version": "2.8.17",
+      "release_date": "2026-03-11",
+      "notes": [
+        "Switched production TLS architecture to ACM + ALB termination: Terraform now looks up an existing tagged `ISSUED` ACM certificate and attaches it to an HTTPS listener.",
+        "Added dual-subnet public VPC layout and ALB target-group wiring to ASG instances; Route53 now aliases the game domain to the ALB.",
+        "Tightened EC2 ingress so app traffic is accepted from ALB security group on HTTP only (public 443 no longer terminates on instance).",
+        "Added explicit ACM lifecycle tooling: `make ssl-cert-create` and `make ssl-cert-delete` with fixed `project=snake-game` tagging and env/domain tags.",
+        "Updated runtime proxy configs to HTTP listener mode behind ALB, eliminating per-rebuild certificate issuance on EC2.",
+        "Updated documentation for the new manual certificate workflow and Terraform certificate discovery behavior."
+      ]
+    },
     {
       "version": "2.8.16",
       "release_date": "2026-03-11",

@@ -7,7 +7,6 @@ NAME_PREFIX="${name_prefix}"
 APP_PORT="${app_port}"
 EIP_ALLOC_ID="${eip_allocation_id}"
 DOMAIN_NAME="${domain_name}"
-LE_EMAIL="${letsencrypt_email}"
 
 dnf -y update
 
@@ -237,11 +236,7 @@ fi
 
 if command -v caddy >/dev/null 2>&1; then
   cat >/etc/caddy/Caddyfile <<EOF
-{
-  email $${LE_EMAIL}
-}
-
-$${DOMAIN_NAME} {
+:80 {
   encode zstd gzip
 
   @ws path /ws

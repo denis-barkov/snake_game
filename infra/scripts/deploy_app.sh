@@ -324,7 +324,7 @@ COMMAND_ID="$(
 \"EOF_CADDY_UNIT\",
 \"fi\",
 \"if command -v caddy >/dev/null 2>&1; then cat > /etc/caddy/Caddyfile <<'EOF_CADDY'\",
-\"${DOMAIN_NAME} {\",
+\":80 {\",
 \"  encode zstd gzip\",
 \"  @sse path /game/stream\",
 \"  handle @sse {\",

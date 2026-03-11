@@ -16,10 +16,11 @@ locals {
 module "vpc" {
   source = "./modules/vpc"
 
-  vpc_cidr    = "10.0.0.0/16"
-  subnet_cidr = "10.0.1.0/24"
-  az          = var.az
-  name_prefix = "${var.project}-${var.environment}"
+  vpc_cidr      = "10.0.0.0/16"
+  subnet_cidr   = "10.0.1.0/24"
+  subnet_cidr_2 = "10.0.2.0/24"
+  az            = var.az
+  name_prefix   = "${var.project}-${var.environment}"
 
   tags = local.tags
 }
@@ -93,72 +94,72 @@ module "compute" {
   app_build_target = var.app_build_target
   app_listen_port  = var.app_control_port
   app_env = merge(var.app_env, {
-    AWS_REGION                 = var.aws_region
-    DYNAMO_REGION              = var.aws_region
-    DYNAMO_TABLE_USERS         = "${var.project}-${var.environment}-users"
-    TABLE_USERS                = "${var.project}-${var.environment}-users"
-    DYNAMO_TABLE_SNAKES        = "${var.project}-${var.environment}-snakes"
-    TABLE_SNAKES               = "${var.project}-${var.environment}-snakes"
-    DYNAMO_TABLE_WORLD_CHUNKS  = "${var.project}-${var.environment}-world_chunks"
-    TABLE_WORLD_CHUNKS         = "${var.project}-${var.environment}-world_chunks"
-    DYNAMO_TABLE_SNAKE_EVENTS  = "${var.project}-${var.environment}-snake_events"
-    TABLE_SNAKE_EVENTS         = "${var.project}-${var.environment}-snake_events"
-    DYNAMO_TABLE_SETTINGS      = "${var.project}-${var.environment}-settings"
-    TABLE_SETTINGS             = "${var.project}-${var.environment}-settings"
-    DYNAMO_TABLE_ECONOMY_PARAMS = "${var.project}-${var.environment}-economy_params"
-    TABLE_ECONOMY_PARAMS       = "${var.project}-${var.environment}-economy_params"
-    DYNAMO_TABLE_ECONOMY_PERIOD = "${var.project}-${var.environment}-economy_period"
-    TABLE_ECONOMY_PERIOD       = "${var.project}-${var.environment}-economy_period"
-    DYNAMO_TABLE_ECONOMY_PERIOD_USER = "${var.project}-${var.environment}-economy_period_user"
-    TABLE_ECONOMY_PERIOD_USER       = "${var.project}-${var.environment}-economy_period_user"
-    PUBLIC_VIEW_ENABLED        = "true"
-    SINGLE_CHUNK_MODE          = "false"
-    AOI_ENABLED                = "true"
-    CHUNK_SIZE                 = "32"
-    PUBLIC_SPECTATOR_HZ        = "10"
-    AUTH_SPECTATOR_HZ          = "10"
-    PUBLIC_CAMERA_SWITCH_TICKS = "600"
-    PUBLIC_AOI_RADIUS          = "2"
-    AUTH_AOI_RADIUS            = "4"
-    AOI_PAD_CHUNKS             = "1"
-    CAMERA_MSG_MAX_HZ          = "10"
-    WORLD_MASK_MODE            = "none"
-    WORLD_MASK_SEED            = "1337"
-    WORLD_MASK_STYLE           = "jagged"
-    ECON_PERIOD_SECONDS        = "86400"
-    ECON_PERIOD_TZ             = "America/New_York"
-    ECON_PERIOD_ALIGN          = "midnight"
-    ECONOMIC_PERIOD_DURATION_SECONDS = "86400"
-    ECONOMIC_PERIOD_MODE       = "prod_midnight_nyc"
-    ECONOMY_FLUSH_SECONDS      = "10"
-    ECONOMY_PERIOD_HISTORY_DAYS = "90"
-    AUTO_EXPANSION_ENABLED     = "true"
-    AUTO_EXPANSION_TRIGGER_RATIO = "2.0"
-    TARGET_SPATIAL_RATIO       = "3.2"
-    AUTO_EXPANSION_CHECKS_PER_PERIOD = "48"
-    TARGET_LCR                 = "1.2"
-    LCR_STRESS_THRESHOLD       = "0.7"
-    MAX_AUTO_MONEY_GROWTH      = "0.08"
-    PERSISTENCE_PROFILE        = "standard"
-    PERSISTENCE_SQLITE_PATH    = "/var/lib/snake/persistence.db"
-    PERSISTENCE_SQLITE_MAX_MB  = "256"
-    PERSISTENCE_SQLITE_RETENTION_HOURS = "72"
-    PERSISTENCE_FLUSH_CHUNKS_SECONDS = "2"
-    PERSISTENCE_FLUSH_SNAPSHOTS_SECONDS = "10"
+    AWS_REGION                              = var.aws_region
+    DYNAMO_REGION                           = var.aws_region
+    DYNAMO_TABLE_USERS                      = "${var.project}-${var.environment}-users"
+    TABLE_USERS                             = "${var.project}-${var.environment}-users"
+    DYNAMO_TABLE_SNAKES                     = "${var.project}-${var.environment}-snakes"
+    TABLE_SNAKES                            = "${var.project}-${var.environment}-snakes"
+    DYNAMO_TABLE_WORLD_CHUNKS               = "${var.project}-${var.environment}-world_chunks"
+    TABLE_WORLD_CHUNKS                      = "${var.project}-${var.environment}-world_chunks"
+    DYNAMO_TABLE_SNAKE_EVENTS               = "${var.project}-${var.environment}-snake_events"
+    TABLE_SNAKE_EVENTS                      = "${var.project}-${var.environment}-snake_events"
+    DYNAMO_TABLE_SETTINGS                   = "${var.project}-${var.environment}-settings"
+    TABLE_SETTINGS                          = "${var.project}-${var.environment}-settings"
+    DYNAMO_TABLE_ECONOMY_PARAMS             = "${var.project}-${var.environment}-economy_params"
+    TABLE_ECONOMY_PARAMS                    = "${var.project}-${var.environment}-economy_params"
+    DYNAMO_TABLE_ECONOMY_PERIOD             = "${var.project}-${var.environment}-economy_period"
+    TABLE_ECONOMY_PERIOD                    = "${var.project}-${var.environment}-economy_period"
+    DYNAMO_TABLE_ECONOMY_PERIOD_USER        = "${var.project}-${var.environment}-economy_period_user"
+    TABLE_ECONOMY_PERIOD_USER               = "${var.project}-${var.environment}-economy_period_user"
+    PUBLIC_VIEW_ENABLED                     = "true"
+    SINGLE_CHUNK_MODE                       = "false"
+    AOI_ENABLED                             = "true"
+    CHUNK_SIZE                              = "32"
+    PUBLIC_SPECTATOR_HZ                     = "10"
+    AUTH_SPECTATOR_HZ                       = "10"
+    PUBLIC_CAMERA_SWITCH_TICKS              = "600"
+    PUBLIC_AOI_RADIUS                       = "2"
+    AUTH_AOI_RADIUS                         = "4"
+    AOI_PAD_CHUNKS                          = "1"
+    CAMERA_MSG_MAX_HZ                       = "10"
+    WORLD_MASK_MODE                         = "none"
+    WORLD_MASK_SEED                         = "1337"
+    WORLD_MASK_STYLE                        = "jagged"
+    ECON_PERIOD_SECONDS                     = "86400"
+    ECON_PERIOD_TZ                          = "America/New_York"
+    ECON_PERIOD_ALIGN                       = "midnight"
+    ECONOMIC_PERIOD_DURATION_SECONDS        = "86400"
+    ECONOMIC_PERIOD_MODE                    = "prod_midnight_nyc"
+    ECONOMY_FLUSH_SECONDS                   = "10"
+    ECONOMY_PERIOD_HISTORY_DAYS             = "90"
+    AUTO_EXPANSION_ENABLED                  = "true"
+    AUTO_EXPANSION_TRIGGER_RATIO            = "2.0"
+    TARGET_SPATIAL_RATIO                    = "3.2"
+    AUTO_EXPANSION_CHECKS_PER_PERIOD        = "48"
+    TARGET_LCR                              = "1.2"
+    LCR_STRESS_THRESHOLD                    = "0.7"
+    MAX_AUTO_MONEY_GROWTH                   = "0.08"
+    PERSISTENCE_PROFILE                     = "standard"
+    PERSISTENCE_SQLITE_PATH                 = "/var/lib/snake/persistence.db"
+    PERSISTENCE_SQLITE_MAX_MB               = "256"
+    PERSISTENCE_SQLITE_RETENTION_HOURS      = "72"
+    PERSISTENCE_FLUSH_CHUNKS_SECONDS        = "2"
+    PERSISTENCE_FLUSH_SNAPSHOTS_SECONDS     = "10"
     PERSISTENCE_FLUSH_PERIOD_DELTAS_SECONDS = "10"
-    PERSISTENCE_RETRY_BACKOFF_MS = "250"
-    PERSISTENCE_DEBUG_LOGGING  = "0"
-    GOOGLE_AUTH_ENABLED        = "true"
-    GOOGLE_CLIENT_ID           = ""
-    STARTER_LIQUID_ASSETS      = "25"
-    SEED_ENABLED               = "false"
-    SEED_CONFIG_PATH           = ""
-    APP_ENV                    = "prod"
-    MAX_BORROW_PER_CALL        = "1000000"
-    FOOD_REWARD_CELLS          = "1"
-    RESIZE_THRESHOLD           = "0.05"
-    WORLD_ASPECT_RATIO         = "1.7777777778"
-    ADMIN_TOKEN                = "change-me"
+    PERSISTENCE_RETRY_BACKOFF_MS            = "250"
+    PERSISTENCE_DEBUG_LOGGING               = "0"
+    GOOGLE_AUTH_ENABLED                     = "true"
+    GOOGLE_CLIENT_ID                        = ""
+    STARTER_LIQUID_ASSETS                   = "25"
+    SEED_ENABLED                            = "false"
+    SEED_CONFIG_PATH                        = ""
+    APP_ENV                                 = "prod"
+    MAX_BORROW_PER_CALL                     = "1000000"
+    FOOD_REWARD_CELLS                       = "1"
+    RESIZE_THRESHOLD                        = "0.05"
+    WORLD_ASPECT_RATIO                      = "1.7777777778"
+    ADMIN_TOKEN                             = "change-me"
   })
   domain_name       = var.domain_name
   letsencrypt_email = var.letsencrypt_email
@@ -180,6 +181,82 @@ resource "aws_ssm_parameter" "eip_allocation_id" {
   tags  = local.tags
 }
 
+data "aws_acm_certificate" "app_issued" {
+  domain      = var.domain_name
+  statuses    = ["ISSUED"]
+  most_recent = true
+
+  tags = {
+    project     = var.project
+    environment = var.environment
+    domain      = var.domain_name
+  }
+}
+
+resource "aws_lb" "app" {
+  name               = "${var.project}-${var.environment}-alb"
+  internal           = false
+  load_balancer_type = "application"
+  security_groups    = [module.security.alb_sg_id]
+  subnets            = [module.vpc.public_subnet_id, module.vpc.public_subnet_id_2]
+
+  tags = local.tags
+}
+
+resource "aws_lb_target_group" "app_http" {
+  name        = "${var.project}-${var.environment}-tg"
+  port        = 80
+  protocol    = "HTTP"
+  target_type = "instance"
+  vpc_id      = module.vpc.vpc_id
+
+  health_check {
+    enabled             = true
+    path                = "/health"
+    protocol            = "HTTP"
+    matcher             = "200"
+    healthy_threshold   = 2
+    unhealthy_threshold = 3
+    timeout             = 5
+    interval            = 15
+  }
+
+  tags = local.tags
+}
+
+resource "aws_autoscaling_attachment" "app_tg" {
+  autoscaling_group_name = module.compute.asg_name
+  lb_target_group_arn    = aws_lb_target_group.app_http.arn
+}
+
+resource "aws_lb_listener" "http" {
+  load_balancer_arn = aws_lb.app.arn
+  port              = 80
+  protocol          = "HTTP"
+
+  default_action {
+    type = "redirect"
+    redirect {
+      port        = "443"
+      protocol    = "HTTPS"
+      status_code = "HTTP_301"
+    }
+  }
+}
+
+resource "aws_lb_listener" "https" {
+  load_balancer_arn = aws_lb.app.arn
+  port              = 443
+  protocol          = "HTTPS"
+  ssl_policy        = "ELBSecurityPolicy-TLS13-1-2-Res-2021-06"
+  certificate_arn   = data.aws_acm_certificate.app_issued.arn
+
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.app_http.arn
+  }
+}
+
 data "aws_route53_zone" "existing" {
   name         = local.route53_zone_name_fqdn
   private_zone = false
@@ -189,6 +266,9 @@ resource "aws_route53_record" "app_a" {
   zone_id = data.aws_route53_zone.existing.zone_id
   name    = var.domain_name
   type    = "A"
-  ttl     = 300
-  records = [module.compute.eip_public_ip]
+  alias {
+    name                   = aws_lb.app.dns_name
+    zone_id                = aws_lb.app.zone_id
+    evaluate_target_health = true
+  }
 }

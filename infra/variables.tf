@@ -51,7 +51,7 @@ variable "ssh_key_name" {
 
 variable "domain_name" {
   type        = string
-  description = "Public domain pointing to the instance EIP (A record). Required for Let's Encrypt."
+  description = "Public domain routed to the ALB."
 }
 
 variable "route53_zone_name" {
@@ -62,7 +62,8 @@ variable "route53_zone_name" {
 
 variable "letsencrypt_email" {
   type        = string
-  description = "Email for Let's Encrypt registration."
+  description = "Deprecated: retained for backward compatibility."
+  default     = ""
 }
 
 # App deployment (MVP pulls code and builds)
