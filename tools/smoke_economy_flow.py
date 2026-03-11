@@ -3,7 +3,7 @@
 Minimal API smoke test for auth/onboarding/borrow/attach flow.
 
 Usage:
-  python3 tools/smoke_economy_flow.py --base-url http://127.0.0.1:8080 --username user1 --password pass1
+  python3 tools/smoke_economy_flow.py --base-url http://127.0.0.1:8080 --token <bearer-token>
 """
 
 from __future__ import annotations
@@ -60,19 +60,14 @@ def require(ok: bool, msg: str):
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--base-url", default="http://127.0.0.1:8080")
-    parser.add_argument("--username", default="user1")
-    parser.add_argument("--password", default="pass1")
+    parser.add_argument("--token", required=True, help="Bearer token from Google-authenticated session")
     args = parser.parse_args()
+    token = str(args.token).strip()
+    require(len(token) > 0, "missing --token")
 
-    status, data, raw = req(
-        args.base_url,
-        "/auth/login",
-        method="POST",
-        body={"username": args.username, "password": args.password},
-    )
-    require(status == 200 and "token" in data, f"login failed status={status} body={raw}")
-    token = str(data["token"])
-    onboarding_required = bool(data.get("onboarding_required", False))
+    status, me_probe, raw = req(args.base_url, "/user/me", token=token)
+    require(status == 200, f"auth probe failed status={status} body={raw}")
+    onboarding_required = bool(me_probe.get("onboarding_completed") is False)
 
     if onboarding_required:
         company = random_name("Firm")

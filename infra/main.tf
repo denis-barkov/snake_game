@@ -139,7 +139,7 @@ module "compute" {
     TARGET_LCR                 = "1.2"
     LCR_STRESS_THRESHOLD       = "0.7"
     MAX_AUTO_MONEY_GROWTH      = "0.08"
-    PERSISTENCE_PROFILE        = "minimal"
+    PERSISTENCE_PROFILE        = "standard"
     PERSISTENCE_SQLITE_PATH    = "/var/lib/snake/persistence.db"
     PERSISTENCE_SQLITE_MAX_MB  = "256"
     PERSISTENCE_SQLITE_RETENTION_HOURS = "72"

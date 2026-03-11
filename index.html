@@ -510,11 +510,6 @@
   <div id="left">
     <div class="panel">
       <div class="row"><strong>Sign In</strong></div>
-      <div id="legacy-login-fields">
-        <div class="row"><input id="username" placeholder="username (user1)" /></div>
-        <div class="row"><input id="password" type="password" placeholder="password (pass1)" /></div>
-        <div class="row"><button id="loginBtn">Login</button></div>
-      </div>
       <div id="google-login-root" style="display:none;">
         <div id="google-signin-button"></div>
         <small>Continue with Google</small>
@@ -1143,7 +1138,6 @@
   const authStatus = document.getElementById("authStatus");
   let systemStatusResetTimer = null;
   const mySnakesEl = document.getElementById("mySnakes");
-  const legacyLoginFieldsEl = document.getElementById("legacy-login-fields");
   const googleLoginRootEl = document.getElementById("google-login-root");
   const logoutBtn = document.getElementById("logoutBtn");
   const settingsPanelEl = document.getElementById("settings-panel");
@@ -1250,13 +1244,8 @@
 
   function refreshLoginUi() {
     const isAuth = !!token;
-    if (googleAuthEnabled) {
-      legacyLoginFieldsEl.style.display = "none";
-      googleLoginRootEl.style.display = isAuth ? "none" : "block";
-    } else {
-      legacyLoginFieldsEl.style.display = isAuth ? "none" : "";
-      googleLoginRootEl.style.display = "none";
-    }
+    // Keep auth UX aligned across local/prod: Google-only sign-in.
+    googleLoginRootEl.style.display = isAuth ? "none" : "block";
     logoutBtn.style.display = isAuth ? "" : "none";
   }
 
@@ -1407,6 +1396,8 @@
         } else {
           authStatus.textContent = "Google Sign-In is not configured.";
         }
+      } else {
+        authStatus.textContent = "Google Sign-In is disabled on server.";
       }
       refreshLoginUi();
       return;
@@ -1730,43 +1721,6 @@
       performLogout("Session expired. Please log in again.");
     }
     return res;
-  }
-
-  async function login() {
-    if (googleAuthEnabled) return;
-    const username = document.getElementById("username").value.trim();
-    const password = document.getElementById("password").value.trim();
-
-    const res = await fetch(apiPath("/auth/login"), {
-      method: "POST",
-      headers: {"Content-Type":"application/json"},
-      body: JSON.stringify({username, password})
-    });
-
-    if (!res.ok) {
-      authStatus.textContent = "Login failed";
-      return;
-    }
-    const data = await res.json();
-    token = data.token;
-    myUserId = data.user_id;
-    localStorage.setItem(TOKEN_STORAGE_KEY, token);
-    localStorage.setItem(USER_ID_STORAGE_KEY, String(myUserId));
-    spectatorDefaultsApplied = false;
-
-    authStatus.textContent = `Logged in as user_id=${myUserId}`;
-    createSnakeBtn.disabled = false;
-    refreshLoginUi();
-    if (sessionStorage.getItem(LOGIN_RELOAD_FLAG) !== "1") {
-      sessionStorage.setItem(LOGIN_RELOAD_FLAG, "1");
-      setTimeout(() => window.location.reload(), 120);
-      return;
-    }
-    applyViewControlAuthState();
-    restartStream();
-    await loadMySnakes();
-    const me = await loadUserMe();
-    await maybeShowWorldEvolvedModal(me && typeof me.last_seen_world_version === "string" ? me.last_seen_world_version : "");
   }
 
   async function loginWithGoogleIdToken(idToken) {
@@ -2232,7 +2186,6 @@
     if (k === "p") return togglePause();
   });
 
-  document.getElementById("loginBtn").onclick = login;
   document.getElementById("createSnakeBtn").onclick = createSnake;
   borrowBtn.onclick = borrowCells;
   attachBtn.onclick = () => attachCells();

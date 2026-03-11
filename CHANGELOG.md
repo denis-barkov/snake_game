@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.8.15 - 2026-03-10
+- Removed password login flow from backend and frontend; auth is now Google-only across local and prod (`POST /auth/login` now returns `410 password_auth_removed`).
+- Updated local defaults for parity with prod by enabling Google auth flags in `Makefile` and removing implicit local seeding from `make local-setup`.
+- Added explicit seeded local setup target (`make local-setup-seeded`) and updated smoke tooling to use an existing bearer token instead of password credentials.
+
 ## 2.8.14 - 2026-03-09
 - Fixed global snake-name uniqueness regression that allowed duplicate names under buffered persistence timing.
 - Added runtime+durable global snake-name existence checks for onboarding/create/rename validation paths.

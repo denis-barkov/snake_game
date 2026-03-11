@@ -1242,21 +1242,6 @@ static bool require_admin_token(const httplib::Request& req, const std::string& 
   return false;
 }
 
-static optional<int> user_login(storage::IStorage& storage, AuthState& auth, const string& username, const string& password, string& out_token) {
-  auto u = storage.GetUserByUsername(username);
-  if (!u || u->password_hash != password) return nullopt;
-
-  int uid = 0;
-  try {
-    uid = stoi(u->user_id);
-  } catch (...) {
-    return nullopt;
-  }
-
-  out_token = auth.issue_token(uid);
-  return uid;
-}
-
 static void add_cors(httplib::Response& res) {
   res.set_header("Access-Control-Allow-Origin", "*");
   res.set_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
@@ -3104,30 +3089,10 @@ int main(int argc, char** argv) {
 
   srv.Post("/auth/login", [&](const httplib::Request& req, httplib::Response& res) {
     add_cors(res);
-    if (runtime_cfg.google_auth_enabled) {
-      res.status = 403;
-      res.set_content("{\"error\":\"password_login_disabled\"}", "application/json");
-      return;
-    }
-    auto u = get_json_string_field(req.body, "username");
-    auto p = get_json_string_field(req.body, "password");
-    if (!u || !p) {
-      res.status = 400;
-      res.set_content("{\"error\":\"bad_request\"}", "application/json");
-      return;
-    }
-
-    string token;
-    auto uid = user_login(*storage, auth, *u, *p, token);
-    if (!uid) {
-      res.status = 401;
-      res.set_content("{\"error\":\"unauthorized\"}", "application/json");
-      return;
-    }
-
-    ostringstream o;
-    o << "{\"token\":\"" << json_escape(token) << "\",\"user_id\":" << *uid << "}";
-    res.set_content(o.str(), "application/json");
+    (void)req;
+    // Password auth path is permanently disabled to keep local/prod parity.
+    res.status = 410;
+    res.set_content("{\"error\":\"password_auth_removed\"}", "application/json");
   });
 
   srv.Post("/auth/google", [&](const httplib::Request& req, httplib::Response& res) {
@@ -3822,7 +3787,7 @@ int main(int argc, char** argv) {
   cout << "Server on http://" << bind_host << ":" << bind_port << "\n";
   cout << "WS:    GET /ws\n";
   cout << "State: GET /game/state\n";
-  cout << "Login: POST /auth/login {username,password}\n";
+  cout << "Login: POST /auth/google {id_token}\n";
 
   srv.listen(bind_host, bind_port);
 

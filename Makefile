@@ -54,9 +54,9 @@ GAME_PERSISTENCE_FLUSH_SNAPSHOTS_SECONDS?=10
 GAME_PERSISTENCE_FLUSH_PERIOD_DELTAS_SECONDS?=10
 GAME_PERSISTENCE_RETRY_BACKOFF_MS?=250
 GAME_PERSISTENCE_DEBUG_LOGGING?=0
-GAME_GOOGLE_AUTH_ENABLED_LOCAL?=false
+GAME_GOOGLE_AUTH_ENABLED_LOCAL?=true
 GAME_GOOGLE_CLIENT_ID_LOCAL?=
-GAME_GOOGLE_AUTH_ENABLED_PROD?=false
+GAME_GOOGLE_AUTH_ENABLED_PROD?=true
 GAME_GOOGLE_CLIENT_ID_PROD?=
 GAME_STARTER_LIQUID_ASSETS?=25
 GAME_AUTO_SEED_ON_START?=false
@@ -90,6 +90,9 @@ local-dynamo-up:
 local-setup:
 	@$(MAKE) local-dynamo-up
 	@$(MAKE) local-dynamo-create
+
+local-setup-seeded:
+	@$(MAKE) local-setup
 	@$(MAKE) local-dynamo-seed
 
 local-dynamo-down:
@@ -118,7 +121,11 @@ local-dynamo-seed:
 	python3 tools/seed_local.py
 
 smoke-economy-local:
-	python3 tools/smoke_economy_flow.py --base-url http://127.0.0.1:8080 --username user1 --password pass1
+	@if [ -z "$$SNAKE_AUTH_TOKEN" ]; then \
+	  echo "Set SNAKE_AUTH_TOKEN from an existing Google-authenticated session token."; \
+	  exit 1; \
+	fi
+	python3 tools/smoke_economy_flow.py --base-url http://127.0.0.1:8080 --token "$$SNAKE_AUTH_TOKEN"
 
 local-run-native:
 	@echo "local-run-native is disabled (Docker build outputs Linux binary). Use: make local-run"

@@ -107,7 +107,7 @@ The v1 public auth flow is Google Sign-In only.
 
 Notes:
 - Backend verifies Google ID tokens and then issues the game’s own session token.
-- When Google auth is enabled, password login is disabled.
+- Password login endpoint is permanently disabled (`POST /auth/login` returns `410` with `password_auth_removed`).
 - You can (and usually should) use separate OAuth clients for local and prod.
 
 Makefile split knobs:
@@ -240,6 +240,8 @@ make local-run
 `make local-run` runs fully in Docker and talks to local DynamoDB.  
 It publishes app on `http://127.0.0.1:8080`.
 `make local-run` stays in foreground by design (it is the running server). Open the app in browser while it is running; stop with `Ctrl+C`.
+`make local-setup` intentionally leaves local data unseeded (prod-like empty start).
+For explicit local seed data setup, use `make local-setup-seeded`.
 
 SQLite buffered persistence survives container restarts through a host-mounted path:
 - host: `.local/persistence`
@@ -427,11 +429,11 @@ make smoke-economy-local
 Equivalent direct command:
 
 ```bash
-python3 tools/smoke_economy_flow.py --base-url http://127.0.0.1:8080 --username user1 --password pass1
+python3 tools/smoke_economy_flow.py --base-url http://127.0.0.1:8080 --token "<bearer-token>"
 ```
 
 The script fails loudly if any of these fail:
-- login/onboarding
+- auth probe/onboarding
 - starter snake visibility
 - borrow `amount=1`
 - attach `amount=1` to starter snake
