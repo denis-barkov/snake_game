@@ -1,6 +1,17 @@
 {
-  "current_version": "2.8.17",
+  "current_version": "2.8.18",
   "entries": [
+    {
+      "version": "2.8.18",
+      "release_date": "2026-03-11",
+      "notes": [
+        "Extended `make ssl-cert-create` to fully automate ACM DNS validation: requests cert, upserts Route53 validation CNAME records, and polls status until `ISSUED`.",
+        "Added bounded validation wait loop (10s poll, 3-minute timeout) with clear operational logs and non-zero timeout exit behavior.",
+        "Added hosted-zone auto-discovery for domain validation records and portable duplicate-record handling.",
+        "Enforced `AWS_PROFILE=business` usage for SSL make targets to align with production ops policy.",
+        "Updated SSL setup docs to reflect fully automated validation flow and wildcard invocation via `WILDCARD=true`."
+      ]
+    },
     {
       "version": "2.8.17",
       "release_date": "2026-03-11",

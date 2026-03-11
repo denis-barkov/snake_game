@@ -226,10 +226,10 @@ local-run-docker: local-dynamo-up local-dynamo-create local-docker-build
 
 ssl-cert-create:
 	@if [ -z "$(ENV)" ] || [ -z "$(DOMAIN)" ]; then \
-	  echo "Usage: make ssl-cert-create ENV=<environment> DOMAIN=<domain> [WILDCARD=--wildcard]"; \
+	  echo "Usage: make ssl-cert-create ENV=<environment> DOMAIN=<domain> [WILDCARD=true]"; \
 	  exit 1; \
 	fi
-	AWS_PROFILE=$(PROFILE) AWS_REGION=$(AWS_REGION) ENV=$(ENV) DOMAIN=$(DOMAIN) WILDCARD=$(WILDCARD) \
+	AWS_PROFILE=business AWS_REGION=$(AWS_REGION) ENV=$(ENV) DOMAIN=$(DOMAIN) WILDCARD=$(WILDCARD) \
 	bash infra/scripts/acm_certificate.sh create
 
 ssl-cert-delete:
@@ -237,7 +237,7 @@ ssl-cert-delete:
 	  echo "Usage: make ssl-cert-delete ENV=<environment> DOMAIN=<domain>"; \
 	  exit 1; \
 	fi
-	AWS_PROFILE=$(PROFILE) AWS_REGION=$(AWS_REGION) ENV=$(ENV) DOMAIN=$(DOMAIN) \
+	AWS_PROFILE=business AWS_REGION=$(AWS_REGION) ENV=$(ENV) DOMAIN=$(DOMAIN) \
 	bash infra/scripts/acm_certificate.sh delete
 
 ssl-cert-check:
@@ -245,7 +245,7 @@ ssl-cert-check:
 	  echo "Usage: make ssl-cert-check ENV=<environment> DOMAIN=<domain>"; \
 	  exit 1; \
 	fi
-	AWS_PROFILE=$(PROFILE) AWS_REGION=$(AWS_REGION) ENV=$(ENV) DOMAIN=$(DOMAIN) \
+	AWS_PROFILE=business AWS_REGION=$(AWS_REGION) ENV=$(ENV) DOMAIN=$(DOMAIN) \
 	bash infra/scripts/acm_certificate.sh check
 
 aws-init:

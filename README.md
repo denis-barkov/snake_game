@@ -143,11 +143,10 @@ Terraform now consumes an existing ACM certificate (it does not create certifica
 ```bash
 make ssl-cert-create ENV=prod DOMAIN=terrariumsnake.com
 # optional wildcard SAN (*.domain + root domain):
-make ssl-cert-create ENV=prod DOMAIN=terrariumsnake.com WILDCARD=--wildcard
+make ssl-cert-create ENV=prod DOMAIN=terrariumsnake.com WILDCARD=true
 ```
-2. Add DNS validation records in Route53 (from command output).
-3. Wait until ACM status is `ISSUED`.
-4. Run infrastructure apply/deploy:
+2. `ssl-cert-create` now auto-creates/UPSERTs ACM DNS validation CNAME records in Route53 and waits up to 3 minutes for `ISSUED`.
+3. Run infrastructure apply/deploy:
 ```bash
 make aws-apply BRANCH=main
 ```

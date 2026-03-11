@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.8.18 - 2026-03-11
+- Extended `make ssl-cert-create` to fully automate ACM DNS validation: requests cert, upserts Route53 validation CNAME records, and polls status until `ISSUED`.
+- Added bounded validation wait loop (10s poll, 3-minute timeout) with clear operational logs and non-zero timeout exit behavior.
+- Added hosted-zone auto-discovery for domain validation records and portable duplicate-record handling.
+- Enforced `AWS_PROFILE=business` usage for SSL make targets to align with production ops policy.
+- Updated SSL setup docs to reflect fully automated validation flow and wildcard invocation via `WILDCARD=true`.
+
 ## 2.8.17 - 2026-03-11
 - Switched production TLS architecture to ACM + ALB termination: Terraform now looks up an existing tagged `ISSUED` ACM certificate and attaches it to an HTTPS listener.
 - Added dual-subnet public VPC layout and ALB target-group wiring to ASG instances; Route53 now aliases the game domain to the ALB.
