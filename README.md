@@ -66,10 +66,12 @@ Simulation internals are structured in `api/world`:
 - `PERSISTENCE_FLUSH_PERIOD_DELTAS_SECONDS` (default `10`)
 - `PERSISTENCE_RETRY_BACKOFF_MS` (default `250`)
 - `PERSISTENCE_DEBUG_LOGGING` (`0|1`, default `0`)
-- `GOOGLE_AUTH_ENABLED` (`true`/`false`, default `false`)
+- `GOOGLE_AUTH_ENABLED` (`true`/`false`, default `true` in infra defaults)
 - `GOOGLE_CLIENT_ID` (Google Web OAuth client id, required when Google auth is enabled)
 - `STARTER_LIQUID_ASSETS` (default `25`)
-- `AUTO_SEED_ON_START` (`true`/`false`, default `false`)
+- `SEED_ENABLED` (`true`/`false`, default `false`)
+- `SEED_CONFIG_PATH` (path to a static seed config file; JSON-compatible YAML)
+- `APP_ENV` (`local|staging|prod`; prod requires `SEED_ENABLED=true` to apply seed)
 
 Default run values in Make:
 - `TICK_HZ=10`
@@ -107,7 +109,7 @@ The v1 public auth flow is Google Sign-In only.
 
 Notes:
 - Backend verifies Google ID tokens and then issues the game’s own session token.
-- Password login endpoint is permanently disabled (`POST /auth/login` returns `410` with `password_auth_removed`).
+- Password-based login has been fully removed; Google OAuth is the only auth path.
 - You can (and usually should) use separate OAuth clients for local and prod.
 
 Makefile split knobs:
@@ -254,7 +256,7 @@ Reset local data:
 ```bash
 docker exec -it snake-local-run bash
 export ADMIN_TOKEN=devtoken
-snakecli --token "$ADMIN_TOKEN" app reset-seed-reload
+snakecli --token "$ADMIN_TOKEN" app reset
 ```
 
 Stop local Dynamo:
@@ -284,7 +286,9 @@ export DYNAMO_TABLE_ECONOMY_PERIOD=snake-local-economy_period
 export DYNAMO_TABLE_ECONOMY_PERIOD_USER=snake-local-economy_period_user
 
 python3 tools/create_local_tables.py
-python3 tools/seed_local.py
+
+# Optional static seed (only on empty DB)
+SEED_ENABLED=true APP_ENV=local SEED_CONFIG_PATH=./seeds/dev.seed.yaml python3 tools/apply_seed_config.py
 
 ./snake_server serve
 ```
@@ -372,37 +376,24 @@ snakecli firms top --by balance --limit 10
 snakecli snakes list --onfield --limit 25
 
 # app-level admin actions
-snakecli --token "$ADMIN_TOKEN" app seed
-snakecli --token "$ADMIN_TOKEN" app reset-seed-reload
-
-# smart progressed-world seed (Step 9.2)
-snakecli --token "$ADMIN_TOKEN" smartseed --worldsize 200000 --seed 123 --wipe --force
+snakecli --token "$ADMIN_TOKEN" app reset
+snakecli --token "$ADMIN_TOKEN" app reload
 ```
 
 Notes:
 - `snakecli economy ...` and `snakecli treasury ...` now call admin HTTP endpoints on the running server (`SNAKECLI_API`), so server must be running.
-- `firms top`, `snakes list`, and `smartseed` still access DynamoDB directly.
+- `firms top` and `snakes list` access DynamoDB directly.
 
-### Smartseed (Step 9.2)
+### Static Seed Config
 
-Command:
-```bash
-snakecli --token "$ADMIN_TOKEN" smartseed --worldsize <A_world> [--usersnum N] [--snakesnum M] [--seed S] [--wipe] [--force]
-```
+Smartseed and runtime seed endpoints were removed. Seeding now supports only static config applied before server start:
 
-Rules:
-- `--worldsize` is required (area in tiles).
-- `ADMIN_TOKEN` is required (write command).
-- `--wipe` deletes game-content tables (`users`, `snakes`, `snake_events`, `world_chunks`, `economy_params`, `economy_period`, `economy_period_user`).
-- `--wipe` requires confirmation unless `--force` is present.
-- Existing `app seed` command is unchanged.
-- Smartseed users are login-ready immediately (`seeduser...` / `passN` shown in output).
-- Smartseed now requests a live server reload after write so new snakes/world appear without manual restart.
-
-Output summary includes:
-- target world/economy metrics (`M_target`, `ΣM_i`, `M_G`, `M`, `K`, `A_world`, `M_white`, `P`, `pi`)
-- created user/snake counts + snake length min/avg/max
-- bounded event count
+- Config file: JSON-compatible YAML (example: [`seeds/dev.seed.yaml`](/Users/denis_pm/C++ projects/snake_terminal/seeds/dev.seed.yaml))
+- Apply script: `tools/apply_seed_config.py`
+- Guards:
+  - no users in DB
+  - `APP_ENV != prod` OR `SEED_ENABLED=true`
+- No API/CLI runtime seed trigger exists after startup.
 
 ### Prod parity smoke checks
 
@@ -525,11 +516,6 @@ CI/workflows:
 ## Modes
 
 - `./snake_server serve`
-- `./snake_server seed`
 - `./snake_server reset`
 
 `snakecli` is installed to `/usr/local/bin/snakecli` in runtime environments.
-
-Default seeded users:
-- `user1 / pass1`
-- `user2 / pass2`

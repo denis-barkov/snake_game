@@ -91,6 +91,7 @@ clang++ -std=c++17 -O2 -pthread \
   api/storage/dynamo_storage.cpp \
   api/storage/storage_factory.cpp \
   api/economy/economy_v1.cpp \
+  api/economy/stabilization_engine.cpp \
   api/economy_engine/compute.cpp \
   api/persistence/profiles/persistence_profiles.cpp \
   api/persistence/layers/runtime/runtime_state_store.cpp \
@@ -152,16 +153,15 @@ else
   exit 1
 fi
 
-cat >/etc/systemd/system/snake-seed.service <<EOF
-[Unit]
-Description=Seed Snake DynamoDB data
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=oneshot
-ExecStart=/usr/local/bin/snakecli app seed
-EOF
+if [ -f /opt/snake/repo/tools/apply_seed_config.py ]; then
+  set -a
+  . /etc/snake.env
+  set +a
+  python3 /opt/snake/repo/tools/apply_seed_config.py
+else
+  echo "Missing /opt/snake/repo/tools/apply_seed_config.py"
+  exit 1
+fi
 
 cat >/etc/systemd/system/snake-reset.service <<EOF
 [Unit]
@@ -174,17 +174,6 @@ Type=oneshot
 ExecStart=/usr/local/bin/snakecli app reset
 EOF
 
-cat >/etc/systemd/system/snake-reset-seed.service <<EOF
-[Unit]
-Description=Reset and seed Snake DynamoDB data
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=oneshot
-ExecStart=/usr/local/bin/snakecli app reset-seed
-EOF
-
 cat >/etc/systemd/system/snake-reload.service <<EOF
 [Unit]
 Description=Reload Snake state from DynamoDB (no restart)
@@ -194,17 +183,6 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 ExecStart=/usr/local/bin/snakecli app reload
-EOF
-
-cat >/etc/systemd/system/snake-seed-reload.service <<EOF
-[Unit]
-Description=Seed Snake DynamoDB data and reload running server
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=oneshot
-ExecStart=/usr/local/bin/snakecli app seed-reload
 EOF
 
 touch /var/log/snake_server.log

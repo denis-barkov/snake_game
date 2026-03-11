@@ -59,9 +59,12 @@ PERSISTENCE_FLUSH_SNAPSHOTS_SECONDS="${PERSISTENCE_FLUSH_SNAPSHOTS_SECONDS:-10}"
 PERSISTENCE_FLUSH_PERIOD_DELTAS_SECONDS="${PERSISTENCE_FLUSH_PERIOD_DELTAS_SECONDS:-10}"
 PERSISTENCE_RETRY_BACKOFF_MS="${PERSISTENCE_RETRY_BACKOFF_MS:-250}"
 PERSISTENCE_DEBUG_LOGGING="${PERSISTENCE_DEBUG_LOGGING:-0}"
-GOOGLE_AUTH_ENABLED="${GOOGLE_AUTH_ENABLED:-false}"
+GOOGLE_AUTH_ENABLED="${GOOGLE_AUTH_ENABLED:-true}"
 GOOGLE_CLIENT_ID="${GOOGLE_CLIENT_ID:-}"
 STARTER_LIQUID_ASSETS="${STARTER_LIQUID_ASSETS:-25}"
+SEED_ENABLED="${SEED_ENABLED:-false}"
+SEED_CONFIG_PATH="${SEED_CONFIG_PATH:-}"
+APP_ENV="${APP_ENV:-prod}"
 ADMIN_TOKEN="${ADMIN_TOKEN:-change-me}"
 POLL_ATTEMPTS="${POLL_ATTEMPTS:-20}"
 POLL_SLEEP_SECONDS="${POLL_SLEEP_SECONDS:-15}"
@@ -270,20 +273,15 @@ COMMAND_ID="$(
 \"GOOGLE_AUTH_ENABLED=${GOOGLE_AUTH_ENABLED}\",
 \"GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}\",
 \"STARTER_LIQUID_ASSETS=${STARTER_LIQUID_ASSETS}\",
+\"SEED_ENABLED=${SEED_ENABLED}\",
+\"SEED_CONFIG_PATH=${SEED_CONFIG_PATH}\",
+\"APP_ENV=${APP_ENV}\",
 \"ADMIN_TOKEN=${ADMIN_TOKEN}\",
 \"EOF_ENV\",
 \"chmod 0644 /etc/snake.env\",
+\"if [ -f /opt/snake/repo/tools/apply_seed_config.py ]; then set -a; . /etc/snake.env; set +a; python3 /opt/snake/repo/tools/apply_seed_config.py; else echo Missing /opt/snake/repo/tools/apply_seed_config.py; exit 1; fi\",
 \"if [ -f /opt/snake/repo/tools/snakecli.py ]; then install -m 0755 /opt/snake/repo/tools/snakecli.py /usr/local/bin/snakecli; else echo Missing /opt/snake/repo/tools/snakecli.py; exit 1; fi\",
 \"if [ -f /opt/snake/repo/tools/snake-admin.sh ]; then install -m 0755 /opt/snake/repo/tools/snake-admin.sh /usr/local/bin/snake-admin; else echo Missing /opt/snake/repo/tools/snake-admin.sh; exit 1; fi\",
-\"cat > /etc/systemd/system/snake-seed.service <<'EOF_SNAKE_SEED'\",
-\"[Unit]\",
-\"Description=Seed Snake DynamoDB data\",
-\"After=network-online.target\",
-\"Wants=network-online.target\",
-\"[Service]\",
-\"Type=oneshot\",
-\"ExecStart=/usr/local/bin/snakecli app seed\",
-\"EOF_SNAKE_SEED\",
 \"cat > /etc/systemd/system/snake-reset.service <<'EOF_SNAKE_RESET'\",
 \"[Unit]\",
 \"Description=Reset Snake DynamoDB data\",
@@ -293,15 +291,6 @@ COMMAND_ID="$(
 \"Type=oneshot\",
 \"ExecStart=/usr/local/bin/snakecli app reset\",
 \"EOF_SNAKE_RESET\",
-\"cat > /etc/systemd/system/snake-reset-seed.service <<'EOF_SNAKE_RESET_SEED'\",
-\"[Unit]\",
-\"Description=Reset and seed Snake DynamoDB data\",
-\"After=network-online.target\",
-\"Wants=network-online.target\",
-\"[Service]\",
-\"Type=oneshot\",
-\"ExecStart=/usr/local/bin/snakecli app reset-seed\",
-\"EOF_SNAKE_RESET_SEED\",
 \"cat > /etc/systemd/system/snake-reload.service <<'EOF_SNAKE_RELOAD'\",
 \"[Unit]\",
 \"Description=Reload Snake state from DynamoDB (no restart)\",
@@ -311,15 +300,6 @@ COMMAND_ID="$(
 \"Type=oneshot\",
 \"ExecStart=/usr/local/bin/snakecli app reload\",
 \"EOF_SNAKE_RELOAD\",
-\"cat > /etc/systemd/system/snake-seed-reload.service <<'EOF_SNAKE_SEED_RELOAD'\",
-\"[Unit]\",
-\"Description=Seed Snake DynamoDB data and reload running server\",
-\"After=network-online.target\",
-\"Wants=network-online.target\",
-\"[Service]\",
-\"Type=oneshot\",
-\"ExecStart=/usr/local/bin/snakecli app seed-reload\",
-\"EOF_SNAKE_SEED_RELOAD\",
 \"mkdir -p /etc/systemd/system/snake.service.d\",
 \"cat > /etc/systemd/system/snake.service.d/limits.conf <<'EOF_SNAKE_LIMITS'\",
 \"[Service]\",

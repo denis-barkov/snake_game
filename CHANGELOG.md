@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.8.16 - 2026-03-11
+- Removed remaining password-auth artifacts from core storage/domain flow (no username/password fields or username lookup path in server storage logic).
+- Removed runtime seed modes and smartseed/admin seed commands; `snake_server` now supports only `serve|reset` and `snakecli app` supports only `reset|reload`.
+- Added static startup seed system via `tools/apply_seed_config.py` with `SEED_ENABLED`, `SEED_CONFIG_PATH`, and `APP_ENV` gating; seeding runs only on empty user tables.
+- Added seed config example at `seeds/dev.seed.yaml` with documented economic consistency notes and globally unique snake-name expectations.
+- Updated local/prod boot/deploy wiring to run the static seed applier before server start, and removed legacy seed systemd units.
+- Updated infra/local table definitions to remove legacy username GSI from the users table.
+
 ## 2.8.15 - 2026-03-10
 - Removed password login flow from backend and frontend; auth is now Google-only across local and prod (`POST /auth/login` now returns `410 password_auth_removed`).
 - Updated local defaults for parity with prod by enabling Google auth flags in `Makefile` and removing implicit local seeding from `make local-setup`.

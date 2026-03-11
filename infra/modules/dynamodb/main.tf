@@ -7,16 +7,6 @@ resource "aws_dynamodb_table" "users" {
     name = "user_id"
     type = "S"
   }
-  attribute {
-    name = "username"
-    type = "S"
-  }
-
-  global_secondary_index {
-    name            = "gsi_username"
-    hash_key        = "username"
-    projection_type = "ALL"
-  }
 
   tags = merge(var.tags, { Name = "${var.name_prefix}-users" })
 }

@@ -29,7 +29,6 @@ class DynamoStorage : public IStorage {
   explicit DynamoStorage(DynamoConfig cfg);
 
   std::vector<User> ListUsers() override;
-  std::optional<User> GetUserByUsername(const std::string& username) override;
   std::optional<User> GetUserByGoogleSubject(const std::string& google_subject_id) override;
   bool CompanyNameExistsNormalized(const std::string& company_name_normalized,
                                    const std::string& exclude_user_id = "") override;

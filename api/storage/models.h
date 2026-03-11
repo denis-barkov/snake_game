@@ -10,8 +10,6 @@ namespace storage {
 
 struct User {
   std::string user_id;
-  std::string username;
-  std::string password_hash;
   int64_t balance_mi = 0;
   // V2/V3 placeholder fields (not used by V1 compute yet).
   int64_t debt_principal = 0;
@@ -23,7 +21,7 @@ struct User {
   std::string company_name;
   std::string company_name_normalized;
   std::string last_seen_world_version;
-  std::string auth_provider = "local";
+  std::string auth_provider = "google";
   std::string google_subject_id;
   bool onboarding_completed = false;
   std::string starter_snake_id;

@@ -14,12 +14,12 @@ else
 fi
 
 case "${1:-}" in
-  seed|reset|reload|seed-reload|reset-seed|reset-seed-reload)
+  reset|reload)
     # shellcheck disable=SC2086
     exec ${SNAKECLI_BIN} app "$1"
     ;;
   *)
-    echo "Usage: snake-admin {seed|reset|reload|seed-reload|reset-seed|reset-seed-reload}"
+    echo "Usage: snake-admin {reset|reload}"
     exit 1
     ;;
 esac

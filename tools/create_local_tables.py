@@ -33,10 +33,7 @@ def create_users(name: str):
         "--table-name", name,
         "--attribute-definitions",
         "AttributeName=user_id,AttributeType=S",
-        "AttributeName=username,AttributeType=S",
         "--key-schema", "AttributeName=user_id,KeyType=HASH",
-        "--global-secondary-indexes",
-        "IndexName=gsi_username,KeySchema=[{AttributeName=username,KeyType=HASH}],Projection={ProjectionType=ALL}",
         "--billing-mode", "PAY_PER_REQUEST",
     ])
 

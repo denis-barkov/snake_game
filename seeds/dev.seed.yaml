@@ -1,0 +1,46 @@
+# Seed Configuration (JSON-compatible YAML)
+# KLend controls theoretical space: total_theoretical_space = KLend * money_supply.
+# Money-to-space relationship: higher liquid money supply + treasury raises deployable white-space potential.
+# Consistency warnings:
+# - Snake names must be globally unique.
+# - Company names must be unique.
+# - Ensure world.width/world.height can fit total snake lengths.
+# - Keep economic totals coherent with your treasury/liquid balances before applying.
+{
+  "treasury_balance": 400,
+  "world": {
+    "width": 120,
+    "height": 80
+  },
+  "economy_params": {
+    "k_land": 24,
+    "a_productivity": 1.0,
+    "v_velocity": 2.0,
+    "food_spawn_target": 1,
+    "alpha_bootstrap_default": 0.5
+  },
+  "users": [
+    {
+      "company_name": "Terrasoul Labs",
+      "balance_mi": 25,
+      "snakes": [
+        {
+          "snake_name": "Boomer",
+          "length_k": 2,
+          "color": "#00ffaa"
+        }
+      ]
+    },
+    {
+      "company_name": "Stoneforge Works",
+      "balance_mi": 25,
+      "snakes": [
+        {
+          "snake_name": "IronTail",
+          "length_k": 2,
+          "color": "#ffaa00"
+        }
+      ]
+    }
+  ]
+}

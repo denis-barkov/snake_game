@@ -189,8 +189,6 @@ std::vector<User> DynamoStorage::ListUsers() {
     for (const auto& item : res.GetResult().GetItems()) {
       User u;
       u.user_id = GetString(item, "user_id");
-      u.username = GetString(item, "username");
-      u.password_hash = GetString(item, "password_hash");
       u.balance_mi = GetInt64(item, "balance_mi");
       u.debt_principal = GetInt64(item, "debt_principal", 0);
       u.debt_interest_rate = GetDouble(item, "debt_interest_rate", 0.0);
@@ -201,7 +199,7 @@ std::vector<User> DynamoStorage::ListUsers() {
       u.company_name = GetString(item, "company_name");
       u.company_name_normalized = GetString(item, "company_name_normalized");
       u.last_seen_world_version = GetString(item, "last_seen_world_version");
-      u.auth_provider = GetString(item, "auth_provider", "local");
+      u.auth_provider = GetString(item, "auth_provider", "google");
       u.google_subject_id = GetString(item, "google_subject_id");
       u.onboarding_completed = GetBool(item, "onboarding_completed", false);
       u.starter_snake_id = GetString(item, "starter_snake_id");
@@ -217,63 +215,6 @@ std::vector<User> DynamoStorage::ListUsers() {
   return out;
 }
 
-std::optional<User> DynamoStorage::GetUserByUsername(const std::string& username) {
-  Aws::DynamoDB::Model::QueryRequest req;
-  req.SetTableName(cfg_.users_table.c_str());
-  req.SetIndexName("gsi_username");
-  req.SetKeyConditionExpression("username = :u");
-  req.SetLimit(1);
-  req.AddExpressionAttributeValues(":u", S(username));
-
-  auto out = client_->Query(req);
-  const auto materialize_user = [&](const Aws::Map<Aws::String, Aws::DynamoDB::Model::AttributeValue>& item)
-      -> std::optional<User> {
-    if (item.empty()) return std::nullopt;
-    User u;
-    u.user_id = GetString(item, "user_id");
-    u.username = GetString(item, "username");
-    u.password_hash = GetString(item, "password_hash");
-    u.balance_mi = GetInt64(item, "balance_mi");
-    u.debt_principal = GetInt64(item, "debt_principal", 0);
-    u.debt_interest_rate = GetDouble(item, "debt_interest_rate", 0.0);
-    u.debt_accrued_interest = GetInt64(item, "debt_accrued_interest", 0);
-    u.role = GetString(item, "role", "player");
-    u.created_at = GetInt64(item, "created_at");
-    u.updated_at = GetInt64(item, "updated_at", u.created_at);
-    u.company_name = GetString(item, "company_name");
-    u.company_name_normalized = GetString(item, "company_name_normalized");
-    u.last_seen_world_version = GetString(item, "last_seen_world_version");
-    u.auth_provider = GetString(item, "auth_provider", "local");
-    u.google_subject_id = GetString(item, "google_subject_id");
-    u.onboarding_completed = GetBool(item, "onboarding_completed", false);
-    u.starter_snake_id = GetString(item, "starter_snake_id");
-    u.account_status = GetString(item, "account_status", "active");
-    return u;
-  };
-
-  if (out.IsSuccess()) {
-    const auto& items = out.GetResult().GetItems();
-    if (!items.empty()) {
-      return materialize_user(items[0]);
-    }
-    return std::nullopt;
-  }
-
-  // Compatibility fallback: if the users table is missing gsi_username,
-  // login still works via scan-based lookup. This keeps local/prod usable
-  // across historical table definitions.
-  Aws::DynamoDB::Model::ScanRequest scan;
-  scan.SetTableName(cfg_.users_table.c_str());
-  scan.SetFilterExpression("username = :u");
-  scan.AddExpressionAttributeValues(":u", S(username));
-  scan.SetLimit(1);
-  auto scan_out = client_->Scan(scan);
-  if (!scan_out.IsSuccess()) return std::nullopt;
-  const auto& scanned = scan_out.GetResult().GetItems();
-  if (scanned.empty()) return std::nullopt;
-  return materialize_user(scanned[0]);
-}
-
 std::optional<User> DynamoStorage::GetUserById(const std::string& user_id) {
   Aws::DynamoDB::Model::GetItemRequest req;
   req.SetTableName(cfg_.users_table.c_str());
@@ -286,8 +227,6 @@ std::optional<User> DynamoStorage::GetUserById(const std::string& user_id) {
 
   User u;
   u.user_id = GetString(item, "user_id");
-  u.username = GetString(item, "username");
-  u.password_hash = GetString(item, "password_hash");
   u.balance_mi = GetInt64(item, "balance_mi");
   u.debt_principal = GetInt64(item, "debt_principal", 0);
   u.debt_interest_rate = GetDouble(item, "debt_interest_rate", 0.0);
@@ -298,7 +237,7 @@ std::optional<User> DynamoStorage::GetUserById(const std::string& user_id) {
   u.company_name = GetString(item, "company_name");
   u.company_name_normalized = GetString(item, "company_name_normalized");
   u.last_seen_world_version = GetString(item, "last_seen_world_version");
-  u.auth_provider = GetString(item, "auth_provider", "local");
+  u.auth_provider = GetString(item, "auth_provider", "google");
   u.google_subject_id = GetString(item, "google_subject_id");
   u.onboarding_completed = GetBool(item, "onboarding_completed", false);
   u.starter_snake_id = GetString(item, "starter_snake_id");
@@ -320,8 +259,6 @@ std::optional<User> DynamoStorage::GetUserByGoogleSubject(const std::string& goo
   const auto& item = items[0];
   User u;
   u.user_id = GetString(item, "user_id");
-  u.username = GetString(item, "username");
-  u.password_hash = GetString(item, "password_hash");
   u.balance_mi = GetInt64(item, "balance_mi");
   u.debt_principal = GetInt64(item, "debt_principal", 0);
   u.debt_interest_rate = GetDouble(item, "debt_interest_rate", 0.0);
@@ -332,7 +269,7 @@ std::optional<User> DynamoStorage::GetUserByGoogleSubject(const std::string& goo
   u.company_name = GetString(item, "company_name");
   u.company_name_normalized = GetString(item, "company_name_normalized");
   u.last_seen_world_version = GetString(item, "last_seen_world_version");
-  u.auth_provider = GetString(item, "auth_provider", "local");
+  u.auth_provider = GetString(item, "auth_provider", "google");
   u.google_subject_id = GetString(item, "google_subject_id");
   u.onboarding_completed = GetBool(item, "onboarding_completed", false);
   u.starter_snake_id = GetString(item, "starter_snake_id");
@@ -361,8 +298,6 @@ bool DynamoStorage::PutUser(const User& u) {
   Aws::DynamoDB::Model::PutItemRequest req;
   req.SetTableName(cfg_.users_table.c_str());
   req.AddItem("user_id", S(u.user_id));
-  req.AddItem("username", S(u.username));
-  req.AddItem("password_hash", S(u.password_hash));
   req.AddItem("balance_mi", N(u.balance_mi));
   req.AddItem("debt_principal", N(std::max<int64_t>(0, u.debt_principal)));
   req.AddItem("debt_interest_rate", D(std::max(0.0, std::min(1.0, u.debt_interest_rate))));

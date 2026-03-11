@@ -535,8 +535,8 @@
       </div>
       <div class="row" style="display:flex; gap:6px;">
         <button id="attach1Btn" disabled>+1</button>
+        <button id="attach5Btn" disabled>+5</button>
         <button id="attach10Btn" disabled>+10</button>
-        <button id="attach50Btn" disabled>+50</button>
         <button id="attachBtn" disabled>Attach</button>
       </div>
       <div class="row" id="attach-hint">
@@ -1179,8 +1179,8 @@
   const attachAmountEl = document.getElementById("attachAmount");
   const attachBtn = document.getElementById("attachBtn");
   const attach1Btn = document.getElementById("attach1Btn");
+  const attach5Btn = document.getElementById("attach5Btn");
   const attach10Btn = document.getElementById("attach10Btn");
-  const attach50Btn = document.getElementById("attach50Btn");
   const zoomInBtn = document.getElementById("zoomInBtn");
   const zoomOutBtn = document.getElementById("zoomOutBtn");
   const zoomResetBtn = document.getElementById("zoomResetBtn");
@@ -1764,8 +1764,8 @@
     borrowBtn.disabled = !isAuth;
     attachBtn.disabled = !isAuth;
     attach1Btn.disabled = !isAuth;
+    attach5Btn.disabled = !isAuth;
     attach10Btn.disabled = !isAuth;
-    attach50Btn.disabled = !isAuth;
     zoomInBtn.style.display = isAuth ? "" : "none";
     zoomOutBtn.style.display = isAuth ? "" : "none";
     zoomResetBtn.style.display = isAuth ? "" : "none";
@@ -1795,8 +1795,8 @@
     const attachValid = isAuth && hasSnake && Number.isFinite(attachAmount) && attachAmount > 0 && attachAmount <= myBalance;
     attachBtn.disabled = !attachValid;
     attach1Btn.disabled = !(isAuth && hasSnake && myBalance >= 1);
+    attach5Btn.disabled = !(isAuth && hasSnake && myBalance >= 5);
     attach10Btn.disabled = !(isAuth && hasSnake && myBalance >= 10);
-    attach50Btn.disabled = !(isAuth && hasSnake && myBalance >= 50);
     const borrowAmount = Math.floor(Number(borrowAmountEl.value || "0"));
     borrowBtn.disabled = !(isAuth && Number.isFinite(borrowAmount) && borrowAmount > 0);
   }
@@ -2190,8 +2190,8 @@
   borrowBtn.onclick = borrowCells;
   attachBtn.onclick = () => attachCells();
   attach1Btn.onclick = () => attachCells(1);
+  attach5Btn.onclick = () => attachCells(5);
   attach10Btn.onclick = () => attachCells(10);
-  attach50Btn.onclick = () => attachCells(50);
   snakeRenameCancelBtn.onclick = closeSnakeRenameModal;
   snakeRenameSaveBtn.onclick = saveSnakeRename;
   snakeDeleteCancelBtn.onclick = closeSnakeDeleteModal;

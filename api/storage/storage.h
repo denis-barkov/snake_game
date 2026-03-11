@@ -14,7 +14,6 @@ class IStorage {
 
   // Full user listing is used by low-frequency aggregated reads (economy endpoint).
   virtual std::vector<User> ListUsers() = 0;
-  virtual std::optional<User> GetUserByUsername(const std::string& username) = 0;
   virtual std::optional<User> GetUserByGoogleSubject(const std::string& google_subject_id) = 0;
   virtual bool CompanyNameExistsNormalized(const std::string& company_name_normalized,
                                            const std::string& exclude_user_id = "") = 0;

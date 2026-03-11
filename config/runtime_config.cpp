@@ -141,7 +141,9 @@ RuntimeConfig RuntimeConfig::FromEnv() {
   cfg.google_client_id = getenv_string("GOOGLE_CLIENT_ID", cfg.google_client_id);
   cfg.starter_liquid_assets = static_cast<int64_t>(
       clamp_int(getenv_int("STARTER_LIQUID_ASSETS", static_cast<int>(cfg.starter_liquid_assets)), 1, 1000000));
-  cfg.auto_seed_on_start = getenv_bool("AUTO_SEED_ON_START", cfg.auto_seed_on_start);
+  cfg.seed_enabled = getenv_bool("SEED_ENABLED", cfg.seed_enabled);
+  cfg.seed_config_path = getenv_string("SEED_CONFIG_PATH", cfg.seed_config_path);
+  cfg.app_env = getenv_string("APP_ENV", cfg.app_env);
   if (!has_env("DEBUG_TPS")) {
     // Backward compatibility for older deployments that used LOG_HZ.
     cfg.debug_tps = getenv_bool("LOG_HZ", cfg.debug_tps);

@@ -1248,33 +1248,6 @@ static void add_cors(httplib::Response& res) {
   res.set_header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Admin-Token");
 }
 
-static bool ensure_user(storage::IStorage& storage, const string& user_id, const string& username, const string& password) {
-  auto existing = storage.GetUserById(user_id);
-  if (existing.has_value()) return true;
-
-  storage::User u;
-  u.user_id = user_id;
-  u.username = username;
-  u.password_hash = password;
-  u.balance_mi = 0;
-  u.created_at = static_cast<int64_t>(time(nullptr));
-  return storage.PutUser(u);
-}
-
-static void seed(storage::IStorage& storage, GameService& game) {
-  if (!ensure_user(storage, "1", "user1", "pass1") || !ensure_user(storage, "2", "user2", "pass2")) {
-    cerr << "Failed to seed users into DynamoDB\n";
-    return;
-  }
-
-  game.load_from_storage_or_seed_positions();
-  if (game.list_user_snakes(1).empty()) game.create_snake_for_user(1, "#00ff00", "SeedAlpha", "seedalpha");
-  if (game.list_user_snakes(2).empty()) game.create_snake_for_user(2, "#00aaff", "SeedBeta", "seedbeta");
-  game.flush_persistence_delta();
-  game.load_from_storage_or_seed_positions();
-  cout << "Seeded users: user1/pass1, user2/pass2 (1 snake each)\n";
-}
-
 int main(int argc, char** argv) {
   const string mode = (argc >= 2) ? argv[1] : "serve";
 
@@ -1346,7 +1319,9 @@ int main(int argc, char** argv) {
        << ", PERSISTENCE_SQLITE_PATH=" << runtime_cfg.persistence_sqlite_path
        << ", GOOGLE_AUTH_ENABLED=" << (runtime_cfg.google_auth_enabled ? "true" : "false")
        << ", STARTER_LIQUID_ASSETS=" << runtime_cfg.starter_liquid_assets
-       << ", AUTO_SEED_ON_START=" << (runtime_cfg.auto_seed_on_start ? "true" : "false")
+       << ", SEED_ENABLED=" << (runtime_cfg.seed_enabled ? "true" : "false")
+       << ", SEED_CONFIG_PATH=" << runtime_cfg.seed_config_path
+       << ", APP_ENV=" << runtime_cfg.app_env
        << "\n";
 
   unique_ptr<storage::IStorage> storage;
@@ -1404,11 +1379,7 @@ int main(int argc, char** argv) {
   game.configure_mask(runtime_cfg.world_mask_mode, runtime_cfg.world_mask_seed, runtime_cfg.world_mask_style);
   EconomyService economy(*storage, runtime_cfg);
   SystemMessageBus system_message_bus;
-  if (runtime_cfg.auto_seed_on_start) {
-    seed(*storage, game);
-  } else {
-    game.load_from_storage_or_seed_positions();
-  }
+  game.load_from_storage_or_seed_positions();
   {
     const auto eco = economy.GetState();
     game.set_playable_cell_target(economy_world_area(eco.params, eco.global));
@@ -1461,14 +1432,8 @@ int main(int argc, char** argv) {
     Aws::ShutdownAPI(aws_options);
     return 0;
   }
-  if (mode == "seed") {
-    seed(*storage, game);
-    persistence_coordinator.Stop();
-    Aws::ShutdownAPI(aws_options);
-    return 0;
-  }
   if (mode != "serve") {
-    cerr << "Usage: ./snake_server [serve|seed|reset]\n";
+    cerr << "Usage: ./snake_server [serve|reset]\n";
     persistence_coordinator.Stop();
     Aws::ShutdownAPI(aws_options);
     return 1;
@@ -3087,14 +3052,6 @@ int main(int argc, char** argv) {
     return mx + 1;
   };
 
-  srv.Post("/auth/login", [&](const httplib::Request& req, httplib::Response& res) {
-    add_cors(res);
-    (void)req;
-    // Password auth path is permanently disabled to keep local/prod parity.
-    res.status = 410;
-    res.set_content("{\"error\":\"password_auth_removed\"}", "application/json");
-  });
-
   srv.Post("/auth/google", [&](const httplib::Request& req, httplib::Response& res) {
     add_cors(res);
     if (!runtime_cfg.google_auth_enabled) {
@@ -3142,8 +3099,6 @@ int main(int argc, char** argv) {
       first_login = true;
       storage::User nu;
       nu.user_id = std::to_string(next_numeric_user_id());
-      nu.username = "g_" + claims->subject.substr(0, std::min<size_t>(claims->subject.size(), 20));
-      nu.password_hash = "";
       nu.balance_mi = 0;
       nu.created_at = now_s;
       nu.updated_at = now_s;
