@@ -30,10 +30,6 @@ output "ssl_certificate_status_message" {
   value = "Using existing ACM certificate for ${var.domain_name} (${var.environment})"
 }
 
-output "ssl_certificate_not_after" {
-  value = data.aws_acm_certificate.app_issued.not_after
-}
-
 output "compute_asg_name" {
   value = module.compute.asg_name
 }
