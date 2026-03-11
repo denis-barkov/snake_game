@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.8.19 - 2026-03-11
+- Changed production default economic period to 1 hour (`3600` seconds) instead of 24 hours.
+- Updated prod default period mode/alignment to fixed rolling seconds (`ECON_PERIOD_ALIGN=rolling`, `ECONOMIC_PERIOD_MODE=fixed_seconds`).
+- Split Make defaults for local vs prod economy period knobs so local remains 5 minutes while prod defaults to 1 hour.
+- Updated deploy-script defaults and README runtime-default documentation to match new period behavior.
+
 ## 2.8.18 - 2026-03-11
 - Extended `make ssl-cert-create` to fully automate ACM DNS validation: requests cert, upserts Route53 validation CNAME records, and polls status until `ISSUED`.
 - Added bounded validation wait loop (10s poll, 3-minute timeout) with clear operational logs and non-zero timeout exit behavior.
